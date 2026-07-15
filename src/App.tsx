@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useSyncState } from "./hooks/useSyncState.js";
+import Dashboard from "./components/Dashboard.js";
 import SisrefPanel from "./components/SisrefPanel.js";
 import SigrhPanel from "./components/SigrhPanel.js";
 import RotinaPanel from "./components/RotinaPanel.js";
@@ -8,13 +9,13 @@ import RelatorioPanel from "./components/RelatorioPanel.js";
 import { 
   ClipboardCheck, CalendarDays, Briefcase, BarChart3, HelpCircle, 
   Layers, Moon, Sun, Droplet, RefreshCw, Check, X, LogIn, LogOut, Key,
-  DownloadCloud
+  DownloadCloud, LayoutDashboard
 } from "lucide-react";
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 import { syncToGoogleSheets } from "./lib/googleSheetsSync.js";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio'>('sisref');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio'>('dashboard');
   
   // Theme state: claro, escuro, petroleo
   const [theme, setTheme] = useState<'claro' | 'escuro' | 'petroleo'>(() => {
@@ -500,6 +501,12 @@ export default function App() {
         {/* SIDEBAR TABS (sticky on desktop) */}
         <nav className="flex lg:flex-col lg:w-56 overflow-x-auto lg:overflow-x-visible gap-1.5 p-1 bg-[var(--border)]/40 border border-[var(--border)] rounded-2xl lg:self-start lg:sticky lg:top-24 select-none scrollbar-none flex-shrink-0">
           <button 
+            onClick={() => setActiveTab('dashboard')}
+            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'dashboard' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+          >
+            <LayoutDashboard size={18} /> Início
+          </button>
+          <button 
             onClick={() => setActiveTab('sisref')}
             className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'sisref' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
           >
@@ -533,6 +540,14 @@ export default function App() {
 
         {/* ACTIVE MAIN SUB-PANEL DISPLAY */}
         <main className="flex-1 min-w-0">
+          {activeTab === 'dashboard' && (
+            <Dashboard 
+              state={state} 
+              updateState={updateState} 
+              onToast={showToast} 
+              setActiveTab={setActiveTab} 
+            />
+          )}
           {activeTab === 'sisref' && (
             <SisrefPanel 
               state={state} 
