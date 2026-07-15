@@ -115,9 +115,13 @@ export async function syncToGoogleSheets(
     for (const sheet of sheetsData) {
       onProgress({ message: `Atualizando aba: ${sheet.name}...`, type: "info" });
 
+      const clearRange = `'${sheet.name}'!A1:Z100000`;
+      const putRange = `'${sheet.name}'!A1`;
+
       // First, try to clear existing content to avoid stale data
+      const encodedClearRange = encodeURIComponent(clearRange);
       await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values/'${sheet.name}'!A1:Z100000:clear`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values/${encodedClearRange}:clear`,
         {
           method: "POST",
           headers: {
@@ -128,8 +132,9 @@ export async function syncToGoogleSheets(
       ).catch(e => console.warn("Failed to clear sheet, attempting override:", e));
 
       // Put the new data
+      const encodedPutRange = encodeURIComponent(putRange);
       const putRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values/'${sheet.name}'!A1?valueInputOption=RAW`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values/${encodedPutRange}?valueInputOption=RAW`,
         {
           method: "PUT",
           headers: {
@@ -137,7 +142,7 @@ export async function syncToGoogleSheets(
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            range: `'${sheet.name}'!A1`,
+            range: putRange,
             majorDimension: "ROWS",
             values: sheet.rows
           })
@@ -145,8 +150,12 @@ export async function syncToGoogleSheets(
       );
 
       if (!putRes.ok) {
+        const errorData = await putRes.json().catch(() => null);
+        const errorMsg = errorData?.error?.message || `HTTP ${putRes.status}`;
+        console.warn(`Initial write failed for ${sheet.name}: ${errorMsg}. Attempting to create/verify sheet tab...`);
+
         // Sheet might not exist, let's try to add the sheet tab first
-        onProgress({ message: `Aba ${sheet.name} não existe. Criando nova aba...`, type: "info" });
+        onProgress({ message: `Aba ${sheet.name} não pôde ser atualizada diretamente. Criando aba...`, type: "info" });
         await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}:batchUpdate`, {
           method: "POST",
           headers: {
@@ -162,11 +171,11 @@ export async function syncToGoogleSheets(
               }
             ]
           })
-        });
+        }).catch(e => console.warn("Ignoring error while trying to add sheet, might already exist", e));
 
         // Retry writing data
         const retryPut = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values/'${sheet.name}'!A1?valueInputOption=RAW`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${targetSpreadsheetId}/values/${encodedPutRange}?valueInputOption=RAW`,
           {
             method: "PUT",
             headers: {
@@ -174,7 +183,7 @@ export async function syncToGoogleSheets(
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
-              range: `'${sheet.name}'!A1`,
+              range: putRange,
               majorDimension: "ROWS",
               values: sheet.rows
             })
@@ -182,7 +191,10 @@ export async function syncToGoogleSheets(
         );
 
         if (!retryPut.ok) {
-          throw new Error(`Erro ao escrever dados na aba '${sheet.name}'`);
+          const retryErrorData = await retryPut.json().catch(() => null);
+          const retryErrorMsg = retryErrorData?.error?.message || `HTTP ${retryPut.status}`;
+          console.error(`Retry write failed for ${sheet.name}:`, retryErrorData);
+          throw new Error(`Erro ao escrever dados na aba '${sheet.name}': ${retryErrorMsg}`);
         }
       }
     }
