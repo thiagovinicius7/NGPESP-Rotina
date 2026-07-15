@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { AppState } from "../types.js";
 import { 
   Users, Building2, Clock, UserCheck, TrendingUp, PlusCircle, 
-  Search, ListTodo, AlertOctagon, PlayCircle, Palmtree, CalendarCheck, Stethoscope, CheckCircle2, Gift
+  Search, ListTodo, AlertOctagon, PlayCircle, Palmtree, CalendarCheck, Stethoscope, CheckCircle2, Gift,
+  X, Trash2, AlertTriangle, FileSpreadsheet
 } from "lucide-react";
 
 interface DashboardProps {
@@ -18,6 +19,45 @@ interface DashboardProps {
 export default function Dashboard({ state, updateState, onToast, setActiveTab, setSisrefSubTab, setRotinaSubTab, setSisrefShowPendencias }: DashboardProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [showCompareModal, setShowCompareModal] = useState(false);
+  const [modalSearchTerm, setModalSearchTerm] = useState("");
+
+  const normalizeMatricula = (m: any): string => {
+    return String(m || "").trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "");
+  };
+
+  const lastImportedMatriculas = state.config?.lastImportedMatriculas || [];
+  const hasImportedHistory = !!state.config?.ultimoUpdateServidores;
+
+  const absentServers = state.servidores.filter(s => {
+    if (!hasImportedHistory || lastImportedMatriculas.length === 0) return false;
+    const norm = normalizeMatricula(s.matricula);
+    return !lastImportedMatriculas.includes(norm);
+  });
+
+  const removerServidor = (matricula: string) => {
+    if (confirm(`Deseja realmente remover o servidor com matrícula ${matricula} do aplicativo?`)) {
+      updateState((prev: AppState) => {
+        const novosServidores = prev.servidores.filter(s => s.matricula !== matricula);
+        return { servidores: novosServidores };
+      });
+      onToast(`Servidor ${matricula} removido com sucesso.`, "ok");
+    }
+  };
+
+  const removerTodosAusentes = () => {
+    if (confirm(`ATENÇÃO! Você está prestes a remover todos os ${absentServers.length} servidores ausentes do aplicativo.\n\nEsta ação sincronizará sua lista de servidores, deixando apenas os servidores que estavam presentes no último arquivo importado.\n\nDeseja continuar?`)) {
+      updateState((prev: AppState) => {
+        const novosServidores = prev.servidores.filter(s => {
+          const norm = normalizeMatricula(s.matricula);
+          return lastImportedMatriculas.includes(norm);
+        });
+        return { servidores: novosServidores };
+      });
+      onToast(`Todos os ${absentServers.length} servidores ausentes foram removidos com sucesso!`, "ok");
+      setShowCompareModal(false);
+    }
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 30000); // atualiza a cada 30s
@@ -173,9 +213,22 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
             <div className="text-[var(--text2)]">Servidores</div>
           </div>
           {state.config?.ultimoUpdateServidores && (
-            <div className="text-[10px] text-[var(--text2)] mt-2 font-mono border-t border-[var(--border)] pt-1.5">
-              Ref: {state.config.ultimoUpdateServidores}
-            </div>
+            <button 
+              onClick={() => setShowCompareModal(true)}
+              className="w-full text-left text-[10px] text-[var(--text2)] hover:text-[var(--blue-mid)] hover:bg-slate-50 dark:hover:bg-slate-900/40 p-1.5 -mx-1.5 rounded-lg mt-2 font-mono border-t border-[var(--border)] flex items-center justify-between transition-all cursor-pointer group"
+              title="Clique para comparar com o último extrator importado"
+            >
+              <span className="truncate">Ref: {state.config.ultimoUpdateServidores}</span>
+              {absentServers.length > 0 ? (
+                <span className="bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 px-1.5 py-0.5 rounded-full text-[8px] font-bold flex-shrink-0 ml-1">
+                  {absentServers.length} ausentes
+                </span>
+              ) : (
+                <span className="opacity-0 group-hover:opacity-100 transition-opacity font-bold text-[8px] text-[var(--blue-mid)] flex-shrink-0 ml-1">
+                  Ver detalhes →
+                </span>
+              )}
+            </button>
           )}
         </div>
 
@@ -448,6 +501,174 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
           )}
         </div>
       </div>
+
+      {showCompareModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-[var(--surface)] w-full max-w-2xl rounded-2xl p-6 shadow-xl border border-[var(--border)] flex flex-col max-h-[85vh] animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="text-[var(--blue-mid)]" size={24} />
+                <h3 className="text-xl font-black text-[var(--text)] tracking-tight">
+                  Comparação do Último Lote Importado
+                </h3>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowCompareModal(false);
+                  setModalSearchTerm("");
+                }}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={20} className="text-[var(--text2)]" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
+              {/* Stats & Explanation */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-[var(--border)] text-center">
+                  <div className="text-xs font-bold text-[var(--text2)] uppercase">No Aplicativo</div>
+                  <div className="text-2xl font-black text-[var(--text)] mt-1">{totalServidores}</div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-[var(--border)] text-center">
+                  <div className="text-xs font-bold text-[var(--text2)] uppercase">No Último Extrator</div>
+                  <div className="text-2xl font-black text-[var(--text)] mt-1">
+                    {state.config?.lastImportCount || lastImportedMatriculas.length || 0}
+                  </div>
+                </div>
+                <div className="bg-amber-50 dark:bg-amber-950/20 p-4 rounded-xl border border-amber-200 dark:border-amber-900/40 text-center">
+                  <div className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase">Divergentes (Ausentes)</div>
+                  <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">
+                    {absentServers.length}
+                  </div>
+                </div>
+              </div>
+
+              {!hasImportedHistory || lastImportedMatriculas.length === 0 ? (
+                <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/30 p-5 rounded-xl text-sm text-[var(--text)] leading-relaxed space-y-3">
+                  <div className="flex gap-2 items-center text-blue-600 dark:text-blue-400 font-bold">
+                    <AlertTriangle size={18} />
+                    <span>Nenhum controle de lote ativo</span>
+                  </div>
+                  <p>
+                    Não foram encontrados registros do controle de matrículas do último arquivo importado no banco de dados local.
+                  </p>
+                  <p className="text-xs text-[var(--text2)]">
+                    Para habilitar esta comparação e visualizar quais servidores estão no aplicativo mas não no extrator, realize uma nova importação de servidores pela aba <strong className="font-bold">"Rotina" &gt; "Importador de servidores"</strong> ou restaure do backup.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-[var(--border)] text-xs text-[var(--text2)] leading-relaxed flex gap-3 items-start">
+                    <AlertTriangle size={24} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <strong className="font-bold text-[var(--text)]">Por que estes servidores estão ausentes?</strong>
+                      <p className="mt-1">
+                        Estes servidores constam no banco de dados do aplicativo, mas não estavam presentes no último arquivo importado (extrator de SISREF/SIGRH ou planilha de backup). Isso geralmente indica servidores desligados, transferidos, aposentados ou que não pertencem mais a este lote de servidores.
+                      </p>
+                    </div>
+                  </div>
+
+                  {absentServers.length === 0 ? (
+                    <div className="bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/30 p-6 rounded-xl text-center space-y-2">
+                      <div className="text-green-600 dark:text-green-400 font-bold text-lg">Excelente!</div>
+                      <p className="text-sm text-[var(--text2)]">
+                        Todos os servidores atualmente no aplicativo estão presentes no último extrator importado. Sem divergências encontradas!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="relative flex-1">
+                          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text2)]" />
+                          <input 
+                            type="text" 
+                            placeholder="Buscar entre os servidores ausentes..."
+                            value={modalSearchTerm}
+                            onChange={(e) => setModalSearchTerm(e.target.value)}
+                            className="w-full text-xs pl-9 pr-3 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl outline-none focus:border-[var(--blue-mid)] transition-all"
+                          />
+                        </div>
+                        <button 
+                          onClick={removerTodosAusentes}
+                          className="bg-red-500 hover:bg-red-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm shadow-red-500/10"
+                        >
+                          <Trash2 size={14} />
+                          Remover Todos
+                        </button>
+                      </div>
+
+                      {/* Scrollable list */}
+                      <div className="border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--bg)]">
+                        <div className="grid grid-cols-12 bg-slate-50 dark:bg-slate-900/60 p-2.5 text-[10px] font-bold text-[var(--text2)] uppercase border-b border-[var(--border)]">
+                          <div className="col-span-3">Matrícula</div>
+                          <div className="col-span-5">Nome / Cargo</div>
+                          <div className="col-span-3">Lotação</div>
+                          <div className="col-span-1 text-center">Ações</div>
+                        </div>
+                        <div className="max-h-[250px] overflow-y-auto divide-y divide-[var(--border)]">
+                          {absentServers
+                            .filter(s => 
+                              s.nome.toLowerCase().includes(modalSearchTerm.toLowerCase()) || 
+                              s.matricula.includes(modalSearchTerm) ||
+                              s.cargo.toLowerCase().includes(modalSearchTerm.toLowerCase()) ||
+                              s.lotacao.toLowerCase().includes(modalSearchTerm.toLowerCase())
+                            )
+                            .map(s => (
+                              <div key={s.matricula} className="grid grid-cols-12 p-2.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-900/20 transition-colors items-center">
+                                <div className="col-span-3 font-mono font-bold text-[var(--text)]">{s.matricula}</div>
+                                <div className="col-span-5 pr-2">
+                                  <div className="font-bold text-[var(--text)] uppercase truncate">{s.nome}</div>
+                                  <div className="text-[10px] text-[var(--text2)] uppercase truncate">{s.cargo || "Não Informado"}</div>
+                                </div>
+                                <div className="col-span-3 text-[10px] text-[var(--text2)] uppercase truncate pr-2" title={s.lotacao}>
+                                  {s.lotacao || "Sem lotação"}
+                                </div>
+                                <div className="col-span-1 flex justify-center">
+                                  <button 
+                                    onClick={() => removerServidor(s.matricula)}
+                                    className="p-1 hover:bg-red-50 hover:text-red-500 rounded transition-colors text-[var(--text2)] cursor-pointer"
+                                    title={`Remover ${s.nome} do aplicativo`}
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+
+                          {absentServers.filter(s => 
+                            s.nome.toLowerCase().includes(modalSearchTerm.toLowerCase()) || 
+                            s.matricula.includes(modalSearchTerm) ||
+                            s.cargo.toLowerCase().includes(modalSearchTerm.toLowerCase()) ||
+                            s.lotacao.toLowerCase().includes(modalSearchTerm.toLowerCase())
+                          ).length === 0 && (
+                            <div className="p-8 text-center text-xs text-[var(--text2)]">
+                              Nenhum servidor ausente corresponde aos termos da pesquisa.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="border-t border-[var(--border)] pt-4 flex justify-end">
+              <button 
+                onClick={() => {
+                  setShowCompareModal(false);
+                  setModalSearchTerm("");
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer text-[var(--text)]"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

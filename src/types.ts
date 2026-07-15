@@ -116,6 +116,8 @@ export interface GlobalConfig {
   backupEnabled?: boolean;
   appPassword?: string;
   ultimoUpdateServidores?: string;
+  lastImportedMatriculas?: string[];
+  lastImportCount?: number;
 }
 
 export interface AppState {
