@@ -7,7 +7,8 @@ import BalcaoPanel from "./components/BalcaoPanel.js";
 import RelatorioPanel from "./components/RelatorioPanel.js";
 import { 
   ClipboardCheck, CalendarDays, Briefcase, BarChart3, HelpCircle, 
-  Layers, Moon, Sun, Droplet, RefreshCw, Check, X, LogIn, LogOut, Key
+  Layers, Moon, Sun, Droplet, RefreshCw, Check, X, LogIn, LogOut, Key,
+  DownloadCloud
 } from "lucide-react";
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 
@@ -45,7 +46,7 @@ export default function App() {
 
   const [inputVal, setInputVal] = useState("");
 
-  const { state, updateState, forceSync, syncing } = useSyncState(showToast);
+  const { state, updateState, forceSync, syncing, isStaticMode } = useSyncState(showToast);
 
   // Google Authentication State
   const [googleUser, setGoogleUser] = useState<any>(null);
@@ -128,6 +129,20 @@ export default function App() {
     setIsAuthorized(false);
     setPasswordInput("");
     showToast("Sistema bloqueado com sucesso.", "info");
+  };
+
+  const handleDownloadBackupDirectly = () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const dt = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `sisref_backup_${dt}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("Backup baixado para a máquina local!", "ok");
   };
 
   const toggleTheme = () => {
@@ -314,9 +329,9 @@ export default function App() {
                 NGPESP Rotina
               </h1>
               <div className="flex items-center gap-1.5 mt-1">
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                <span className={`w-2 h-2 rounded-full animate-pulse ${isStaticMode ? 'bg-blue-500' : 'bg-green-500'}`}></span>
                 <p className="text-[10px] text-[var(--text2)] uppercase tracking-wider font-bold opacity-80">
-                  Sincronizado via Nuvem
+                  {isStaticMode ? "Modo Local (GitHub Pages)" : "Sincronizado via Nuvem"}
                 </p>
               </div>
             </div>
@@ -377,15 +392,26 @@ export default function App() {
               <LogOut size={18} />
             </button>
 
-            {/* Manual syncing cloud indicator */}
-            <button 
-              onClick={forceSync}
-              disabled={syncing}
-              className="px-4 py-2 bg-[var(--blue)] hover:bg-[var(--blue-mid)] text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-              Sincronizar
-            </button>
+            {/* Manual syncing cloud indicator / static backup download */}
+            {isStaticMode ? (
+              <button 
+                onClick={handleDownloadBackupDirectly}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                title="Fazer download do backup de segurança de todos os dados"
+              >
+                <DownloadCloud className="w-3.5 h-3.5" />
+                Baixar Backup
+              </button>
+            ) : (
+              <button 
+                onClick={forceSync}
+                disabled={syncing}
+                className="px-4 py-2 bg-[var(--blue)] hover:bg-[var(--blue-mid)] text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+                Sincronizar
+              </button>
+            )}
           </div>
         </div>
       </header>

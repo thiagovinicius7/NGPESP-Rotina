@@ -50,6 +50,14 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   }, [onToast]);
 
   const [syncing, setSyncing] = useState(false);
+  const [isStaticMode, setIsStaticMode] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      if (window.location.hostname.endsWith("github.io")) {
+        return true;
+      }
+    }
+    return false;
+  });
   
   const stateRef = useRef<AppState>(state);
   const latestStateRef = useRef<AppState>(state);
@@ -87,7 +95,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     isDirtyRef.current = true;
 
     // Debounce pushing to cloud server (1000ms is standard, non-disruptive, safe time for typing)
-    if (hasLoadedFromServerRef.current) {
+    if (hasLoadedFromServerRef.current && !isStaticMode) {
       if (pushTimeoutRef.current) {
         clearTimeout(pushTimeoutRef.current);
       }
@@ -122,6 +130,10 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
 
   // Force sync from/to server
   const forceSync = async () => {
+    if (isStaticMode) {
+      onToast("Seus dados já estão salvos localmente e de forma segura no navegador!", "info");
+      return;
+    }
     setSyncing(true);
     if (pushTimeoutRef.current) {
       clearTimeout(pushTimeoutRef.current);
@@ -162,6 +174,11 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   // 1. Initial pull on startup to load server state (Runs only ONCE on mount)
   useEffect(() => {
     const initialFetch = async () => {
+      if (typeof window !== "undefined" && window.location.hostname.endsWith("github.io")) {
+        setIsStaticMode(true);
+        hasLoadedFromServerRef.current = true;
+        return;
+      }
       try {
         const res = await fetch("/api/state");
         if (res.ok) {
@@ -178,11 +195,18 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             hasLoadedFromServerRef.current = true;
             isDirtyRef.current = false;
             console.log("Successfully initialized state from cloud server");
+          } else {
+            setIsStaticMode(true);
+            hasLoadedFromServerRef.current = true;
           }
+        } else {
+          setIsStaticMode(true);
+          hasLoadedFromServerRef.current = true;
         }
       } catch (err) {
-        console.warn("Could not connect to server on startup, using offline cache", err);
-        // Fallback: mark as loaded so user can still work offline
+        console.warn("Could not connect to server on startup, using offline cache in static mode", err);
+        // Fallback: mark as loaded and set static mode so user can still work offline without errors
+        setIsStaticMode(true);
         hasLoadedFromServerRef.current = true;
       }
     };
@@ -193,8 +217,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   // 2. Setup periodic background polling for cloud real-time sync (Runs only ONCE on mount)
   useEffect(() => {
     const fetchLatest = async () => {
-      // Do not poll or overwrite if we haven't successfully loaded yet or if we have unsaved local edits
-      if (!hasLoadedFromServerRef.current || isDirtyRef.current) {
+      // Do not poll or overwrite if we haven't successfully loaded yet, if we are in static mode, or if we have unsaved local edits
+      if (!hasLoadedFromServerRef.current || isStaticMode || isDirtyRef.current) {
         return;
       }
       try {
@@ -223,12 +247,13 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     // Poll every 10 seconds (standard, non-disruptive, safe background sync)
     const interval = setInterval(fetchLatest, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isStaticMode]);
 
   return {
     state,
     updateState,
     syncing,
-    forceSync
+    forceSync,
+    isStaticMode
   };
 }
