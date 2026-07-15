@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { AppState } from "../types.js";
 import { 
   Users, Building2, Clock, UserCheck, TrendingUp, PlusCircle, 
-  Search, ListTodo, AlertOctagon, PlayCircle, Palmtree, CalendarCheck, Stethoscope, CheckCircle2
+  Search, ListTodo, AlertOctagon, PlayCircle, Palmtree, CalendarCheck, Stethoscope, CheckCircle2, Gift
 } from "lucide-react";
 
 interface DashboardProps {
@@ -10,9 +10,10 @@ interface DashboardProps {
   updateState: any;
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
   setActiveTab: (tab: 'dashboard' | 'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio') => void;
+  setSisrefSubTab?: (tab: 'setores' | 'avulsa' | 'respostas') => void;
 }
 
-export default function Dashboard({ state, updateState, onToast, setActiveTab }: DashboardProps) {
+export default function Dashboard({ state, updateState, onToast, setActiveTab, setSisrefSubTab }: DashboardProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -42,15 +43,39 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab }:
 
   // Vida Funcional computations
   const currentYear = currentTime.getFullYear().toString();
-  const yearFerias = state.ferias?.[currentYear] || [];
-  const yearAbonos = state.abonos?.[currentYear] || [];
   const afastamentos = state.afastamentos || [];
 
   const currentDayStr = currentTime.getDate().toString().padStart(2, "0");
   const currentMonthStr = (currentTime.getMonth() + 1).toString().padStart(2, "0");
 
-  // Check what is active today based on the dates
-  const activeFerias = yearFerias.filter(p => {
+  // Gather ALL férias across all years (exercícios)
+  const allFerias: { inicio?: string; fim?: string; processo?: string; exercicio: string }[] = [];
+  Object.keys(state.ferias || {}).forEach(yr => {
+    const list = state.ferias[yr] || [];
+    list.forEach(p => {
+      if (p.inicio || p.fim) {
+        allFerias.push({ ...p, exercicio: yr });
+      }
+    });
+  });
+  // Sort them by starting date ascending
+  allFerias.sort((a, b) => (a.inicio || "").localeCompare(b.inicio || ""));
+
+  // Gather ALL abonos across all years (exercícios)
+  const allAbonos: { data?: string; processo?: string; exercicio: string }[] = [];
+  Object.keys(state.abonos || {}).forEach(yr => {
+    const list = state.abonos[yr] || [];
+    list.forEach(a => {
+      if (a.data) {
+        allAbonos.push({ ...a, exercicio: yr });
+      }
+    });
+  });
+  // Sort them by date ascending
+  allAbonos.sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+
+  // Check what is active today based on the dates across all years
+  const activeFerias = allFerias.filter(p => {
     if (!p.inicio || !p.fim) return false;
     const todayTime = new Date(hoje + "T00:00:00").getTime();
     const startTime = new Date(p.inicio + "T00:00:00").getTime();
@@ -58,7 +83,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab }:
     return todayTime >= startTime && todayTime <= endTime;
   });
 
-  const activeAbono = yearAbonos.filter(a => a.data === hoje);
+  const activeAbono = allAbonos.filter(a => a.data === hoje);
 
   const activeAfastamento = afastamentos.filter(a => {
     const matchDay = a.dia.padStart(2, "0") === currentDayStr;
@@ -77,8 +102,27 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab }:
         .slice(0, 6);
 
   const iniciarConferenciaAvulsaRapida = () => {
-    setActiveTab('rotina');
-    onToast("Abrindo Conferência Avulsa...", "info");
+    if (setSisrefSubTab) {
+      setSisrefSubTab('avulsa');
+    }
+    setActiveTab('sisref');
+    onToast("Abrindo Fila Avulsa no SISREF...", "info");
+  };
+
+  const irParaAbonoAniversario = () => {
+    setActiveTab('sigrh');
+    onToast("Abrindo Abono Natalício...", "info");
+    setTimeout(() => {
+      const el = document.getElementById("abono-natalicio");
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 150);
+  };
+
+  const irParaSigrh = () => {
+    setActiveTab('sigrh');
+    onToast("Abrindo painel SIGRH...", "info");
   };
 
   return (
@@ -206,7 +250,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab }:
           {/* Vida Funcional do Dia Panel */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-xs">
             <h2 className="text-lg font-black mb-4 flex items-center gap-2 text-[var(--text)]">
-              <Palmtree size={20} className="text-emerald-500" /> Vida Funcional ({currentYear})
+              <Palmtree size={20} className="text-emerald-500" /> Vida Funcional (Exercícios)
             </h2>
 
             {/* Current day status indicator */}
@@ -218,13 +262,13 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab }:
                 <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider">Status Hoje ({currentDayStr}/{currentMonthStr})</div>
                 <div className="font-bold text-sm">
                   {activeFerias.length > 0 ? (
-                    <span className="text-amber-600 flex items-center gap-1">🌴 Férias Ativas: {activeFerias[0].inicio} a {activeFerias[0].fim}</span>
+                    <span className="text-amber-600 flex items-center gap-1">🌴 Férias Ativas: {activeFerias[0].inicio} a {activeFerias[0].fim} (Ex. {activeFerias[0].exercicio})</span>
                   ) : activeAbono.length > 0 ? (
-                    <span className="text-blue-600 flex items-center gap-1">📅 Abono gozado hoje ({activeAbono[0].processo || "Sem processo"})</span>
+                    <span className="text-blue-600 flex items-center gap-1">📅 Abono gozado hoje ({activeAbono[0].processo || "Sem processo"}) (Ex. {activeAbono[0].exercicio})</span>
                   ) : activeAfastamento.length > 0 ? (
                     <span className="text-red-500 flex items-center gap-1">🩺 Ausência: {activeAfastamento[0].tipo} ({activeAfastamento[0].sisref || "Sisref"})</span>
                   ) : (
-                    <span className="text-emerald-600">Disponível em serviço ordinário.</span>
+                    <span className="text-emerald-600">Escala normal.</span>
                   )}
                 </div>
               </div>
@@ -236,15 +280,14 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab }:
                 <div className="flex items-center gap-2 mb-3 text-xs font-black text-amber-600 uppercase tracking-wide">
                   <Palmtree size={14} /> Férias Programadas
                 </div>
-                {yearFerias.length > 0 && yearFerias.some(p => p.inicio || p.fim) ? (
+                {allFerias.length > 0 ? (
                   <div className="space-y-2">
-                    {yearFerias.map((p, idx) => {
-                      if (!p.inicio && !p.fim) return null;
+                    {allFerias.map((p, idx) => {
                       const isNow = p.inicio && p.fim && new Date(hoje).getTime() >= new Date(p.inicio).getTime() && new Date(hoje).getTime() <= new Date(p.fim).getTime();
                       return (
                         <div key={idx} className={`p-2.5 rounded-xl text-xs border ${isNow ? 'bg-amber-50 border-amber-300 dark:bg-amber-950/20' : 'bg-[var(--surface)] border-[var(--border)]'}`}>
                           <div className="font-bold text-[var(--text)] flex justify-between">
-                            <span>Período {idx + 1}</span>
+                            <span>Exercício {p.exercicio}</span>
                             {isNow && <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">Vigente</span>}
                           </div>
                           <div className="text-[var(--text2)] font-mono mt-1">
@@ -265,15 +308,14 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab }:
                 <div className="flex items-center gap-2 mb-3 text-xs font-black text-blue-600 uppercase tracking-wide">
                   <CalendarCheck size={14} /> Abonos Autorizados
                 </div>
-                {yearAbonos.length > 0 && yearAbonos.some(a => a.data) ? (
+                {allAbonos.length > 0 ? (
                   <div className="space-y-2">
-                    {yearAbonos.map((a, idx) => {
-                      if (!a.data) return null;
+                    {allAbonos.map((a, idx) => {
                       const isToday = a.data === hoje;
                       return (
                         <div key={idx} className={`p-2.5 rounded-xl text-xs border ${isToday ? 'bg-blue-50 border-blue-300 dark:bg-blue-950/20' : 'bg-[var(--surface)] border-[var(--border)]'}`}>
                           <div className="font-bold text-[var(--text)] flex justify-between">
-                            <span>Abono {idx + 1}</span>
+                            <span>Exercício {a.exercicio}</span>
                             {isToday && <span className="text-[9px] font-black uppercase text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">Hoje</span>}
                           </div>
                           <div className="text-[var(--text2)] font-mono mt-1">
@@ -317,6 +359,32 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab }:
             <div className="text-left">
               <div className="font-bold text-2xl">Produtividade</div>
               <div className="text-[var(--text2)]">Lançar atividades do dia</div>
+            </div>
+          </button>
+
+          <button 
+            onClick={irParaAbonoAniversario}
+            className="w-full bento-card p-8 flex items-center gap-6 hover:scale-[1.02] active:scale-95 transition-all group cursor-pointer"
+          >
+            <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform flex-shrink-0">
+              <Gift size={36} className="text-amber-600" />
+            </div>
+            <div className="text-left">
+              <div className="font-bold text-2xl">Abono Aniversário</div>
+              <div className="text-[var(--text2)]">Análise de abono natalício</div>
+            </div>
+          </button>
+
+          <button 
+            onClick={irParaSigrh}
+            className="w-full bento-card p-8 flex items-center gap-6 hover:scale-[1.02] active:scale-95 transition-all group cursor-pointer"
+          >
+            <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/50 rounded-2xl flex items-center justify-center group-hover:rotate-6 transition-transform flex-shrink-0">
+              <Building2 size={36} className="text-indigo-600" />
+            </div>
+            <div className="text-left">
+              <div className="font-bold text-2xl">Conferir SEI</div>
+              <div className="text-[var(--text2)]">Verificar no SIGRH</div>
             </div>
           </button>
 

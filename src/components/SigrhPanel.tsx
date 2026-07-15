@@ -555,7 +555,7 @@ export default function SigrhPanel({ state, updateState, onToast }: SigrhPanelPr
       )}
 
       {/* 4. ABONO NATALÍCIO */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] border-t-4 border-t-[var(--amber-mid)] rounded-2xl p-6 shadow-sm">
+      <div id="abono-natalicio" className="bg-[var(--surface)] border border-[var(--border)] border-t-4 border-t-[var(--amber-mid)] rounded-2xl p-6 shadow-sm scroll-mt-24">
         <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
           <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1.5">
             <Gift className="text-[var(--amber-mid)]" size={16} /> Abono Natalício

@@ -12,10 +12,15 @@ interface SisrefPanelProps {
   updateState: (newState: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => void;
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
   openModal: (nome: string, mat: string, setor: string, onConfirm: (qtd: number) => void, defaultQtd?: number) => void;
+  subTab?: 'setores' | 'avulsa' | 'respostas';
+  setSubTab?: (t: 'setores' | 'avulsa' | 'respostas') => void;
 }
 
-export default function SisrefPanel({ state, updateState, onToast, openModal }: SisrefPanelProps) {
-  const [subTab, setSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
+export default function SisrefPanel({ state, updateState, onToast, openModal, subTab: controlledSubTab, setSubTab: setControlledSubTab }: SisrefPanelProps) {
+  const [localSubTab, setLocalSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
+
+  const subTab = controlledSubTab !== undefined ? controlledSubTab : localSubTab;
+  const setSubTab = setControlledSubTab !== undefined ? setControlledSubTab : setLocalSubTab;
 
   // Setores Sub-tab state
   const [buscaInp, setBuscaInp] = useState("");

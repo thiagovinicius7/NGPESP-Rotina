@@ -16,6 +16,7 @@ import { syncToGoogleSheets } from "./lib/googleSheetsSync.js";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio'>('dashboard');
+  const [sisrefSubTab, setSisrefSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
   
   // Theme state: claro, escuro, petroleo
   const [theme, setTheme] = useState<'claro' | 'escuro' | 'petroleo'>(() => {
@@ -546,6 +547,7 @@ export default function App() {
               updateState={updateState} 
               onToast={showToast} 
               setActiveTab={setActiveTab} 
+              setSisrefSubTab={setSisrefSubTab}
             />
           )}
           {activeTab === 'sisref' && (
@@ -554,6 +556,8 @@ export default function App() {
               updateState={updateState} 
               onToast={showToast} 
               openModal={triggerModalOpen} 
+              subTab={sisrefSubTab}
+              setSubTab={setSisrefSubTab}
             />
           )}
           {activeTab === 'sigrh' && (
