@@ -20,6 +20,8 @@ interface RotinaPanelProps {
   googleToken: string | null;
   onGoogleLogin: () => Promise<void>;
   onGoogleLogout: () => Promise<void>;
+  subTab?: 'importar' | 'vida' | 'produtividade';
+  setSubTab?: (t: 'importar' | 'vida' | 'produtividade') => void;
 }
 
 export default function RotinaPanel({ 
@@ -31,9 +33,14 @@ export default function RotinaPanel({
   googleUser,
   googleToken,
   onGoogleLogin,
-  onGoogleLogout
+  onGoogleLogout,
+  subTab: controlledSubTab,
+  setSubTab: setControlledSubTab
 }: RotinaPanelProps) {
-  const [subTab, setSubTab] = useState<'importar' | 'vida' | 'produtividade'>('importar');
+  const [localSubTab, setLocalSubTab] = useState<'importar' | 'vida' | 'produtividade'>('importar');
+
+  const subTab = controlledSubTab !== undefined ? controlledSubTab : localSubTab;
+  const setSubTab = setControlledSubTab !== undefined ? setControlledSubTab : setLocalSubTab;
 
   // GAS connection and syncing
   const [gasUrl, setGasUrl] = useState(state.gasUrl || "");

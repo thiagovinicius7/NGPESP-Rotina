@@ -17,6 +17,8 @@ import { syncToGoogleSheets } from "./lib/googleSheetsSync.js";
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio'>('dashboard');
   const [sisrefSubTab, setSisrefSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
+  const [rotinaSubTab, setRotinaSubTab] = useState<'importar' | 'vida' | 'produtividade'>('importar');
+  const [sisrefShowPendencias, setSisrefShowPendencias] = useState(false);
   
   // Theme state: claro, escuro, petroleo
   const [theme, setTheme] = useState<'claro' | 'escuro' | 'petroleo'>(() => {
@@ -548,6 +550,8 @@ export default function App() {
               onToast={showToast} 
               setActiveTab={setActiveTab} 
               setSisrefSubTab={setSisrefSubTab}
+              setRotinaSubTab={setRotinaSubTab}
+              setSisrefShowPendencias={setSisrefShowPendencias}
             />
           )}
           {activeTab === 'sisref' && (
@@ -558,6 +562,8 @@ export default function App() {
               openModal={triggerModalOpen} 
               subTab={sisrefSubTab}
               setSubTab={setSisrefSubTab}
+              showPendencias={sisrefShowPendencias}
+              setShowPendencias={setSisrefShowPendencias}
             />
           )}
           {activeTab === 'sigrh' && (
@@ -578,6 +584,8 @@ export default function App() {
               googleToken={googleToken}
               onGoogleLogin={handleGoogleLogin}
               onGoogleLogout={handleGoogleLogout}
+              subTab={rotinaSubTab}
+              setSubTab={setRotinaSubTab}
             />
           )}
           {activeTab === 'balcao' && (

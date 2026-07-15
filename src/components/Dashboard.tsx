@@ -11,9 +11,11 @@ interface DashboardProps {
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
   setActiveTab: (tab: 'dashboard' | 'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio') => void;
   setSisrefSubTab?: (tab: 'setores' | 'avulsa' | 'respostas') => void;
+  setRotinaSubTab?: (tab: 'importar' | 'vida' | 'produtividade') => void;
+  setSisrefShowPendencias?: (show: boolean) => void;
 }
 
-export default function Dashboard({ state, updateState, onToast, setActiveTab, setSisrefSubTab }: DashboardProps) {
+export default function Dashboard({ state, updateState, onToast, setActiveTab, setSisrefSubTab, setRotinaSubTab, setSisrefShowPendencias }: DashboardProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -74,6 +76,10 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   // Sort them by date ascending
   allAbonos.sort((a, b) => (a.data || "").localeCompare(b.data || ""));
 
+  // Only next upcoming vacation and abono (posterior to today's system date)
+  const proximaFeria = allFerias.find(p => p.inicio && p.inicio >= hoje);
+  const proximoAbono = allAbonos.find(a => a.data && a.data >= hoje);
+
   // Check what is active today based on the dates across all years
   const activeFerias = allFerias.filter(p => {
     if (!p.inicio || !p.fim) return false;
@@ -107,6 +113,25 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
     }
     setActiveTab('sisref');
     onToast("Abrindo Fila Avulsa no SISREF...", "info");
+  };
+
+  const resolverPendenciasAvulsa = () => {
+    if (setSisrefSubTab) {
+      setSisrefSubTab('avulsa');
+    }
+    if (setSisrefShowPendencias) {
+      setSisrefShowPendencias(true);
+    }
+    setActiveTab('sisref');
+    onToast("Direcionando para as Pendências no SISREF...", "info");
+  };
+
+  const irParaVidaFuncional = () => {
+    if (setRotinaSubTab) {
+      setRotinaSubTab('vida');
+    }
+    setActiveTab('rotina');
+    onToast("Abrindo histórico de Vida Funcional...", "info");
   };
 
   const irParaAbonoAniversario = () => {
@@ -275,60 +300,72 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Férias list */}
-              <div className="p-4 bg-[var(--bg)]/10 border border-[var(--border2)] rounded-2xl">
-                <div className="flex items-center gap-2 mb-3 text-xs font-black text-amber-600 uppercase tracking-wide">
-                  <Palmtree size={14} /> Férias Programadas
-                </div>
-                {allFerias.length > 0 ? (
-                  <div className="space-y-2">
-                    {allFerias.map((p, idx) => {
-                      const isNow = p.inicio && p.fim && new Date(hoje).getTime() >= new Date(p.inicio).getTime() && new Date(hoje).getTime() <= new Date(p.fim).getTime();
-                      return (
-                        <div key={idx} className={`p-2.5 rounded-xl text-xs border ${isNow ? 'bg-amber-50 border-amber-300 dark:bg-amber-950/20' : 'bg-[var(--surface)] border-[var(--border)]'}`}>
-                          <div className="font-bold text-[var(--text)] flex justify-between">
-                            <span>Exercício {p.exercicio}</span>
-                            {isNow && <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">Vigente</span>}
-                          </div>
-                          <div className="text-[var(--text2)] font-mono mt-1">
-                            {p.inicio ? new Date(p.inicio + "T12:00:00").toLocaleDateString('pt-BR') : '—'} a {p.fim ? new Date(p.fim + "T12:00:00").toLocaleDateString('pt-BR') : '—'}
-                          </div>
-                          {p.processo && <div className="text-[10px] text-[var(--text2)] font-semibold mt-0.5">SEI: {p.processo}</div>}
-                        </div>
-                      );
-                    })}
+              {/* Próximas Férias card */}
+              <div 
+                onClick={irParaVidaFuncional}
+                className="group p-5 bg-[var(--bg)] hover:bg-[var(--surface-hover)] border border-[var(--border)] hover:border-amber-400 rounded-2xl cursor-pointer transition-all duration-200 shadow-2xs flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 text-xs font-black text-amber-600 uppercase tracking-wide">
+                      <Palmtree size={16} /> Próximas Férias
+                    </div>
+                    <span className="text-[10px] text-[var(--text2)] group-hover:text-amber-600 transition-colors">Ver todas →</span>
                   </div>
-                ) : (
-                  <div className="text-xs text-[var(--text2)] italic py-3 text-center">Nenhum período de férias programado.</div>
-                )}
+                  {proximaFeria ? (
+                    <div>
+                      <div className="font-bold text-[var(--text)] text-sm">
+                        Exercício {proximaFeria.exercicio}
+                      </div>
+                      <div className="text-[var(--text2)] text-xs font-mono mt-1">
+                        {proximaFeria.inicio ? new Date(proximaFeria.inicio + "T12:00:00").toLocaleDateString('pt-BR') : '—'} a {proximaFeria.fim ? new Date(proximaFeria.fim + "T12:00:00").toLocaleDateString('pt-BR') : '—'}
+                      </div>
+                      {proximaFeria.processo && (
+                        <div className="text-[10px] text-[var(--text2)] font-semibold mt-1">
+                          SEI: {proximaFeria.processo}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-[var(--text2)] italic py-2">
+                      Nenhuma programação futura encontrada.
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Abonos list */}
-              <div className="p-4 bg-[var(--bg)]/10 border border-[var(--border2)] rounded-2xl">
-                <div className="flex items-center gap-2 mb-3 text-xs font-black text-blue-600 uppercase tracking-wide">
-                  <CalendarCheck size={14} /> Abonos Autorizados
-                </div>
-                {allAbonos.length > 0 ? (
-                  <div className="space-y-2">
-                    {allAbonos.map((a, idx) => {
-                      const isToday = a.data === hoje;
-                      return (
-                        <div key={idx} className={`p-2.5 rounded-xl text-xs border ${isToday ? 'bg-blue-50 border-blue-300 dark:bg-blue-950/20' : 'bg-[var(--surface)] border-[var(--border)]'}`}>
-                          <div className="font-bold text-[var(--text)] flex justify-between">
-                            <span>Exercício {a.exercicio}</span>
-                            {isToday && <span className="text-[9px] font-black uppercase text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">Hoje</span>}
-                          </div>
-                          <div className="text-[var(--text2)] font-mono mt-1">
-                            {new Date(a.data + "T12:00:00").toLocaleDateString('pt-BR')}
-                          </div>
-                          {a.processo && <div className="text-[10px] text-[var(--text2)] font-semibold mt-0.5">SEI: {a.processo}</div>}
-                        </div>
-                      );
-                    })}
+              {/* Próximo Abono card */}
+              <div 
+                onClick={irParaVidaFuncional}
+                className="group p-5 bg-[var(--bg)] hover:bg-[var(--surface-hover)] border border-[var(--border)] hover:border-blue-400 rounded-2xl cursor-pointer transition-all duration-200 shadow-2xs flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 text-xs font-black text-blue-600 uppercase tracking-wide">
+                      <CalendarCheck size={16} /> Próximo Abono
+                    </div>
+                    <span className="text-[10px] text-[var(--text2)] group-hover:text-blue-600 transition-colors">Ver todos →</span>
                   </div>
-                ) : (
-                  <div className="text-xs text-[var(--text2)] italic py-3 text-center">Nenhum abono agendado ou autorizado.</div>
-                )}
+                  {proximoAbono ? (
+                    <div>
+                      <div className="font-bold text-[var(--text)] text-sm">
+                        Exercício {proximoAbono.exercicio}
+                      </div>
+                      <div className="text-[var(--text2)] text-xs font-mono mt-1">
+                        {new Date(proximoAbono.data + "T12:00:00").toLocaleDateString('pt-BR')}
+                      </div>
+                      {proximoAbono.processo && (
+                        <div className="text-[10px] text-[var(--text2)] font-semibold mt-1">
+                          SEI: {proximoAbono.processo}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-[var(--text2)] italic py-2">
+                      Nenhum agendamento futuro encontrado.
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -397,7 +434,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
                   <div className="text-3xl font-black">{pendenciasAvulsa}</div>
                 </div>
               </div>
-              <button onClick={iniciarConferenciaAvulsaRapida} className="mt-4 w-full text-red-600 hover:bg-red-100 dark:hover:bg-red-950/50 py-3 rounded-2xl font-bold transition-all">
+              <button onClick={resolverPendenciasAvulsa} className="mt-4 w-full text-red-600 hover:bg-red-100 dark:hover:bg-red-950/50 py-3 rounded-2xl font-bold transition-all cursor-pointer">
                 Resolver Pendências
               </button>
             </div>
