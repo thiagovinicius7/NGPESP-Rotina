@@ -321,6 +321,14 @@ export default function SisrefPanel({ state, updateState, onToast, openModal }: 
   const currentQueue = state.filaAvulsa.listas[state.filaAvulsa.ativa || "Padrão"] || { fila: [], idx: 0 };
   const currentQueueServer = currentQueue.fila[currentQueue.idx];
 
+  const totalServers = currentQueue.fila.length;
+  const remainingServers = Math.max(0, totalServers - currentQueue.idx);
+  const totalLancamentos = currentQueue.fila.reduce((sum, s) => sum + (s.ocorrencias?.length || 0), 0);
+  const lancamentosConcluidosPre = currentQueue.fila.slice(0, currentQueue.idx).reduce((sum, s) => sum + (s.ocorrencias?.length || 0), 0);
+  const lancamentosConcluidosCur = currentQueueServer ? currentQueueServer.ocorrencias.filter(o => o.checked).length : 0;
+  const lancamentosConcluidos = lancamentosConcluidosPre + lancamentosConcluidosCur;
+  const remainingLancamentos = Math.max(0, totalLancamentos - lancamentosConcluidos);
+
   const toggleOcorrenciaCheck = (ocIdx: number) => {
     updateState(prev => {
       const activeQueueName = prev.filaAvulsa.ativa || "Padrão";
@@ -1105,13 +1113,29 @@ export default function SisrefPanel({ state, updateState, onToast, openModal }: 
             /* Active queue conferência workflow */
             <div className="flex flex-col gap-6">
               <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden shadow-sm">
-                <div className="p-5 border-b border-[var(--border)] flex justify-between items-center">
-                  <span className="text-xs font-bold text-[var(--text2)] uppercase flex items-center gap-1">
-                    <ListTodo size={14} /> Fila de conferência
-                  </span>
-                  <span className="text-xs font-bold text-[var(--text2)]">
-                    Faltam: {currentQueue.fila.length - currentQueue.idx} srv.
-                  </span>
+                <div className="p-5 border-b border-[var(--border)] flex flex-col gap-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-[var(--text2)] uppercase flex items-center gap-1">
+                      <ListTodo size={14} /> Fila de conferência
+                    </span>
+                    <span className="text-xs font-bold text-[var(--blue-mid)] bg-[var(--blue-light)] px-2 py-0.5 rounded-full">
+                      Fila: {state.filaAvulsa.ativa || "Padrão"}
+                    </span>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-[var(--border2)] flex flex-col gap-1.5 text-xs text-[var(--text2)] font-semibold">
+                    <div className="flex justify-between items-center flex-wrap gap-1">
+                      <span>Servidores na fila:</span>
+                      <span className="font-bold text-[var(--text)] text-right">
+                        faltam {remainingServers} servidores de {totalServers} total de servidores na fila
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center flex-wrap gap-1">
+                      <span>Lançamentos na fila:</span>
+                      <span className="font-bold text-[var(--text)] text-right">
+                        faltam {remainingLancamentos} lançamentos de {totalLancamentos} total de lançamentos na fila
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Active check card */}

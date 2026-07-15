@@ -5,8 +5,10 @@ import {
   Trash2, DownloadCloud, ClipboardPaste, BellRing, FolderOpen, 
   Palmtree, CalendarCheck, Stethoscope, Save, Settings2, Plus, 
   X, Check, Sunrise, Sunset, History, Calendar, FileText, 
-  ArrowRight, Edit, AlertTriangle, AlertCircle, CheckCircle
+  ArrowRight, Edit, AlertTriangle, AlertCircle, CheckCircle,
+  Database, RefreshCw, Key
 } from "lucide-react";
+import { syncToGoogleSheets, loadServersFromBackup } from "../lib/googleSheetsSync.js";
 
 interface RotinaPanelProps {
   state: AppState;
@@ -14,9 +16,23 @@ interface RotinaPanelProps {
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
   forceSync: () => Promise<void>;
   syncing: boolean;
+  googleUser: any;
+  googleToken: string | null;
+  onGoogleLogin: () => Promise<void>;
+  onGoogleLogout: () => Promise<void>;
 }
 
-export default function RotinaPanel({ state, updateState, onToast, forceSync, syncing }: RotinaPanelProps) {
+export default function RotinaPanel({ 
+  state, 
+  updateState, 
+  onToast, 
+  forceSync, 
+  syncing,
+  googleUser,
+  googleToken,
+  onGoogleLogin,
+  onGoogleLogout
+}: RotinaPanelProps) {
   const [subTab, setSubTab] = useState<'importar' | 'vida' | 'produtividade'>('importar');
 
   // GAS connection and syncing
@@ -27,6 +43,123 @@ export default function RotinaPanel({ state, updateState, onToast, forceSync, sy
   const [tsvText, setTsvText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [importType, setImportType] = useState<'servidores' | 'respostas' | 'faq' | 'filaAvulsa' | 'produtividade' | 'balcaoAtendimentos' | 'afastamentos'>('servidores');
+
+  // Passcode settings state
+  const [newPassword, setNewPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
+
+  const handleUpdatePassword = () => {
+    if (!newPassword.trim()) {
+      onToast("A senha não pode estar em branco.", "err");
+      return;
+    }
+    
+    updateState(prev => ({
+      config: {
+        ...prev.config,
+        appPassword: newPassword.trim()
+      }
+    }));
+    
+    onToast("Senha do sistema alterada com sucesso!", "ok");
+    setNewPassword("");
+  };
+
+  // Google Sheets Direct API Backup States
+  const [googleSyncStatus, setGoogleSyncStatus] = useState<string>("");
+  const [googleSyncType, setGoogleSyncType] = useState<'info' | 'ok' | 'err' | ''>("");
+  const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
+
+  const handleDirectBackupSync = async () => {
+    if (!googleToken) {
+      onToast("Por favor, conecte-se ao Google primeiro.", "err");
+      return;
+    }
+    setIsGoogleSyncing(true);
+    setGoogleSyncType("info");
+    setGoogleSyncStatus("Iniciando backup...");
+    try {
+      const currentId = state.config.spreadsheetId || null;
+      const sheetId = await syncToGoogleSheets(googleToken, state, currentId, (prog) => {
+        setGoogleSyncStatus(prog.message);
+        setGoogleSyncType(prog.type);
+      });
+      
+      // Update state with spreadsheetId if new or empty
+      if (sheetId !== currentId) {
+        updateState(prev => ({
+          config: {
+            ...prev.config,
+            spreadsheetId: sheetId,
+            backupEnabled: true
+          }
+        }));
+      }
+      onToast("Backup sincronizado com sucesso no Google Sheets!", "ok");
+    } catch (err: any) {
+      setGoogleSyncType("err");
+      setGoogleSyncStatus(`Erro ao salvar backup: ${err.message || err}`);
+      onToast("Erro na sincronização do Google Sheets", "err");
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  };
+
+  const handleRestoreFromGoogleBackup = async () => {
+    const sheetId = state.config.spreadsheetId;
+    if (!googleToken) {
+      onToast("Por favor, conecte-se ao Google primeiro.", "err");
+      return;
+    }
+    if (!sheetId) {
+      onToast("Nenhuma planilha de backup configurada. Realize o backup primeiro para criar uma planilha.", "err");
+      return;
+    }
+    
+    if (!confirm("Isso irá acrescentar os servidores da planilha à sua lista local (novos serão adicionados e os existentes serão atualizados sem apagar os antigos). Deseja prosseguir?")) {
+      return;
+    }
+    
+    setIsGoogleSyncing(true);
+    setGoogleSyncType("info");
+    setGoogleSyncStatus("Carregando servidores da planilha...");
+    try {
+      const backupServers = await loadServersFromBackup(googleToken, sheetId, (prog) => {
+        setGoogleSyncStatus(prog.message);
+        setGoogleSyncType(prog.type);
+      });
+      
+      if (backupServers.length === 0) {
+        setGoogleSyncType("err");
+        setGoogleSyncStatus("Nenhum servidor encontrado no backup.");
+        onToast("Nenhum dado encontrado para restaurar", "err");
+        return;
+      }
+      
+      updateState(prev => {
+        const existingMap = new Map(prev.servidores.map(s => [String(s.matricula).trim(), s]));
+        backupServers.forEach(srv => {
+          const mat = String(srv.matricula).trim();
+          if (existingMap.has(mat)) {
+            existingMap.set(mat, { ...existingMap.get(mat)!, ...srv });
+          } else {
+            existingMap.set(mat, srv);
+          }
+        });
+        return { servidores: Array.from(existingMap.values()) };
+      });
+      
+      setGoogleSyncType("ok");
+      setGoogleSyncStatus(`Importação concluída! ${backupServers.length} servidores sincronizados.`);
+      onToast(`${backupServers.length} servidores sincronizados do backup!`, "ok");
+    } catch (err: any) {
+      setGoogleSyncType("err");
+      setGoogleSyncStatus(`Erro na importação: ${err.message || err}`);
+      onToast("Falha ao carregar servidores do backup", "err");
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  };
 
   // Vida Funcional
   const [seiForm, setSeiForm] = useState<{ idx: number; num: string; desc: string } | null>(null);
@@ -180,8 +313,29 @@ export default function RotinaPanel({ state, updateState, onToast, forceSync, sy
           onToast("Nenhum dado de servidor válido identificado.", "err");
           return;
         }
-        updateState({ servidores: data });
-        onToast(`${data.length} servidores importados com sucesso!`, "ok");
+
+        updateState(prev => {
+          const existingMap = new Map(prev.servidores.map(s => [String(s.matricula).trim(), s]));
+          let addedCount = 0;
+          let updatedCount = 0;
+
+          data.forEach(srv => {
+            const mat = String(srv.matricula).trim();
+            if (existingMap.has(mat)) {
+              existingMap.set(mat, { ...existingMap.get(mat)!, ...srv });
+              updatedCount++;
+            } else {
+              existingMap.set(mat, srv);
+              addedCount++;
+            }
+          });
+
+          return {
+            servidores: Array.from(existingMap.values())
+          };
+        });
+        
+        onToast(`${data.length} servidores processados com sucesso (novos adicionados e antigos preservados)!`, "ok");
       }
       
       else if (type === 'respostas') {
@@ -658,6 +812,173 @@ export default function RotinaPanel({ state, updateState, onToast, forceSync, sy
       {/* IMPORT TAB CONTENT */}
       {subTab === 'importar' && (
         <div className="flex flex-col gap-6">
+
+          {/* GOOGLE SHEETS DIRECT API SYNCHRONIZER (SECURE BACKUP) */}
+          <div className="bg-[var(--surface)] border-2 border-[var(--blue-mid)] rounded-2xl p-6 shadow-sm overflow-hidden relative">
+            <div className="absolute top-0 right-0 bg-[var(--blue-mid)] text-white px-3 py-1 rounded-bl-xl text-[10px] font-black uppercase tracking-wider">
+              Backup Seguro
+            </div>
+            <div className="text-xs font-bold text-[var(--text)] uppercase tracking-wider mb-2 flex items-center gap-2">
+              <Database className="text-[var(--blue-mid)]" size={16} /> Backup Direto no Google Sheets
+            </div>
+            <p className="text-xs text-[var(--text2)] mb-4 font-semibold leading-relaxed">
+              Evite perdas! Faça login com o Google para salvar e sincronizar todos os seus servidores, histórico, respostas rápidas e perguntas frequentes diretamente em uma planilha no seu Google Drive.
+            </p>
+
+            {!googleUser ? (
+              <div className="bg-[var(--bg)] border border-[var(--border2)] rounded-xl p-6 flex flex-col items-center justify-center text-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-[var(--blue-mid)]/10 flex items-center justify-center text-[var(--blue-mid)]">
+                  <Key size={24} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-extrabold text-[var(--text)]">Conectar Conta Google</h4>
+                  <p className="text-[10px] text-[var(--text2)] font-semibold mt-1">
+                    É necessária autorização de leitura e escrita para salvar a planilha de backup.
+                  </p>
+                </div>
+                <button
+                  onClick={onGoogleLogin}
+                  className="flex items-center gap-3 px-5 py-2.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-xl shadow-xs text-gray-700 font-bold text-xs transition-all duration-200 cursor-pointer"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 48 48">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                    <path fill="none" d="M0 0h48v48H0z"></path>
+                  </svg>
+                  Conectar com o Google
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between p-3 bg-[var(--bg)] border border-[var(--border2)] rounded-xl">
+                  <div className="flex items-center gap-3">
+                    {googleUser.photoURL ? (
+                      <img src={googleUser.photoURL} alt={googleUser.displayName} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full border border-[var(--border2)]" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-[var(--blue-mid)] text-white font-bold flex items-center justify-center text-xs">
+                        {googleUser.displayName?.[0] || googleUser.email?.[0]}
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-xs font-black text-[var(--text)]">{googleUser.displayName || "Usuário Conectado"}</div>
+                      <div className="text-[10px] text-[var(--text2)] font-semibold">{googleUser.email}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={onGoogleLogout}
+                    className="px-3 py-1.5 border border-red-200 text-red-500 hover:bg-red-50 text-[10px] font-bold rounded-lg cursor-pointer transition-all"
+                  >
+                    Desconectar
+                  </button>
+                </div>
+
+                <div className="border border-[var(--border2)] rounded-xl p-4 bg-[var(--bg)]/30">
+                  <div className="text-xs font-bold text-[var(--text)] mb-2 flex items-center gap-1.5">
+                    <span className={`w-2.5 h-2.5 rounded-full ${state.config.spreadsheetId ? 'bg-green-500' : 'bg-amber-500'}`}></span>
+                    {state.config.spreadsheetId ? "Planilha de Backup Ativa" : "Nenhum Backup Criado Ainda"}
+                  </div>
+
+                  {state.config.spreadsheetId ? (
+                    <div className="flex flex-col gap-2">
+                      <div className="p-2.5 bg-[var(--bg)] border border-[var(--border2)] rounded-lg font-mono text-[10px] text-[var(--text2)] break-all select-all">
+                        Spreadsheet ID: {state.config.spreadsheetId}
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <button
+                          onClick={handleDirectBackupSync}
+                          disabled={isGoogleSyncing}
+                          className="px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <RefreshCw size={14} className={isGoogleSyncing ? "animate-spin" : ""} />
+                          Sincronizar Planilha de Backup
+                        </button>
+                        <button
+                          onClick={handleRestoreFromGoogleBackup}
+                          disabled={isGoogleSyncing}
+                          className="px-4 py-2 bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] disabled:opacity-50 text-[var(--text)] text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <DownloadCloud size={14} />
+                          Importar e Mesclar do Backup
+                        </button>
+                        <a
+                          href={`https://docs.google.com/spreadsheets/d/${state.config.spreadsheetId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer no-underline"
+                        >
+                          <FolderOpen size={14} />
+                          Abrir no Google Planilhas
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-[10px] text-[var(--text2)] font-semibold mb-2">
+                        Você ainda não criou sua planilha de backup automático. Clique no botão abaixo para criar uma planilha formatada no seu Drive e fazer a primeira sincronização.
+                      </p>
+                      <button
+                        onClick={handleDirectBackupSync}
+                        disabled={isGoogleSyncing}
+                        className="self-start px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                      >
+                        <Plus size={14} className={isGoogleSyncing ? "animate-spin" : ""} />
+                        Criar Planilha de Backup Inicial
+                      </button>
+                    </div>
+                  )}
+
+                  {googleSyncStatus && (
+                    <div className="mt-4 p-3 bg-gray-900 border border-gray-800 rounded-lg flex items-center gap-2.5 font-mono text-[10px] leading-relaxed">
+                      {isGoogleSyncing && <RefreshCw size={12} className="text-blue-400 animate-spin flex-shrink-0" />}
+                      <span className={googleSyncType === 'ok' ? 'text-green-400' : googleSyncType === 'err' ? 'text-red-400' : 'text-blue-400'}>
+                        {googleSyncStatus}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* CONFIGURAÇÃO DE SENHA DO SISTEMA */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
+            <div className="text-xs font-bold text-[var(--text)] uppercase tracking-wider mb-2 flex items-center gap-2">
+              <Key className="text-[var(--blue-mid)]" size={16} /> Senha de Segurança do Sistema
+            </div>
+            <p className="text-xs text-[var(--text2)] mb-4 font-semibold leading-relaxed">
+              Defina a senha numérica de acesso necessária para visualizar e operar este painel de conferência. Senha atual padrão se não configurada: <strong className="font-mono text-[var(--blue-mid)]">456321</strong>.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-3 max-w-md">
+              <div className="relative flex-1">
+                <input 
+                  type={showPass ? "text" : "password"} 
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Nova senha (ex: 456321)"
+                  className="w-full p-3 text-xs rounded-xl font-mono border border-[var(--border2)] bg-[var(--bg)] outline-none text-[var(--text)] pr-12"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPass(!showPass)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black uppercase text-[var(--text2)] hover:text-[var(--text)] cursor-pointer"
+                >
+                  {showPass ? "Ocultar" : "Mostrar"}
+                </button>
+              </div>
+              <button 
+                onClick={handleUpdatePassword}
+                className="px-5 py-3 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition-all"
+              >
+                <Save size={14} /> Atualizar Senha
+              </button>
+            </div>
+            <div className="mt-2 text-[10px] text-[var(--text2)] font-semibold">
+              Senha atualmente em uso: <span className="font-mono font-black text-[var(--text)]">{state.config.appPassword || "456321 (Padrão)"}</span>
+            </div>
+          </div>
           
           {/* 1. GOOGLE SHEETS ACTIVE SYNCHRONIZER (APPS SCRIPT) */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">

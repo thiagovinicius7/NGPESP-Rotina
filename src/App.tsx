@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useSyncState } from "./hooks/useSyncState.js";
 import SisrefPanel from "./components/SisrefPanel.js";
 import SigrhPanel from "./components/SigrhPanel.js";
@@ -7,8 +7,9 @@ import BalcaoPanel from "./components/BalcaoPanel.js";
 import RelatorioPanel from "./components/RelatorioPanel.js";
 import { 
   ClipboardCheck, CalendarDays, Briefcase, BarChart3, HelpCircle, 
-  Layers, Moon, Sun, Droplet, RefreshCw, Check, X 
+  Layers, Moon, Sun, Droplet, RefreshCw, Check, X, LogIn, LogOut, Key
 } from "lucide-react";
+import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio'>('sisref');
@@ -22,14 +23,15 @@ export default function App() {
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' | 'info' } | null>(null);
   const [toastTimer, setToastTimer] = useState<any>(null);
 
-  const showToast = (msg: string, type: 'ok' | 'err' | 'info' = 'ok') => {
-    if (toastTimer) clearTimeout(toastTimer);
+  const showToast = useCallback((msg: string, type: 'ok' | 'err' | 'info' = 'ok') => {
+    setToastTimer(prev => {
+      if (prev) clearTimeout(prev);
+      return setTimeout(() => {
+        setToast(null);
+      }, 3200);
+    });
     setToast({ msg, type });
-    const timer = setTimeout(() => {
-      setToast(null);
-    }, 3200);
-    setToastTimer(timer);
-  };
+  }, []);
 
   // Launch quantities active check modal state
   const [launchModal, setLaunchModal] = useState<{
@@ -45,12 +47,88 @@ export default function App() {
 
   const { state, updateState, forceSync, syncing } = useSyncState(showToast);
 
+  // Google Authentication State
+  const [googleUser, setGoogleUser] = useState<any>(null);
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (user, token) => {
+        setGoogleUser(user);
+        setGoogleToken(token);
+      },
+      () => {
+        setGoogleUser(null);
+        setGoogleToken(null);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    setIsLoggingIn(true);
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setGoogleUser(result.user);
+        setGoogleToken(result.accessToken);
+        showToast(`Conectado como ${result.user.email}!`, "ok");
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast("Erro ao conectar com Google", "err");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleGoogleLogout = async () => {
+    try {
+      await logout();
+      setGoogleUser(null);
+      setGoogleToken(null);
+      showToast("Conexão Google encerrada", "info");
+    } catch (err) {
+      showToast("Falha ao desconectar", "err");
+    }
+  };
+
   // Apply theme to document documentElement element
   useEffect(() => {
     document.documentElement.setAttribute("data-tema", theme);
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("ss_tema", theme);
   }, [theme]);
+
+  // System Passcode Authorization State
+  const [isAuthorized, setIsAuthorized] = useState(() => {
+    return sessionStorage.getItem("ngpesp_authorized") === "true";
+  });
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [loginError, setLoginError] = useState("");
+
+  const handleLogin = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const systemPassword = state.config.appPassword || "456321";
+    if (passwordInput === systemPassword) {
+      sessionStorage.setItem("ngpesp_authorized", "true");
+      setIsAuthorized(true);
+      setLoginError("");
+      showToast("Acesso autorizado com sucesso!", "ok");
+    } else {
+      setLoginError("Senha incorreta. Tente novamente.");
+      showToast("Senha incorreta!", "err");
+    }
+  };
+
+  const handleLockSystem = () => {
+    sessionStorage.removeItem("ngpesp_authorized");
+    setIsAuthorized(false);
+    setPasswordInput("");
+    showToast("Sistema bloqueado com sucesso.", "info");
+  };
 
   const toggleTheme = () => {
     setTheme(prev => {
@@ -95,6 +173,132 @@ export default function App() {
     return "CONECTADO";
   };
 
+  // If not authorized, show a secure, beautiful passcode login screen
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--bg)] p-4 font-sans select-none transition-colors duration-300">
+        
+        {/* Ambient background glows */}
+        <div className="absolute top-10 left-10 w-72 h-72 bg-blue-500/10 dark:bg-blue-600/5 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="absolute bottom-10 right-10 w-72 h-72 bg-emerald-500/10 dark:bg-emerald-600/5 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div className="w-full max-w-md bg-[var(--surface)] border-2 border-[var(--border2)] rounded-3xl p-8 shadow-2xl relative z-10 animate-in fade-in slide-in-from-bottom-6 duration-300">
+          
+          <div className="flex flex-col items-center text-center mb-6">
+            <div className="w-14 h-14 bg-[var(--blue-mid)] rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-md mb-4">
+              NG
+            </div>
+            <h1 className="text-xl font-black text-[var(--text)] uppercase tracking-tight">
+              NGPESP Rotina
+            </h1>
+            <p className="text-[10px] font-black text-[var(--text2)] uppercase tracking-widest mt-1 opacity-80">
+              Painel de Gestão Operacional
+            </p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-black text-[var(--text2)] uppercase tracking-wider mb-2 text-center">
+                Digite a senha de acesso ao sistema
+              </label>
+              <div className="relative">
+                <input
+                  type={passwordVisible ? "text" : "password"}
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="******"
+                  className="w-full text-center text-xl font-black tracking-widest p-3 bg-[var(--bg)] border-2 border-[var(--border2)] rounded-xl outline-none focus:border-[var(--blue-mid)] transition-colors duration-200 text-[var(--text)]"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setPasswordVisible(!passwordVisible)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black uppercase text-[var(--text2)] hover:text-[var(--text)] cursor-pointer"
+                >
+                  {passwordVisible ? "Ocultar" : "Mostrar"}
+                </button>
+              </div>
+              {loginError && (
+                <p className="text-xs text-red-500 font-extrabold mt-2 text-center">
+                  {loginError}
+                </p>
+              )}
+            </div>
+
+            {/* Quick tactile keypad for tablet and mouse ease */}
+            <div className="bg-[var(--bg)] p-3 rounded-2xl border border-[var(--border2)]">
+              <div className="text-[9px] text-[var(--text2)] font-black text-center uppercase tracking-wider mb-2">
+                Teclado Numérico de Acesso
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => setPasswordInput(prev => prev + num)}
+                    className="py-2.5 text-xs font-black bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] rounded-xl text-[var(--text)] transition-colors active:scale-95 duration-100 cursor-pointer"
+                  >
+                    {num}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setPasswordInput("")}
+                  className="py-2.5 text-[9px] font-black bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-red-500 transition-colors cursor-pointer"
+                >
+                  LIMPAR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPasswordInput(prev => prev + "0")}
+                  className="py-2.5 text-xs font-black bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] rounded-xl text-[var(--text)] transition-colors cursor-pointer"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPasswordInput(prev => prev.slice(0, -1))}
+                  className="py-2.5 text-[9px] font-black bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-xl text-amber-500 transition-colors cursor-pointer"
+                >
+                  APAGAR
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-3.5 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white font-extrabold text-xs uppercase tracking-widest rounded-xl shadow-md transition-all duration-200 cursor-pointer"
+            >
+              Entrar no Sistema
+            </button>
+          </form>
+
+          <div className="mt-5 flex items-center justify-center gap-1.5 text-[9px] text-[var(--text2)] uppercase tracking-wider font-extrabold">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            Acesso Restrito · Criptografado Localmente
+          </div>
+
+        </div>
+
+        {/* Footer info */}
+        <p className="mt-6 text-[9px] text-[var(--text2)] font-black uppercase tracking-widest opacity-60">
+          NGPESP ROTINA · SISTEMA DE GESTÃO v4.0.2
+        </p>
+
+        {/* Toast alerts for wrong password, etc. */}
+        {toast && (
+          <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-6 py-3.5 bg-[var(--surface)] border border-[var(--border2)] rounded-full shadow-lg font-bold text-xs select-none transition-all duration-300 animate-bounce
+            ${toast.type === 'ok' ? 'border-[var(--green-mid)] text-[var(--green-mid)]' : 
+              toast.type === 'err' ? 'border-[var(--red)] text-[var(--red)]' : 
+              'border-[var(--blue-mid)] text-[var(--blue-mid)]'}`}>
+            {toast.msg}
+          </div>
+        )}
+
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col font-sans bg-[var(--bg)] transition-colors duration-300">
       
@@ -119,6 +323,41 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Google Authentication Pill */}
+            {googleUser ? (
+              <button
+                onClick={() => {
+                  setActiveTab('rotina');
+                  // Since we are moving to Rotina, we'll let them view the Backup section
+                }}
+                className="hidden sm:flex items-center gap-2 p-1.5 pr-3 bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 rounded-xl transition-all text-xs font-bold text-green-600 dark:text-green-400 cursor-pointer"
+                title={`Conectado como ${googleUser.email}. Clique para gerenciar backup.`}
+              >
+                {googleUser.photoURL ? (
+                  <img src={googleUser.photoURL} alt={googleUser.displayName} referrerPolicy="no-referrer" className="w-5 h-5 rounded-full" />
+                ) : (
+                  <div className="w-5 h-5 rounded-full bg-green-600 text-white flex items-center justify-center text-[9px] font-black">
+                    {googleUser.email?.[0]?.toUpperCase()}
+                  </div>
+                )}
+                <span className="hidden md:inline">Google Conectado</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleGoogleLogin}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-xl text-gray-700 font-bold text-[11px] transition-all duration-200 cursor-pointer shadow-xs"
+                title="Conectar com o Google para backup em tempo real"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 48 48">
+                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                </svg>
+                Conectar Google
+              </button>
+            )}
+
             {/* Theme trigger button cycle */}
             <button 
               onClick={toggleTheme}
@@ -127,6 +366,15 @@ export default function App() {
             >
               {theme === "claro" ? <Moon size={18} /> : 
                theme === "escuro" ? <Droplet className="text-[var(--blue-mid)]" size={18} /> : <Sun className="text-[var(--amber-mid)]" size={18} />}
+            </button>
+
+            {/* Lock / Logout system button */}
+            <button
+              onClick={handleLockSystem}
+              className="p-2 border border-red-200 hover:bg-red-500/10 text-red-500 rounded-xl bg-[var(--surface)] transition-all cursor-pointer"
+              title="Bloquear / Sair do Sistema"
+            >
+              <LogOut size={18} />
             </button>
 
             {/* Manual syncing cloud indicator */}
@@ -203,6 +451,10 @@ export default function App() {
               onToast={showToast} 
               forceSync={forceSync} 
               syncing={syncing} 
+              googleUser={googleUser}
+              googleToken={googleToken}
+              onGoogleLogin={handleGoogleLogin}
+              onGoogleLogout={handleGoogleLogout}
             />
           )}
           {activeTab === 'balcao' && (

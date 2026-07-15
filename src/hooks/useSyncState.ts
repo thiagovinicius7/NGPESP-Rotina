@@ -44,10 +44,17 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     return cached ? Number(cached) : 0;
   });
 
+  const onToastRef = useRef(onToast);
+  useEffect(() => {
+    onToastRef.current = onToast;
+  }, [onToast]);
+
   const [syncing, setSyncing] = useState(false);
   
   const stateRef = useRef<AppState>(state);
+  const latestStateRef = useRef<AppState>(state);
   const lastUpdatedRef = useRef<number>(lastUpdated);
+  const pushTimeoutRef = useRef<any>(null);
   
   // Track if we have successfully completed the initial load from the server
   const hasLoadedFromServerRef = useRef<boolean>(false);
@@ -56,6 +63,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
 
   useEffect(() => {
     stateRef.current = state;
+    latestStateRef.current = state;
   }, [state]);
 
   useEffect(() => {
@@ -69,18 +77,24 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       
       // Save locally immediately
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
-      
-      // Mark as dirty since we have a local change
-      isDirtyRef.current = true;
-
-      // Auto-trigger push to cloud server, but ONLY if we have already loaded the server's state.
-      // This prevents overwriting the server's data with an empty state on initial load/mount.
-      if (hasLoadedFromServerRef.current) {
-        pushStateToServer(updated);
-      }
+      latestStateRef.current = updated;
+      stateRef.current = updated;
       
       return updated;
     });
+
+    // Mark as dirty since we have a local change
+    isDirtyRef.current = true;
+
+    // Debounce pushing to cloud server (1000ms is standard, non-disruptive, safe time for typing)
+    if (hasLoadedFromServerRef.current) {
+      if (pushTimeoutRef.current) {
+        clearTimeout(pushTimeoutRef.current);
+      }
+      pushTimeoutRef.current = setTimeout(() => {
+        pushStateToServer(latestStateRef.current);
+      }, 1000);
+    }
   };
 
   const pushStateToServer = async (currentState: AppState) => {
@@ -109,6 +123,9 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   // Force sync from/to server
   const forceSync = async () => {
     setSyncing(true);
+    if (pushTimeoutRef.current) {
+      clearTimeout(pushTimeoutRef.current);
+    }
     try {
       const res = await fetch("/api/state");
       if (res.ok) {
@@ -142,37 +159,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     }
   };
 
-  // Setup periodic background polling for cloud real-time sync
+  // 1. Initial pull on startup to load server state (Runs only ONCE on mount)
   useEffect(() => {
-    const fetchLatest = async () => {
-      // Do not poll or overwrite if we haven't successfully loaded yet or if we have unsaved local edits
-      if (!hasLoadedFromServerRef.current || isDirtyRef.current) {
-        return;
-      }
-      try {
-        const res = await fetch("/api/state");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === "ok") {
-            const serverTime = Number(data.updatedAt);
-            const localTime = lastUpdatedRef.current;
-
-            // Only update locally if server has a strictly newer state, and we are not dirty
-            if (serverTime > localTime && !isDirtyRef.current) {
-              setStateState(data.state);
-              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data.state));
-              setLastUpdated(serverTime);
-              localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
-              onToast("Novos dados recebidos da nuvem", "info");
-            }
-          }
-        }
-      } catch (_) {
-        // Silent error for periodic polling
-      }
-    };
-
-    // Initial pull on startup to load server state
     const initialFetch = async () => {
       try {
         const res = await fetch("/api/state");
@@ -200,11 +188,42 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     };
 
     initialFetch();
+  }, []);
+
+  // 2. Setup periodic background polling for cloud real-time sync (Runs only ONCE on mount)
+  useEffect(() => {
+    const fetchLatest = async () => {
+      // Do not poll or overwrite if we haven't successfully loaded yet or if we have unsaved local edits
+      if (!hasLoadedFromServerRef.current || isDirtyRef.current) {
+        return;
+      }
+      try {
+        const res = await fetch("/api/state");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === "ok") {
+            const serverTime = Number(data.updatedAt);
+            const localTime = lastUpdatedRef.current;
+
+            // Only update locally if server has a strictly newer state, and we are not dirty
+            if (serverTime > localTime && !isDirtyRef.current) {
+              setStateState(data.state);
+              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data.state));
+              setLastUpdated(serverTime);
+              localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
+              onToastRef.current("Novos dados recebidos da nuvem", "info");
+            }
+          }
+        }
+      } catch (_) {
+        // Silent error for periodic polling
+      }
+    };
 
     // Poll every 10 seconds (standard, non-disruptive, safe background sync)
     const interval = setInterval(fetchLatest, 10000);
     return () => clearInterval(interval);
-  }, [onToast]);
+  }, []);
 
   return {
     state,
