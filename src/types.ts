@@ -115,6 +115,7 @@ export interface GlobalConfig {
   spreadsheetId?: string;
   backupEnabled?: boolean;
   appPassword?: string;
+  ultimoUpdateServidores?: string;
 }
 
 export interface AppState {
