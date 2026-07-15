@@ -14,13 +14,43 @@ interface SisrefPanelProps {
   openModal: (nome: string, mat: string, setor: string, onConfirm: (qtd: number) => void, defaultQtd?: number) => void;
   subTab?: 'setores' | 'avulsa' | 'respostas';
   setSubTab?: (t: 'setores' | 'avulsa' | 'respostas') => void;
+  showPendencias?: boolean;
+  setShowPendencias?: (b: boolean) => void;
 }
 
-export default function SisrefPanel({ state, updateState, onToast, openModal, subTab: controlledSubTab, setSubTab: setControlledSubTab }: SisrefPanelProps) {
+export default function SisrefPanel({ 
+  state, 
+  updateState, 
+  onToast, 
+  openModal, 
+  subTab: controlledSubTab, 
+  setSubTab: setControlledSubTab,
+  showPendencias: controlledShowPendencias,
+  setShowPendencias: setControlledShowPendencias
+}: SisrefPanelProps) {
   const [localSubTab, setLocalSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
 
   const subTab = controlledSubTab !== undefined ? controlledSubTab : localSubTab;
   const setSubTab = setControlledSubTab !== undefined ? setControlledSubTab : setLocalSubTab;
+
+  const [localShowPendencias, setLocalShowPendencias] = useState(false);
+  const showPendencias = controlledShowPendencias !== undefined ? controlledShowPendencias : localShowPendencias;
+  const setShowPendencias = (val: boolean | ((prev: boolean) => boolean)) => {
+    if (setControlledShowPendencias) {
+      if (typeof val === 'function') {
+        // Evaluate the function with current value
+        setControlledShowPendencias(val(showPendencias));
+      } else {
+        setControlledShowPendencias(val);
+      }
+    } else {
+      if (typeof val === 'function') {
+        setLocalShowPendencias(val);
+      } else {
+        setLocalShowPendencias(val);
+      }
+    }
+  };
 
   // Setores Sub-tab state
   const [buscaInp, setBuscaInp] = useState("");
@@ -44,7 +74,6 @@ export default function SisrefPanel({ state, updateState, onToast, openModal, su
   const [avulsaTxt, setAvulsaTxt] = useState("");
   const [avulsaResultados, setAvulsaResultados] = useState<QueueServer[]>([]);
   const [avulsaSelected, setAvulsaSelected] = useState<Record<number, boolean>>({});
-  const [showPendencias, setShowPendencias] = useState(false);
 
   // Respostas Sub-tab state
   const [respBusca, setRespBusca] = useState("");
