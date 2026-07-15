@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 import { syncToGoogleSheets, loadServersFromBackup } from "../lib/googleSheetsSync.js";
 
+const normalizeMatricula = (m: any): string => {
+  return String(m || "").trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "");
+};
+
 interface RotinaPanelProps {
   state: AppState;
   updateState: (newState: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => void;
@@ -144,15 +148,30 @@ export default function RotinaPanel({
       }
       
       updateState(prev => {
-        const existingMap = new Map(prev.servidores.map(s => [String(s.matricula).trim(), s]));
-        backupServers.forEach(srv => {
-          const mat = String(srv.matricula).trim();
-          if (existingMap.has(mat)) {
-            existingMap.set(mat, { ...existingMap.get(mat)!, ...srv });
-          } else {
-            existingMap.set(mat, srv);
+        const existingMap = new Map();
+        prev.servidores.forEach(s => {
+          const norm = normalizeMatricula(s.matricula);
+          if (norm) {
+            existingMap.set(norm, s);
           }
         });
+
+        backupServers.forEach(srv => {
+          const norm = normalizeMatricula(srv.matricula);
+          if (norm) {
+            if (existingMap.has(norm)) {
+              const existingSrv = existingMap.get(norm);
+              existingMap.set(norm, { 
+                ...existingSrv, 
+                ...srv,
+                matricula: existingSrv.matricula // Preserve original formatting
+              });
+            } else {
+              existingMap.set(norm, srv);
+            }
+          }
+        });
+
         return { 
           servidores: Array.from(existingMap.values()),
           config: {
@@ -298,11 +317,38 @@ export default function RotinaPanel({
         onToast("Nenhum dado válido identificado no importador. Certifique-se de incluir a linha de cabeçalho e os dados.", "err");
         return;
       }
-      const sep = lines[0].includes("\t") ? "\t" : ",";
-      const headers = lines[0].split(sep).map(h => h.trim().toUpperCase().replace(/['"]/g, ''));
+      let sep = ",";
+      if (lines[0].includes("\t")) {
+        sep = "\t";
+      } else if (lines[0].includes(";")) {
+        sep = ";";
+      } else if (lines[0].includes(",")) {
+        sep = ",";
+      }
+
+      const splitCSVLine = (line: string, separator: string): string[] => {
+        const result: string[] = [];
+        let current = "";
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          if (char === '"' || char === "'") {
+            inQuotes = !inQuotes;
+          } else if (char === separator && !inQuotes) {
+            result.push(current);
+            current = "";
+          } else {
+            current += char;
+          }
+        }
+        result.push(current);
+        return result;
+      };
+
+      const headers = splitCSVLine(lines[0], sep).map(h => h.trim().toUpperCase().replace(/['"]/g, ''));
       
       const rawRows = lines.slice(1).map(l => {
-        const cols = l.split(sep);
+        const cols = splitCSVLine(l, sep);
         const obj: Record<string, string> = {};
         headers.forEach((h, i) => {
           obj[h] = (cols[i] || '').trim().replace(/^["']|["']$/g, '');
@@ -328,18 +374,32 @@ export default function RotinaPanel({
         }
 
         updateState(prev => {
-          const existingMap = new Map(prev.servidores.map(s => [String(s.matricula).trim(), s]));
+          const existingMap = new Map();
+          prev.servidores.forEach(s => {
+            const norm = normalizeMatricula(s.matricula);
+            if (norm) {
+              existingMap.set(norm, s);
+            }
+          });
+
           let addedCount = 0;
           let updatedCount = 0;
 
           data.forEach(srv => {
-            const mat = String(srv.matricula).trim();
-            if (existingMap.has(mat)) {
-              existingMap.set(mat, { ...existingMap.get(mat)!, ...srv });
-              updatedCount++;
-            } else {
-              existingMap.set(mat, srv);
-              addedCount++;
+            const norm = normalizeMatricula(srv.matricula);
+            if (norm) {
+              if (existingMap.has(norm)) {
+                const existingSrv = existingMap.get(norm);
+                existingMap.set(norm, { 
+                  ...existingSrv, 
+                  ...srv,
+                  matricula: existingSrv.matricula // Preserve original formatting
+                });
+                updatedCount++;
+              } else {
+                existingMap.set(norm, srv);
+                addedCount++;
+              }
             }
           });
 
