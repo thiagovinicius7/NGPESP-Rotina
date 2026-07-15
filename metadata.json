@@ -1,0 +1,6 @@
+{
+  "name": "NGPESP Rotina",
+  "description": "Painel corporativo unificado e sincronizado em tempo real para conferência de rotinas funcionais SISREF, SIGRH, produtividade do servidor, atendimento de balcão e FAQ.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
