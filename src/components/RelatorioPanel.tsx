@@ -15,7 +15,7 @@ interface RelatorioPanelProps {
 export default function RelatorioPanel({ state, updateState, onToast }: RelatorioPanelProps) {
   const [subTab, setSubTab] = useState<'conf' | 'setor'>('conf');
   const [expandedSetores, setExpandedSetores] = useState<Record<string, boolean>>({});
-  const [anoFiltro, setAnoFiltro] = useState<string>("todos");
+  const [anoFiltro, setAnoFiltro] = useState<string>(() => new Date().getFullYear().toString());
 
   // Summary Metrics calculations
   const totalServidores = state.servidores.length;
@@ -117,6 +117,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
   const getMonthlyStats = () => {
     const map: Record<string, number> = {};
     const anosDisponiveis = new Set<string>();
+    anosDisponiveis.add(new Date().getFullYear().toString());
 
     Object.keys(state.filaAvulsa.listas).forEach(listName => {
       const q = state.filaAvulsa.listas[listName];
@@ -189,6 +190,10 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     onToast("Histórico de conferência limpo", "info");
   };
 
+  const totalHojeCat = catStats.reduce((sum, c) => sum + c.hoje, 0);
+  const totalAcumuladoCat = catStats.reduce((sum, c) => sum + c.acumulado, 0);
+  const totalMeses = mesesList.reduce((sum, m) => sum + m.total, 0);
+
   return (
     <div className="flex flex-col gap-6">
       
@@ -258,6 +263,13 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
                   <td className="p-3 text-center text-sm font-black">{c.acumulado}</td>
                 </tr>
               ))}
+              {catStats.length > 0 && (
+                <tr className="bg-[var(--bg)]/20 font-black text-[var(--text)] border-t border-[var(--border)]">
+                  <td className="p-3 text-sm">TOTAL</td>
+                  <td className="p-3 text-center text-sm text-[var(--blue-mid)]">{totalHojeCat}</td>
+                  <td className="p-3 text-center text-sm">{totalAcumuladoCat}</td>
+                </tr>
+              )}
               {catStats.length === 0 && (
                 <tr>
                   <td colSpan={3} className="p-4 text-center text-[var(--text2)]">
@@ -303,6 +315,12 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
                   <td className="p-3 text-center text-sm font-black text-[var(--green-mid)]">{m.total}</td>
                 </tr>
               ))}
+              {mesesList.length > 0 && (
+                <tr className="bg-[var(--bg)]/20 font-black text-[var(--text)] border-t border-[var(--border)]">
+                  <td className="p-3 text-sm">TOTAL</td>
+                  <td className="p-3 text-center text-sm text-[var(--green-mid)]">{totalMeses}</td>
+                </tr>
+              )}
               {mesesList.length === 0 && (
                 <tr>
                   <td colSpan={2} className="p-4 text-center text-[var(--text2)]">

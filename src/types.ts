@@ -112,6 +112,9 @@ export interface QueueState {
 
 export interface GlobalConfig {
   gmov_data: string;
+  spreadsheetId?: string;
+  backupEnabled?: boolean;
+  appPassword?: string;
 }
 
 export interface AppState {
