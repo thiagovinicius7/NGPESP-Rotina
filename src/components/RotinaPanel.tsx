@@ -172,11 +172,19 @@ export default function RotinaPanel({
           }
         });
 
+        const importedMatriculas = backupServers
+          .map(srv => normalizeMatricula(srv.matricula))
+          .filter(Boolean);
+        const importedCount = backupServers.length;
+        const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
         return { 
           servidores: Array.from(existingMap.values()),
           config: {
             ...prev.config,
-            ultimoUpdateServidores: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+            ultimoUpdateServidores: `${dateStr} (${importedCount} servidores)`,
+            lastImportedMatriculas: importedMatriculas,
+            lastImportCount: importedCount
           }
         };
       });
@@ -403,11 +411,19 @@ export default function RotinaPanel({
             }
           });
 
+          const importedMatriculas = data
+            .map(srv => normalizeMatricula(srv.matricula))
+            .filter(Boolean);
+          const importedCount = data.length;
+          const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
           return {
             servidores: Array.from(existingMap.values()),
             config: {
               ...prev.config,
-              ultimoUpdateServidores: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+              ultimoUpdateServidores: `${dateStr} (${importedCount} servidores)`,
+              lastImportedMatriculas: importedMatriculas,
+              lastImportCount: importedCount
             }
           };
         });
