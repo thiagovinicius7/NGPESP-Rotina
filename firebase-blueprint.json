@@ -1,0 +1,169 @@
+{
+  "entities": {
+    "Server": {
+      "title": "Server",
+      "description": "Represents an active server in the NGPESP database.",
+      "type": "object",
+      "properties": {
+        "matricula": { "type": "string", "description": "Server registration number" },
+        "nome": { "type": "string", "description": "Server's full name" },
+        "cargo": { "type": "string", "description": "Role/job position" },
+        "denominacao": { "type": "string", "description": "Detailed role denomination" },
+        "codLotacao": { "type": "string", "description": "Workplace/Department department code" },
+        "lotacao": { "type": "string", "description": "Department/Workplace name" },
+        "admissao": { "type": "string", "description": "Date of admission" },
+        "situacao": { "type": "string", "description": "Functional status (Ativo, etc.)" }
+      },
+      "required": ["matricula", "nome"]
+    },
+    "HistoryEntry": {
+      "title": "HistoryEntry",
+      "description": "Logs of completed server conferences/check-ins.",
+      "type": "object",
+      "properties": {
+        "mat": { "type": "string" },
+        "nome": { "type": "string" },
+        "setor": { "type": "string" },
+        "qtd": { "type": "integer" },
+        "ts": { "type": "string" },
+        "ocorrencias": { "type": "array" }
+      },
+      "required": ["mat", "nome", "ts"]
+    },
+    "FastReply": {
+      "title": "FastReply",
+      "description": "Pre-configured responses for copy-pasting.",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "texto": { "type": "string" }
+      },
+      "required": ["nome", "texto"]
+    },
+    "LaunchCode": {
+      "title": "LaunchCode",
+      "description": "Codes used for launching records in SIGRH.",
+      "type": "object",
+      "properties": {
+        "num": { "type": "string" },
+        "nome": { "type": "string" },
+        "periodo": { "type": "string" }
+      },
+      "required": ["num", "nome"]
+    },
+    "SeiProcess": {
+      "title": "SeiProcess",
+      "description": "SEI protocol tracking entries.",
+      "type": "object",
+      "properties": {
+        "num": { "type": "string" },
+        "desc": { "type": "string" }
+      },
+      "required": ["num"]
+    },
+    "Absence": {
+      "title": "Absence",
+      "description": "Documented absences or leaves.",
+      "type": "object",
+      "properties": {
+        "dia": { "type": "string" },
+        "mes": { "type": "string" },
+        "tipo": { "type": "string" },
+        "sisref": { "type": "string" }
+      },
+      "required": ["dia", "mes", "tipo"]
+    },
+    "Config": {
+      "title": "Config",
+      "description": "Global application configurations.",
+      "type": "object",
+      "properties": {
+        "gmov_data": { "type": "string" }
+      }
+    },
+    "QueueState": {
+      "title": "QueueState",
+      "description": "Saves state of active check-in queues.",
+      "type": "object",
+      "properties": {
+        "dados_json": { "type": "string" }
+      }
+    },
+    "DeskLog": {
+      "title": "DeskLog",
+      "description": "Daily notes from front-desk attendance.",
+      "type": "object",
+      "properties": {
+        "dados_json": { "type": "string" }
+      }
+    },
+    "FAQEntry": {
+      "title": "FAQEntry",
+      "description": "Questions and answers for desk references.",
+      "type": "object",
+      "properties": {
+        "titulo": { "type": "string" },
+        "resposta": { "type": "string" }
+      },
+      "required": ["titulo", "resposta"]
+    },
+    "NatalAnalysis": {
+      "title": "NatalAnalysis",
+      "description": "Christmas leave checking logs.",
+      "type": "object",
+      "properties": {
+        "sei": { "type": "string" },
+        "resultado": { "type": "string" },
+        "data": { "type": "string" },
+        "motivo": { "type": "string" }
+      },
+      "required": ["sei", "resultado"]
+    }
+  },
+  "firestore": {
+    "/servers/{serverId}": {
+      "schema": "Server",
+      "description": "Collection of all imported servers."
+    },
+    "/history/{historyId}": {
+      "schema": "HistoryEntry",
+      "description": "History of daily and accumulated check-ins."
+    },
+    "/replies/{replyId}": {
+      "schema": "FastReply",
+      "description": "Quick template responses."
+    },
+    "/codes/{codeId}": {
+      "schema": "LaunchCode",
+      "description": "Lancement system codes."
+    },
+    "/sei_processes/{processId}": {
+      "schema": "SeiProcess",
+      "description": "Registered SEI processes."
+    },
+    "/absences/{absenceId}": {
+      "schema": "Absence",
+      "description": "Functional absences log."
+    },
+    "/config/global": {
+      "schema": "Config",
+      "description": "Global settings like GMOV date."
+    },
+    "/queues/{queueId}": {
+      "schema": "QueueState",
+      "description": "Active check-in and parsed SISREF queues."
+    },
+    "/desk_logs/{logId}": {
+      "schema": "DeskLog",
+      "description": "Daily Balcão notes."
+    },
+    "/faq/{faqId}": {
+      "schema": "FAQEntry",
+      "description": "Database of doubts and answers."
+    },
+    "/natal/{natalId}": {
+      "schema": "NatalAnalysis",
+      "description": "Christmas allowance analysis entries."
+    }
+  }
+}
