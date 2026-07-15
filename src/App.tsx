@@ -11,6 +11,7 @@ import {
   DownloadCloud
 } from "lucide-react";
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
+import { syncToGoogleSheets } from "./lib/googleSheetsSync.js";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio'>('sisref');
@@ -52,6 +53,52 @@ export default function App() {
   const [googleUser, setGoogleUser] = useState<any>(null);
   const [googleToken, setGoogleToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  
+  // Google Sheets Auto-Sync States
+  const [googleSyncing, setGoogleSyncing] = useState(false);
+  const [googleDirty, setGoogleDirty] = useState(false);
+
+  // Mark Google Sheets as dirty when local state changes
+  useEffect(() => {
+    if (googleToken && state.config.spreadsheetId) {
+      setGoogleDirty(true);
+    }
+  }, [state, googleToken, state.config.spreadsheetId]);
+
+  // Debounced auto-sync to Google Sheets in the background
+  useEffect(() => {
+    if (!googleDirty || !googleToken || !state.config.spreadsheetId || googleSyncing) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setGoogleSyncing(true);
+      try {
+        await syncToGoogleSheets(googleToken, state, state.config.spreadsheetId, () => {});
+        setGoogleDirty(false);
+        console.log("Auto-backup sincronizado no Google Sheets com sucesso.");
+      } catch (err) {
+        console.warn("Erro no auto-backup em segundo plano para Google Sheets:", err);
+      } finally {
+        setGoogleSyncing(false);
+      }
+    }, 8000); // Debounce de 8 segundos sem alterações para não sobrecarregar a API
+
+    return () => clearTimeout(timer);
+  }, [googleDirty, googleToken, state.config.spreadsheetId, state, googleSyncing]);
+
+  // Alerta ao usuário antes de fechar a página se houver sincronização pendente
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (googleDirty) {
+        e.preventDefault();
+        e.returnValue = "Existem dados pendentes que estão sendo salvos no Google Sheets. Tem certeza de que deseja sair?";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [googleDirty]);
 
   useEffect(() => {
     const unsubscribe = initAuth(
@@ -86,9 +133,23 @@ export default function App() {
 
   const handleGoogleLogout = async () => {
     try {
+      if (googleToken && state.config.spreadsheetId) {
+        showToast("Sincronizando dados finais no Google Sheets...", "info");
+        try {
+          await syncToGoogleSheets(googleToken, state, state.config.spreadsheetId, () => {});
+          showToast("Dados finais sincronizados!", "ok");
+        } catch (err: any) {
+          console.error("Erro ao sincronizar dados finais:", err);
+          showToast(`Erro na sincronização: ${err.message || err}`, "err");
+          if (!confirm("Não foi possível realizar o backup final. Deseja desconectar mesmo assim?")) {
+            return;
+          }
+        }
+      }
       await logout();
       setGoogleUser(null);
       setGoogleToken(null);
+      setGoogleDirty(false);
       showToast("Conexão Google encerrada", "info");
     } catch (err) {
       showToast("Falha ao desconectar", "err");
@@ -124,7 +185,16 @@ export default function App() {
     }
   };
 
-  const handleLockSystem = () => {
+  const handleLockSystem = async () => {
+    if (googleToken && state.config.spreadsheetId && googleDirty) {
+      showToast("Sincronizando dados no Google Sheets antes de bloquear...", "info");
+      try {
+        await syncToGoogleSheets(googleToken, state, state.config.spreadsheetId, () => {});
+        setGoogleDirty(false);
+      } catch (err: any) {
+        console.error("Erro ao sincronizar antes de bloquear:", err);
+      }
+    }
     sessionStorage.removeItem("ngpesp_authorized");
     setIsAuthorized(false);
     setPasswordInput("");
@@ -345,7 +415,13 @@ export default function App() {
                   setActiveTab('rotina');
                   // Since we are moving to Rotina, we'll let them view the Backup section
                 }}
-                className="hidden sm:flex items-center gap-2 p-1.5 pr-3 bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 rounded-xl transition-all text-xs font-bold text-green-600 dark:text-green-400 cursor-pointer"
+                className={`hidden sm:flex items-center gap-2 p-1.5 pr-3 rounded-xl transition-all text-xs font-bold cursor-pointer border ${
+                  googleSyncing
+                    ? "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400 animate-pulse"
+                    : googleDirty
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                    : "bg-green-500/10 border-green-500/30 text-green-600 dark:text-green-400"
+                }`}
                 title={`Conectado como ${googleUser.email}. Clique para gerenciar backup.`}
               >
                 {googleUser.photoURL ? (
@@ -355,7 +431,9 @@ export default function App() {
                     {googleUser.email?.[0]?.toUpperCase()}
                   </div>
                 )}
-                <span className="hidden md:inline">Google Conectado</span>
+                <span className="hidden md:inline">
+                  {googleSyncing ? "Salvando Backup..." : googleDirty ? "Alterado (Pendente)" : "Backup em Dia"}
+                </span>
               </button>
             ) : (
               <button
