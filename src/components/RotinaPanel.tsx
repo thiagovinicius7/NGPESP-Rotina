@@ -153,7 +153,13 @@ export default function RotinaPanel({
             existingMap.set(mat, srv);
           }
         });
-        return { servidores: Array.from(existingMap.values()) };
+        return { 
+          servidores: Array.from(existingMap.values()),
+          config: {
+            ...prev.config,
+            ultimoUpdateServidores: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+          }
+        };
       });
       
       setGoogleSyncType("ok");
@@ -338,7 +344,11 @@ export default function RotinaPanel({
           });
 
           return {
-            servidores: Array.from(existingMap.values())
+            servidores: Array.from(existingMap.values()),
+            config: {
+              ...prev.config,
+              ultimoUpdateServidores: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+            }
           };
         });
         

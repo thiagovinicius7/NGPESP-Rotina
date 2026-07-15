@@ -166,10 +166,17 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <div className="bento-card p-6">
-          <Users size={32} className="text-blue-500 mb-3" />
-          <div className="text-5xl font-black text-[var(--text)]">{totalServidores}</div>
-          <div className="text-[var(--text2)]">Servidores</div>
+        <div className="bento-card p-6 flex flex-col justify-between">
+          <div>
+            <Users size={32} className="text-blue-500 mb-3" />
+            <div className="text-5xl font-black text-[var(--text)]">{totalServidores}</div>
+            <div className="text-[var(--text2)]">Servidores</div>
+          </div>
+          {state.config?.ultimoUpdateServidores && (
+            <div className="text-[10px] text-[var(--text2)] mt-2 font-mono border-t border-[var(--border)] pt-1.5">
+              Ref: {state.config.ultimoUpdateServidores}
+            </div>
+          )}
         </div>
 
         <div className="bento-card p-6">
