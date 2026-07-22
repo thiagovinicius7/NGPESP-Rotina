@@ -4,6 +4,8 @@ import { AppState } from "../types.js";
 const LOCAL_STORAGE_KEY = "ngpesp_local_state";
 const LOCAL_TIMESTAMP_KEY = "ngpesp_local_updated_at";
 
+const DEFAULT_SPREADSHEET_ID = "1gk5MZYPDb3g5XM5y52OLMHMU0B0R2qbbZD79ryBizek";
+
 const defaultState: AppState = {
   servidores: [],
   historico: [],
@@ -14,7 +16,7 @@ const defaultState: AppState = {
   ferias: {},
   abonos: {},
   produtividade: {},
-  config: { gmov_data: "" },
+  config: { gmov_data: "", spreadsheetId: DEFAULT_SPREADSHEET_ID, backupEnabled: true },
   filaAvulsa: {
     listas: { "Padrão": { fila: [], idx: 0 } },
     ativa: "Padrão",
@@ -34,7 +36,12 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   const [state, setStateState] = useState<AppState>(() => {
     try {
       const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (cached) return JSON.parse(cached);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (!parsed.config) parsed.config = {};
+        if (!parsed.config.spreadsheetId) parsed.config.spreadsheetId = DEFAULT_SPREADSHEET_ID;
+        return parsed;
+      }
     } catch (_) {}
     return defaultState;
   });
