@@ -15,6 +15,7 @@ export default function BalcaoPanel({ state, updateState, onToast }: BalcaoPanel
   // Desk notes
   const [balcaoDate, setBalcaoDate] = useState(new Date().toISOString().split("T")[0]);
   const [isAttendanceActive, setIsAttendanceActive] = useState(false);
+  const [lastFinishedTime, setLastFinishedTime] = useState<string | null>(null);
 
   // FAQ doubts
   const [faqBusca, setFaqBusca] = useState("");
@@ -37,12 +38,25 @@ export default function BalcaoPanel({ state, updateState, onToast }: BalcaoPanel
 
   const startAttendance = () => {
     setIsAttendanceActive(true);
+    setLastFinishedTime(null);
     onToast("Sessão de atendimento de balcão iniciada!", "ok");
   };
 
   const finishAttendance = () => {
     setIsAttendanceActive(false);
-    onToast("Atendimento de balcão finalizado e salvo na nuvem!", "ok");
+    const nowStr = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    setLastFinishedTime(nowStr);
+    onToast(`Atendimento de balcão finalizado e salvo com sucesso (${nowStr})!`, "ok");
+  };
+
+  const clearNotes = () => {
+    if (!activeNotes) return;
+    if (confirm(`Deseja apagar todas as anotações do dia ${balcaoDate.split('-').reverse().join('/')}?`)) {
+      handleNotesChange("");
+      setIsAttendanceActive(false);
+      setLastFinishedTime(null);
+      onToast("Anotações da data foram apagadas.", "info");
+    }
   };
 
   // FAQ CRUD
@@ -85,12 +99,31 @@ export default function BalcaoPanel({ state, updateState, onToast }: BalcaoPanel
       
       {/* 1. ATENDIMENTO DE BALCÃO */}
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
-        <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-4 flex items-center gap-1.5">
-          <PhoneCall size={16} /> Atendimento de Balcão
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+          <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1.5">
+            <PhoneCall size={16} /> Atendimento de Balcão
+          </div>
+
+          {/* Status Badge */}
+          {isAttendanceActive ? (
+            <div className="px-3 py-1 bg-green-500/15 border border-green-500/30 text-green-600 font-bold text-xs rounded-full flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+              Em Atendimento
+            </div>
+          ) : lastFinishedTime ? (
+            <div className="px-3 py-1 bg-blue-500/15 border border-blue-500/30 text-blue-600 font-bold text-xs rounded-full flex items-center gap-1.5">
+              <Check size={12} />
+              Finalizado às {lastFinishedTime}
+            </div>
+          ) : activeNotes ? (
+            <div className="px-3 py-1 bg-[var(--bg)] border border-[var(--border2)] text-[var(--text2)] font-bold text-xs rounded-full">
+              Anotações Registradas
+            </div>
+          ) : null}
         </div>
 
-        <div className="flex gap-4 items-center flex-wrap mb-4">
-          <div className="flex-1 min-w-[150px]">
+        <div className="flex gap-4 items-end flex-wrap mb-4">
+          <div className="flex-1 min-w-[160px]">
             <label className="text-xs font-semibold text-[var(--text2)] block mb-1">Data do Atendimento</label>
             <input 
               type="date" 
@@ -98,41 +131,67 @@ export default function BalcaoPanel({ state, updateState, onToast }: BalcaoPanel
               onChange={(e) => {
                 setBalcaoDate(e.target.value);
                 setIsAttendanceActive(false);
+                setLastFinishedTime(null);
               }}
-              className="p-2.5 rounded-xl font-bold bg-[var(--bg)]"
+              className="w-full p-2.5 rounded-xl font-bold bg-[var(--bg)] border border-[var(--border2)]"
             />
           </div>
           
-          <div className="pt-4 flex-shrink-0">
-            {!isAttendanceActive && !activeNotes ? (
+          <div className="flex items-center gap-2 flex-wrap">
+            {!isAttendanceActive ? (
               <button 
                 onClick={startAttendance}
-                className="px-4 py-2.5 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white text-xs font-bold rounded-lg flex items-center gap-1 shadow-sm transition"
+                className="px-4 py-2.5 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm transition cursor-pointer"
               >
                 <Play size={14} /> Iniciar Atendimento
               </button>
             ) : (
               <button 
                 onClick={finishAttendance}
-                className="px-4 py-2.5 bg-[var(--green-mid)] hover:bg-[var(--green)] text-white text-xs font-bold rounded-lg flex items-center gap-1 shadow-sm transition"
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm transition cursor-pointer"
               >
-                <Check size={14} /> Finalizar Atendimento
+                <Check size={16} /> Finalizar Atendimento
+              </button>
+            )}
+
+            {activeNotes && (
+              <button
+                onClick={clearNotes}
+                className="px-3 py-2.5 border border-red-200 text-red-500 hover:bg-red-50 text-xs font-bold rounded-xl flex items-center gap-1 transition cursor-pointer"
+                title="Limpar anotações do dia"
+              >
+                <Trash2 size={14} /> Limpar
               </button>
             )}
           </div>
         </div>
 
-        {(isAttendanceActive || activeNotes) && (
-          <div className="mt-4 pt-4 border-t border-[var(--border)]">
-            <label className="text-xs font-bold text-[var(--text2)] block mb-1.5">Anotações Gerais do Atendimento</label>
-            <textarea 
-              value={activeNotes}
-              onChange={(e) => handleNotesChange(e.target.value)}
-              placeholder="Escreva livremente as demandas trazidas ao balcão hoje..."
-              className="w-full min-h-36 p-3 text-sm rounded-xl outline-none"
-            />
+        <div className="mt-4 pt-4 border-t border-[var(--border)]">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-bold text-[var(--text2)] block">
+              Anotações Gerais do Atendimento ({balcaoDate.split('-').reverse().join('/')})
+            </label>
+            <span className="text-[10px] text-[var(--text2)] font-semibold">
+              {activeNotes.length ? "✓ Salvo automaticamente" : "Nenhuma anotação nesta data"}
+            </span>
           </div>
-        )}
+          <textarea 
+            value={activeNotes}
+            onChange={(e) => handleNotesChange(e.target.value)}
+            placeholder="Escreva livremente as demandas trazidas ao balcão hoje..."
+            className="w-full min-h-36 p-3.5 text-sm rounded-xl outline-none border border-[var(--border2)] bg-[var(--bg)] focus:border-[var(--blue-mid)] transition"
+          />
+          {isAttendanceActive && (
+            <div className="mt-3 flex justify-end">
+              <button 
+                onClick={finishAttendance}
+                className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-2 shadow-sm cursor-pointer transition"
+              >
+                <Check size={16} /> Concluir e Finalizar Atendimento
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 2. BANCO DE DÚVIDAS / FAQ */}

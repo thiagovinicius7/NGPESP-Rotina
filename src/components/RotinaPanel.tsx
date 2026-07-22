@@ -29,7 +29,7 @@ interface RotinaPanelProps {
   syncing: boolean;
   googleUser: any;
   googleToken: string | null;
-  onGoogleLogin: () => Promise<void>;
+  onGoogleLogin: () => Promise<string | null>;
   onGoogleLogout: () => Promise<void>;
   subTab?: 'importar' | 'vida' | 'produtividade';
   setSubTab?: (t: 'importar' | 'vida' | 'produtividade') => void;
@@ -91,16 +91,25 @@ export default function RotinaPanel({
   const [foundDriveFiles, setFoundDriveFiles] = useState<DriveBackupFile[]>([]);
   const [isSearchingDrive, setIsSearchingDrive] = useState(false);
 
-  const handleSearchDriveBackups = async () => {
-    if (!googleToken) {
-      onToast("Por favor, conecte-se ao Google primeiro.", "err");
-      return;
+  const getValidToken = async (): Promise<string | null> => {
+    if (googleToken) return googleToken;
+    onToast("Iniciando conexão com a conta Google...", "info");
+    const freshToken = await onGoogleLogin();
+    if (!freshToken) {
+      onToast("É necessário autorizar a conta Google para esta operação.", "err");
     }
+    return freshToken;
+  };
+
+  const handleSearchDriveBackups = async () => {
+    const token = await getValidToken();
+    if (!token) return;
+
     setIsSearchingDrive(true);
     setGoogleSyncType("info");
     setGoogleSyncStatus("Pesquisando planilhas de backup no seu Google Drive...");
     try {
-      const files = await searchGoogleDriveForBackup(googleToken);
+      const files = await searchGoogleDriveForBackup(token);
       setFoundDriveFiles(files);
       if (files.length === 0) {
         setGoogleSyncType("info");
@@ -119,21 +128,20 @@ export default function RotinaPanel({
 
   const handleLinkAndRestoreSpreadsheet = async (sheetIdOrUrl: string) => {
     const sheetId = extractSpreadsheetId(sheetIdOrUrl);
-    if (!googleToken) {
-      onToast("Por favor, conecte-se ao Google primeiro.", "err");
-      return;
-    }
     if (!sheetId) {
       onToast("Por favor, informe o ID ou link de uma planilha válida.", "err");
       return;
     }
+
+    const token = await getValidToken();
+    if (!token) return;
 
     setIsGoogleSyncing(true);
     setGoogleSyncType("info");
     setGoogleSyncStatus("Carregando dados da planilha do Google Drive...");
 
     try {
-      const fullData = await loadFullStateFromBackup(googleToken, sheetId, (prog) => {
+      const fullData = await loadFullStateFromBackup(token, sheetId, (prog) => {
         setGoogleSyncStatus(prog.message);
         setGoogleSyncType(prog.type);
       });
@@ -261,16 +269,15 @@ export default function RotinaPanel({
   };
 
   const handleDirectBackupSync = async () => {
-    if (!googleToken) {
-      onToast("Por favor, conecte-se ao Google primeiro.", "err");
-      return;
-    }
+    const token = await getValidToken();
+    if (!token) return;
+
     setIsGoogleSyncing(true);
     setGoogleSyncType("info");
     setGoogleSyncStatus("Iniciando backup...");
     try {
       const currentId = state.config.spreadsheetId || null;
-      const sheetId = await syncToGoogleSheets(googleToken, state, currentId, (prog) => {
+      const sheetId = await syncToGoogleSheets(token, state, currentId, (prog) => {
         setGoogleSyncStatus(prog.message);
         setGoogleSyncType(prog.type);
       });
@@ -297,15 +304,14 @@ export default function RotinaPanel({
 
   const handleRestoreFromGoogleBackup = async () => {
     const sheetId = state.config.spreadsheetId;
-    if (!googleToken) {
-      onToast("Por favor, conecte-se ao Google primeiro.", "err");
-      return;
-    }
     if (!sheetId) {
       onToast("Nenhuma planilha de backup configurada.", "err");
       return;
     }
     
+    const token = await getValidToken();
+    if (!token) return;
+
     if (!confirm("Isso irá mesclar os dados da planilha de backup no Google Drive com seus dados locais. Deseja prosseguir?")) {
       return;
     }
