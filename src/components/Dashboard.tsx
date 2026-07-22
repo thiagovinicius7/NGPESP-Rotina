@@ -64,28 +64,39 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
     return () => clearInterval(timer);
   }, []);
 
-  const totalServidores = state.servidores.length;
-  const totalSetores = new Set(state.servidores.map(s => s.codLotacao || s.lotacao)).size;
+  const totalServidores = (state.servidores || []).length;
+  const totalSetores = new Set((state.servidores || []).map(s => s?.codLotacao || s?.lotacao || "Sem setor")).size;
 
-  const hojeStr = new Date().toISOString().split('T')[0];
+  const hoje = new Date().toISOString().split('T')[0];
+  const hojeStr = hoje;
 
   // Calculate total e daily lançamentos dynamically from history entries and productivity items
-  const histLancamentos = state.historico.reduce((acc, h) => acc + (typeof h.qtd === 'number' ? h.qtd : 1), 0);
+  const histLancamentos = (state.historico || []).reduce((acc, h) => acc + (typeof h?.qtd === 'number' ? h.qtd : 1), 0);
 
   let prodLancamentos = 0;
   let prodLancamentosHoje = 0;
 
-  Object.entries(state.produtividade || {}).forEach(([dateStr, dayData]) => {
-    const countDay = (dayData.manha?.length || 0) + (dayData.tarde?.length || 0);
-    prodLancamentos += countDay;
-    if (dateStr === hojeStr) {
-      prodLancamentosHoje += countDay;
-    }
-  });
+  if (state.produtividade && typeof state.produtividade === 'object') {
+    Object.entries(state.produtividade).forEach(([dateStr, dayData]) => {
+      if (dayData && typeof dayData === 'object') {
+        const manhaLen = Array.isArray(dayData.manha) ? dayData.manha.length : 0;
+        const tardeLen = Array.isArray(dayData.tarde) ? dayData.tarde.length : 0;
+        const countDay = manhaLen + tardeLen;
+        prodLancamentos += countDay;
+        if (dateStr === hojeStr) {
+          prodLancamentosHoje += countDay;
+        }
+      }
+    });
+  }
 
-  const histLancamentosHoje = state.historico
-    .filter(h => h.ts && h.ts.slice(0, 10) === hojeStr)
-    .reduce((acc, h) => acc + (typeof h.qtd === 'number' ? h.qtd : 1), 0);
+  const histLancamentosHoje = (state.historico || [])
+    .filter(h => {
+      if (!h || !h.ts) return false;
+      const tsStr = typeof h.ts === 'number' ? new Date(h.ts).toISOString().split('T')[0] : String(h.ts).slice(0, 10);
+      return tsStr === hojeStr;
+    })
+    .reduce((acc, h) => acc + (typeof h?.qtd === 'number' ? h.qtd : 1), 0);
 
   const totalLancamentos = histLancamentos + prodLancamentos;
   const lancamentosHoje = histLancamentosHoje + prodLancamentosHoje;
@@ -151,18 +162,19 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   const activeAbono = allAbonos.filter(a => a.data === hoje);
 
   const activeAfastamento = afastamentos.filter(a => {
-    const matchDay = a.dia.padStart(2, "0") === currentDayStr;
-    const matchMonth = a.mes.padStart(2, "0") === currentMonthStr || a.mes.toLowerCase().includes(currentMonthStr);
+    if (!a) return false;
+    const matchDay = String(a.dia || "").padStart(2, "0") === currentDayStr;
+    const matchMonth = String(a.mes || "").padStart(2, "0") === currentMonthStr || String(a.mes || "").toLowerCase().includes(currentMonthStr);
     return matchDay && matchMonth;
   });
 
-  // Only filter servers if the search term is NOT empty (removed default server list "examples")
+  // Only filter servers if the search term is NOT empty
   const filteredServers = searchTerm.trim() === ""
     ? []
-    : state.servidores
+    : (state.servidores || [])
         .filter(s => 
-          s.nome.toLowerCase().includes(searchTerm.toLowerCase()) || 
-          s.matricula.includes(searchTerm)
+          (s?.nome || "").toLowerCase().includes(searchTerm.toLowerCase()) || 
+          String(s?.matricula || "").includes(searchTerm)
         )
         .slice(0, 6);
 
