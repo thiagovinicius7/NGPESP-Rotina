@@ -12,7 +12,7 @@ import {
   DownloadCloud, LayoutDashboard
 } from "lucide-react";
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
-import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup } from "./lib/googleSheetsSync.js";
+import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio'>('dashboard');
@@ -127,84 +127,91 @@ export default function App() {
         setGoogleToken(result.accessToken);
         showToast(`Conectado como ${result.user.email}!`, "ok");
 
-        // Auto-detect existing backup spreadsheet if not linked yet
-        if (!state.config.spreadsheetId) {
-          try {
-            showToast("Buscando backup existente no Google Drive...", "info");
-            const driveFiles = await searchGoogleDriveForBackup(result.accessToken);
-            if (driveFiles.length > 0) {
-              const latestFile = driveFiles[0];
-              showToast(`Restaurando dados do backup '${latestFile.name}'...`, "info");
-              const fullData = await loadFullStateFromBackup(result.accessToken, latestFile.id, () => {});
+        const targetSheetId = state.config.spreadsheetId || DEFAULT_SPREADSHEET_ID;
+        try {
+          showToast("Sincronizando dados com a planilha de backup do Google Drive...", "info");
+          const fullData = await loadFullStateFromBackup(result.accessToken, targetSheetId, () => {});
 
-              updateState(prev => {
-                const existingMap = new Map();
-                prev.servidores.forEach(s => {
-                  const norm = s.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
-                  if (norm) existingMap.set(norm, s);
-                });
+          updateState(prev => {
+            const existingMap = new Map();
+            prev.servidores.forEach(s => {
+              const norm = s.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
+              if (norm) existingMap.set(norm, s);
+            });
 
-                fullData.servidores.forEach(srv => {
-                  const norm = srv.matricula ? String(srv.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
-                  if (norm) {
-                    if (existingMap.has(norm)) {
-                      const existingSrv = existingMap.get(norm);
-                      existingMap.set(norm, { ...existingSrv, ...srv, matricula: existingSrv.matricula });
-                    } else {
-                      existingMap.set(norm, srv);
-                    }
-                  }
-                });
+            (fullData.servidores || []).forEach(srv => {
+              const norm = srv.matricula ? String(srv.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
+              if (norm) {
+                if (existingMap.has(norm)) {
+                  const existingSrv = existingMap.get(norm);
+                  existingMap.set(norm, { ...existingSrv, ...srv, matricula: existingSrv.matricula });
+                } else {
+                  existingMap.set(norm, srv);
+                }
+              }
+            });
 
-                const histSet = new Set(prev.historico.map(h => `${h.mat}_${h.ts}`));
-                const newHist = [...prev.historico];
-                fullData.historico.forEach(h => {
-                  const key = `${h.mat}_${h.ts}`;
-                  if (!histSet.has(key)) {
-                    histSet.add(key);
-                    newHist.push(h);
-                  }
-                });
+            const histSet = new Set(prev.historico.map(h => `${h.mat}_${h.ts}`));
+            const newHist = [...prev.historico];
+            (fullData.historico || []).forEach(h => {
+              const key = `${h.mat}_${h.ts}`;
+              if (!histSet.has(key)) {
+                histSet.add(key);
+                newHist.push(h);
+              }
+            });
 
-                const respMap = new Map(prev.respostas.map(r => [r.nome, r.texto]));
-                fullData.respostas.forEach(r => { if (r.nome) respMap.set(r.nome, r.texto); });
+            const respMap = new Map(prev.respostas.map(r => [r.nome, r.texto]));
+            (fullData.respostas || []).forEach(r => { if (r.nome) respMap.set(r.nome, r.texto); });
 
-                const afastSet = new Set(prev.afastamentos.map(a => `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`));
-                const newAfast = [...prev.afastamentos];
-                fullData.afastamentos.forEach(a => {
-                  const key = `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`;
-                  if (!afastSet.has(key)) { afastSet.add(key); newAfast.push(a); }
-                });
+            const afastSet = new Set(prev.afastamentos.map(a => `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`));
+            const newAfast = [...prev.afastamentos];
+            (fullData.afastamentos || []).forEach(a => {
+              const key = `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`;
+              if (!afastSet.has(key)) { afastSet.add(key); newAfast.push(a); }
+            });
 
-                const faqMap = new Map(prev.faq.map(f => [f.titulo, f.resposta]));
-                fullData.faq.forEach(f => { if (f.titulo) faqMap.set(f.titulo, f.resposta); });
+            const faqMap = new Map(prev.faq.map(f => [f.titulo, f.resposta]));
+            (fullData.faq || []).forEach(f => { if (f.titulo) faqMap.set(f.titulo, f.resposta); });
 
-                const importedMatriculas = fullData.servidores.map(s => s.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "").filter(Boolean);
-                const importedCount = fullData.servidores.length;
-                const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+            const codMap = new Map(prev.codigos.map(c => [c.num, c]));
+            (fullData.codigos || []).forEach(c => { if (c.num) codMap.set(c.num, c); });
 
-                return {
-                  servidores: Array.from(existingMap.values()),
-                  historico: newHist,
-                  respostas: Array.from(respMap.entries()).map(([nome, texto]) => ({ nome, texto })),
-                  afastamentos: newAfast,
-                  faq: Array.from(faqMap.entries()).map(([titulo, resposta]) => ({ titulo, resposta })),
-                  config: {
-                    ...prev.config,
-                    spreadsheetId: latestFile.id,
-                    backupEnabled: true,
-                    ultimoUpdateServidores: importedCount ? `${dateStr} (${importedCount} servidores)` : prev.config.ultimoUpdateServidores,
-                    lastImportedMatriculas: importedMatriculas.length ? importedMatriculas : prev.config.lastImportedMatriculas,
-                    lastImportCount: importedCount || prev.config.lastImportCount
-                  }
-                };
-              });
+            const seiMap = new Map(prev.sei.map(s => [s.num, s]));
+            (fullData.sei || []).forEach(s => { if (s.num) seiMap.set(s.num, s); });
 
-              showToast(`Backup de '${latestFile.name}' vinculado e restaurado com sucesso!`, "ok");
-            }
-          } catch (autoErr) {
-            console.warn("Auto-restore warning:", autoErr);
-          }
+            const importedMatriculas = (fullData.servidores || []).map(s => s.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "").filter(Boolean);
+            const importedCount = (fullData.servidores || []).length;
+            const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
+            return {
+              servidores: Array.from(existingMap.values()),
+              historico: newHist,
+              respostas: Array.from(respMap.entries()).map(([nome, texto]) => ({ nome, texto })),
+              afastamentos: newAfast,
+              faq: Array.from(faqMap.entries()).map(([titulo, resposta]) => ({ titulo, resposta })),
+              produtividade: Object.keys(fullData.produtividade || {}).length ? fullData.produtividade : prev.produtividade,
+              filaAvulsa: (fullData.filaAvulsa && fullData.filaAvulsa.listas && Object.keys(fullData.filaAvulsa.listas).length) ? fullData.filaAvulsa : prev.filaAvulsa,
+              codigos: Array.from(codMap.values()),
+              sei: Array.from(seiMap.values()),
+              ferias: Object.keys(fullData.ferias || {}).length ? fullData.ferias : prev.ferias,
+              abonos: Object.keys(fullData.abonos || {}).length ? fullData.abonos : prev.abonos,
+              balcaoAtendimentos: Object.keys(fullData.balcaoAtendimentos || {}).length ? fullData.balcaoAtendimentos : prev.balcaoAtendimentos,
+              config: {
+                ...prev.config,
+                ...(fullData.config || {}),
+                spreadsheetId: targetSheetId,
+                backupEnabled: true,
+                ultimoUpdateServidores: importedCount ? `${dateStr} (${importedCount} servidores)` : prev.config.ultimoUpdateServidores,
+                lastImportedMatriculas: importedMatriculas.length ? importedMatriculas : prev.config.lastImportedMatriculas,
+                lastImportCount: importedCount || prev.config.lastImportCount
+              }
+            };
+          });
+
+          showToast(`Dados da planilha vinculada restaurados com sucesso!`, "ok");
+        } catch (autoErr) {
+          console.warn("Auto-restore warning:", autoErr);
         }
       }
     } catch (err: any) {

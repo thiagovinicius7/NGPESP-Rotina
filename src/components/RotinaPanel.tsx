@@ -171,14 +171,14 @@ export default function RotinaPanel({
 
         // 3. Respostas
         const respMap = new Map(prev.respostas.map(r => [r.nome, r.texto]));
-        fullData.respostas.forEach(r => {
+        (fullData.respostas || []).forEach(r => {
           if (r.nome) respMap.set(r.nome, r.texto);
         });
 
         // 4. Afastamentos
         const afastSet = new Set(prev.afastamentos.map(a => `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`));
         const newAfast = [...prev.afastamentos];
-        fullData.afastamentos.forEach(a => {
+        (fullData.afastamentos || []).forEach(a => {
           const key = `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`;
           if (!afastSet.has(key)) {
             afastSet.add(key);
@@ -188,9 +188,34 @@ export default function RotinaPanel({
 
         // 5. FAQ
         const faqMap = new Map(prev.faq.map(f => [f.titulo, f.resposta]));
-        fullData.faq.forEach(f => {
+        (fullData.faq || []).forEach(f => {
           if (f.titulo) faqMap.set(f.titulo, f.resposta);
         });
+
+        // 6. Produtividade
+        const newProdutividade = { ...prev.produtividade, ...(fullData.produtividade || {}) };
+
+        // 7. Fila Avulsa
+        const newFilaAvulsa = (fullData.filaAvulsa && fullData.filaAvulsa.listas && Object.keys(fullData.filaAvulsa.listas).length)
+          ? fullData.filaAvulsa
+          : prev.filaAvulsa;
+
+        // 8. Codigos
+        const codMap = new Map(prev.codigos.map(c => [c.num, c]));
+        (fullData.codigos || []).forEach(c => { if (c.num) codMap.set(c.num, c); });
+
+        // 9. Processos SEI
+        const seiMap = new Map(prev.sei.map(s => [s.num, s]));
+        (fullData.sei || []).forEach(s => { if (s.num) seiMap.set(s.num, s); });
+
+        // 10. Ferias
+        const newFerias = { ...prev.ferias, ...(fullData.ferias || {}) };
+
+        // 11. Abonos
+        const newAbonos = { ...prev.abonos, ...(fullData.abonos || {}) };
+
+        // 12. Balcao Atendimentos
+        const newBalcao = { ...prev.balcaoAtendimentos, ...(fullData.balcaoAtendimentos || {}) };
 
         const importedMatriculas = fullData.servidores.map(srv => normalizeMatricula(srv.matricula)).filter(Boolean);
         const importedCount = fullData.servidores.length;
@@ -202,8 +227,16 @@ export default function RotinaPanel({
           respostas: Array.from(respMap.entries()).map(([nome, texto]) => ({ nome, texto })),
           afastamentos: newAfast,
           faq: Array.from(faqMap.entries()).map(([titulo, resposta]) => ({ titulo, resposta })),
+          produtividade: newProdutividade,
+          filaAvulsa: newFilaAvulsa,
+          codigos: Array.from(codMap.values()),
+          sei: Array.from(seiMap.values()),
+          ferias: newFerias,
+          abonos: newAbonos,
+          balcaoAtendimentos: newBalcao,
           config: {
             ...prev.config,
+            ...(fullData.config || {}),
             spreadsheetId: sheetId,
             backupEnabled: true,
             ultimoUpdateServidores: importedCount ? `${dateStr} (${importedCount} servidores)` : prev.config.ultimoUpdateServidores,
