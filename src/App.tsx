@@ -719,7 +719,7 @@ export default function App() {
         <div className="flex gap-4">
           <span>{getSheetIdDisplay().toUpperCase()}</span>
           <span className="text-[var(--border)]">|</span>
-          <span>SISTEMA NGPESP v4.0.2</span>
+          <span>SISTEMA NGPESP v4.0.2 • Criado por Thiago Vinícius</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping"></div>
