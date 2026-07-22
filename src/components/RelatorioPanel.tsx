@@ -24,14 +24,21 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
   const setoresUnicos = Array.from(new Set(state.servidores.map(s => s.codLotacao || s.lotacao || "Sem setor").filter(Boolean)));
   const totalSetores = setoresUnicos.length;
 
-  // Session count (we track items updated/added during active session via helper cache inside app)
+  // Session count (track items updated/added during current active session since page load)
   const [sessaoCount, setSessaoCount] = useState(0);
   const [sessaoLancamentos, setSessaoLancamentos] = useState(0);
+  const sessionStartTime = React.useRef<number>(Date.now());
 
   useEffect(() => {
-    // Session calculations based on history size when this panel is mounted
-    setSessaoCount(prev => prev || Math.min(state.historico.length, 5));
-    const totalSessionLances = state.historico.slice(0, 5).reduce((s, h) => s + (h.qtd || 0), 0);
+    // Only count history entries recorded during this active browser session
+    const sessionEntries = state.historico.filter(h => {
+      if (!h.ts) return false;
+      const t = new Date(h.ts).getTime();
+      return !isNaN(t) && t >= sessionStartTime.current - 5000;
+    });
+
+    setSessaoCount(sessionEntries.length);
+    const totalSessionLances = sessionEntries.reduce((s, h) => s + (h.qtd || 0), 0);
     setSessaoLancamentos(totalSessionLances);
   }, [state.historico]);
 

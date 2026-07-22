@@ -10,7 +10,7 @@ interface DashboardProps {
   state: AppState;
   updateState: any;
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
-  setActiveTab: (tab: 'dashboard' | 'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio') => void;
+  setActiveTab: (tab: 'dashboard' | 'sisref' | 'sigrh' | 'importar' | 'vida' | 'produtividade' | 'balcao' | 'relatorio') => void;
   setSisrefSubTab?: (tab: 'setores' | 'avulsa' | 'respostas') => void;
   setRotinaSubTab?: (tab: 'importar' | 'vida' | 'produtividade') => void;
   setSisrefShowPendencias?: (show: boolean) => void;
@@ -167,10 +167,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   };
 
   const irParaVidaFuncional = () => {
-    if (setRotinaSubTab) {
-      setRotinaSubTab('vida');
-    }
-    setActiveTab('rotina');
+    setActiveTab('vida');
     onToast("Abrindo histórico de Vida Funcional...", "info");
   };
 
@@ -311,7 +308,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
                       <button 
                         onClick={() => {
                           onToast(`Abrindo ${s.nome}...`, "info");
-                          setActiveTab('rotina');
+                          setActiveTab('vida');
                         }}
                         className="text-xs px-5 py-2 bg-[var(--blue-light)] text-[var(--blue-mid)] rounded-xl hover:bg-[var(--blue-mid)] hover:text-white transition-all font-bold"
                       >
@@ -447,7 +444,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
           </button>
 
           <button 
-            onClick={() => setActiveTab('rotina')}
+            onClick={() => setActiveTab('produtividade')}
             className="w-full bento-card p-8 flex items-center gap-6 hover:scale-[1.02] active:scale-95 transition-all group cursor-pointer"
           >
             <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/50 rounded-2xl flex items-center justify-center group-hover:scale-105 transition-transform flex-shrink-0">
