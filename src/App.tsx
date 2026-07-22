@@ -9,7 +9,7 @@ import RelatorioPanel from "./components/RelatorioPanel.js";
 import { 
   ClipboardCheck, CalendarDays, Briefcase, BarChart3, HelpCircle, 
   Layers, Moon, Sun, Droplet, RefreshCw, Check, X, LogIn, LogOut, Key,
-  DownloadCloud, LayoutDashboard, UploadCloud, Contact, TrendingUp
+  DownloadCloud, LayoutDashboard, UploadCloud, Contact, TrendingUp, Wrench
 } from "lucide-react";
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
@@ -591,55 +591,55 @@ export default function App() {
       {/* 2. MAIN GRID LAYOUT CONTROLLER */}
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 flex-1 flex flex-col lg:flex-row gap-6">
         
-        {/* SIDEBAR TABS (sticky on desktop) */}
-        <nav className="flex lg:flex-col lg:w-56 overflow-x-auto lg:overflow-x-visible gap-1.5 p-1 bg-[var(--border)]/40 border border-[var(--border)] rounded-2xl lg:self-start lg:sticky lg:top-24 select-none scrollbar-none flex-shrink-0">
+        {/* SIDEBAR TABS (sticky on desktop, smooth horizontal scroll on mobile/split view) */}
+        <nav className="flex lg:flex-col lg:w-56 overflow-x-auto whitespace-nowrap lg:whitespace-normal gap-1.5 p-1.5 bg-[var(--border)]/40 border border-[var(--border)] rounded-2xl lg:self-start lg:sticky lg:top-24 select-none scrollbar-none flex-shrink-0 w-full lg:w-auto">
           <button 
             onClick={() => setActiveTab('dashboard')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'dashboard' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+            className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'dashboard' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
           >
             <LayoutDashboard size={18} /> Início
           </button>
           <button 
             onClick={() => setActiveTab('sisref')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'sisref' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+            className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'sisref' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
           >
             <ClipboardCheck size={18} /> SISREF
           </button>
           <button 
             onClick={() => setActiveTab('sigrh')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'sigrh' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+            className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'sigrh' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
           >
             <CalendarDays size={18} /> SIGRH
           </button>
           <button 
-            onClick={() => setActiveTab('importar')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'importar' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
-          >
-            <UploadCloud size={18} /> Importar & Conexão
-          </button>
-          <button 
-            onClick={() => setActiveTab('vida')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'vida' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
-          >
-            <Contact size={18} /> Vida Funcional
-          </button>
-          <button 
             onClick={() => setActiveTab('produtividade')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'produtividade' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+            className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'produtividade' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
           >
             <TrendingUp size={18} /> Produtividade
           </button>
           <button 
             onClick={() => setActiveTab('balcao')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'balcao' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text(--text2)] hover:bg-[var(--surface)]/30'}`}
+            className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'balcao' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
           >
             <HelpCircle size={18} /> Balcão
           </button>
           <button 
             onClick={() => setActiveTab('relatorio')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'relatorio' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+            className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'relatorio' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
           >
-            <BarChart3 size={18} /> Relatório
+            <BarChart3 size={18} /> Relatórios
+          </button>
+          <button 
+            onClick={() => setActiveTab('vida')}
+            className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'vida' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+          >
+            <Contact size={18} /> Vida Funcional
+          </button>
+          <button 
+            onClick={() => setActiveTab('importar')}
+            className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'importar' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+          >
+            <Wrench size={18} /> Manutenção
           </button>
         </nav>
 
