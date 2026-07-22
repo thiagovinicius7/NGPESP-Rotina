@@ -42,9 +42,38 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     setSessaoLancamentos(totalSessionLances);
   }, [state.historico]);
 
+  // Helper to check if a date value is today
+  const isToday = (dateVal?: string | number) => {
+    if (!dateVal) return false;
+    const now = new Date();
+    const hojeYMD = now.toISOString().split('T')[0];
+    const hojeDMY = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    const hojeDMShort = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+
+    if (typeof dateVal === 'number') {
+      const d = new Date(dateVal);
+      return !isNaN(d.getTime()) && d.toISOString().split('T')[0] === hojeYMD;
+    }
+
+    const str = String(dateVal).trim();
+    if (str.startsWith(hojeYMD)) return true;
+    if (str.includes(hojeDMY)) return true;
+    if (str.startsWith(hojeDMShort)) return true;
+
+    try {
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        return d.toISOString().split('T')[0] === hojeYMD;
+      }
+    } catch (_) {}
+
+    return false;
+  };
+
   // Daily Turn stats (M vs T)
   const hojeISO = new Date().toISOString().split('T')[0];
-  const confHoje = state.historico.filter(h => h.ts && h.ts.startsWith(hojeISO));
+  const confHoje = (state.historico || []).filter(h => h && h.ts && isToday(h.ts));
+  const confHojeMatriculas = new Set(confHoje.map(h => h.mat));
   
   const confManha = confHoje.filter(h => new Date(h.ts).getHours() < 13);
   const confTarde = confHoje.filter(h => new Date(h.ts).getHours() >= 13);
@@ -81,43 +110,78 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
 
   // Launch Category Statistics (Diário vs Acumulado)
   const getLancamentoStatsByTipo = () => {
-    const totaisTipo: Record<string, number> = {};
-    const hojeTipo: Record<string, number> = {};
+    const typeMap: Record<string, { tipoLabel: string; hoje: number; acumulado: number }> = {};
 
-    // 1. Daily from history
-    confHoje.forEach(h => {
-      const ocs = h.ocorrencias || [];
-      ocs.forEach(o => {
-        const t = String(o).split('(')[0].trim().toLowerCase();
-        if (t) {
-          hojeTipo[t] = (hojeTipo[t] || 0) + 1;
-        }
-      });
-    });
+    const addStat = (typeStr: string, isTodayFlag: boolean, count = 1) => {
+      let raw = String(typeStr || '').trim();
+      if (!raw) return;
+      const norm = raw.toLowerCase();
 
-    // 2. Accumulated totals from all active queues
-    Object.keys(state.filaAvulsa.listas).forEach(listName => {
-      const queue = state.filaAvulsa.listas[listName];
-      const fila = queue.fila || [];
-      
-      fila.forEach(server => {
-        const ocs = server.ocorrencias || [];
-        ocs.forEach(o => {
-          if (o.checked) {
-            const t = String(o.tipo).trim().toLowerCase();
-            if (t) {
-              totaisTipo[t] = (totaisTipo[t] || 0) + 1;
+      if (!typeMap[norm]) {
+        typeMap[norm] = { tipoLabel: raw, hoje: 0, acumulado: 0 };
+      } else if (raw !== raw.toLowerCase() && typeMap[norm].tipoLabel === typeMap[norm].tipoLabel.toLowerCase()) {
+        typeMap[norm].tipoLabel = raw;
+      }
+
+      typeMap[norm].acumulado += count;
+      if (isTodayFlag) {
+        typeMap[norm].hoje += count;
+      }
+    };
+
+    // 1. From Queue list (filaAvulsa)
+    if (state.filaAvulsa && state.filaAvulsa.listas) {
+      Object.keys(state.filaAvulsa.listas).forEach(listName => {
+        const queue = state.filaAvulsa.listas[listName];
+        const fila = queue.fila || [];
+
+        fila.forEach(server => {
+          const ocs = server.ocorrencias || [];
+          const serverProcessedToday = confHojeMatriculas.has(server.matricula);
+
+          ocs.forEach(o => {
+            if (o.checked) {
+              const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
+              addStat(o.tipo, ocIsToday, 1);
             }
-          }
+          });
         });
       });
+    }
+
+    // 2. From Produtividade (daily activity entries)
+    if (state.produtividade && typeof state.produtividade === 'object') {
+      Object.entries(state.produtividade).forEach(([dateStr, dayData]) => {
+        if (dayData && typeof dayData === 'object') {
+          const isDayToday = isToday(dateStr);
+          const allItems = [...(dayData.manha || []), ...(dayData.tarde || [])];
+          allItems.forEach(item => {
+            if (item && item.tipo) {
+              const q = typeof item.qtd === 'number' ? item.qtd : (parseInt(String(item.qtd), 10) || 1);
+              addStat(item.tipo, isDayToday, q);
+            }
+          });
+        }
+      });
+    }
+
+    // 3. From History (state.historico) - for entries with recorded ocorrencias
+    (state.historico || []).forEach(h => {
+      if (h && Array.isArray(h.ocorrencias)) {
+        const hIsToday = isToday(h.ts);
+        h.ocorrencias.forEach(ocType => {
+          addStat(ocType, hIsToday, 1);
+        });
+      }
     });
 
-    return Object.keys(totaisTipo).sort().map(tName => ({
-      tipo: tName,
-      hoje: hojeTipo[tName] || 0,
-      acumulado: totaisTipo[tName] || 0
-    }));
+    return Object.values(typeMap)
+      .sort((a, b) => b.acumulado - a.acumulado || a.tipoLabel.localeCompare(b.tipoLabel))
+      .map(item => ({
+        tipo: item.tipoLabel,
+        hoje: item.hoje,
+        acumulado: item.acumulado
+      }));
   };
 
   // Monthly stats by Incident Date (Fato gerador)
