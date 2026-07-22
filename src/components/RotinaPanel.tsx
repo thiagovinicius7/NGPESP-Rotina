@@ -1107,17 +1107,19 @@ export default function RotinaPanel({
                           onClick={handleDirectBackupSync}
                           disabled={isGoogleSyncing}
                           className="px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                          title="Cria todas as abas faltantes na planilha (Produtividade, Fila Avulsa, etc.) e envia os dados do sistema para lá"
                         >
                           <RefreshCw size={14} className={isGoogleSyncing ? "animate-spin" : ""} />
-                          Sincronizar Planilha de Backup
+                          Sincronizar (Enviar Dados para a Planilha)
                         </button>
                         <button
                           onClick={handleRestoreFromGoogleBackup}
                           disabled={isGoogleSyncing}
                           className="px-4 py-2 bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] disabled:opacity-50 text-[var(--text)] text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                          title="Lê os dados existentes na planilha e traz para o seu navegador"
                         >
                           <DownloadCloud size={14} />
-                          Importar e Mesclar do Backup
+                          Importar (Receber da Planilha)
                         </button>
                         <a
                           href={`https://docs.google.com/spreadsheets/d/${state.config.spreadsheetId}`}
@@ -1129,6 +1131,9 @@ export default function RotinaPanel({
                           Abrir no Google Planilhas
                         </a>
                       </div>
+                      <p className="text-[10px] text-[var(--text2)] font-semibold mt-1">
+                        💡 <strong>Dica:</strong> Para criar as abas novas na sua planilha (Produtividade, Fila Avulsa, Códigos, etc.) e enviar seus dados locais para lá, clique em <strong>"Sincronizar (Enviar Dados para a Planilha)"</strong>.
+                      </p>
                     </div>
                   ) : (
                     <div className="flex flex-col gap-4">
