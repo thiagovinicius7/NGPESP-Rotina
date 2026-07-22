@@ -591,8 +591,15 @@ export default function App() {
       {/* 2. MAIN GRID LAYOUT CONTROLLER */}
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 flex-1 flex flex-col lg:flex-row gap-6">
         
-        {/* SIDEBAR TABS (sticky on desktop, smooth horizontal scroll on mobile/split view) */}
-        <nav className="flex lg:flex-col lg:w-56 overflow-x-auto whitespace-nowrap lg:whitespace-normal gap-1.5 p-1.5 bg-[var(--border)]/40 border border-[var(--border)] rounded-2xl lg:self-start lg:sticky lg:top-24 select-none scrollbar-none flex-shrink-0 w-full lg:w-auto">
+        {/* SIDEBAR TABS (sticky on desktop, smooth horizontal scroll with visible scrollbar & mouse wheel on mobile/split view) */}
+        <nav 
+          onWheel={(e) => {
+            if (e.deltaY !== 0 && window.innerWidth < 1024) {
+              e.currentTarget.scrollLeft += e.deltaY;
+            }
+          }}
+          className="flex lg:flex-col lg:w-56 overflow-x-auto whitespace-nowrap lg:whitespace-normal gap-1.5 p-2 bg-[var(--border)]/40 border border-[var(--border)] rounded-2xl lg:self-start lg:sticky lg:top-24 select-none flex-shrink-0 w-full lg:w-auto transition-all pb-3 lg:pb-2"
+        >
           <button 
             onClick={() => setActiveTab('dashboard')}
             className={`flex-shrink-0 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'dashboard' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
