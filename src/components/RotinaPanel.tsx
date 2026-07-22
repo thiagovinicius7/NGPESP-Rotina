@@ -6,9 +6,16 @@ import {
   Palmtree, CalendarCheck, Stethoscope, Save, Settings2, Plus, 
   X, Check, Sunrise, Sunset, History, Calendar, FileText, 
   ArrowRight, Edit, AlertTriangle, AlertCircle, CheckCircle,
-  Database, RefreshCw, Key
+  Database, RefreshCw, Key, Search, Link as LinkIcon, ExternalLink, Unlink
 } from "lucide-react";
-import { syncToGoogleSheets, loadServersFromBackup } from "../lib/googleSheetsSync.js";
+import { 
+  syncToGoogleSheets, 
+  loadServersFromBackup, 
+  loadFullStateFromBackup, 
+  searchGoogleDriveForBackup, 
+  extractSpreadsheetId, 
+  DriveBackupFile 
+} from "../lib/googleSheetsSync.js";
 
 const normalizeMatricula = (m: any): string => {
   return String(m || "").trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "");
@@ -80,6 +87,145 @@ export default function RotinaPanel({
   const [googleSyncStatus, setGoogleSyncStatus] = useState<string>("");
   const [googleSyncType, setGoogleSyncType] = useState<'info' | 'ok' | 'err' | ''>("");
   const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
+  const [manualSheetInput, setManualSheetInput] = useState("");
+  const [foundDriveFiles, setFoundDriveFiles] = useState<DriveBackupFile[]>([]);
+  const [isSearchingDrive, setIsSearchingDrive] = useState(false);
+
+  const handleSearchDriveBackups = async () => {
+    if (!googleToken) {
+      onToast("Por favor, conecte-se ao Google primeiro.", "err");
+      return;
+    }
+    setIsSearchingDrive(true);
+    setGoogleSyncType("info");
+    setGoogleSyncStatus("Pesquisando planilhas de backup no seu Google Drive...");
+    try {
+      const files = await searchGoogleDriveForBackup(googleToken);
+      setFoundDriveFiles(files);
+      if (files.length === 0) {
+        setGoogleSyncType("info");
+        setGoogleSyncStatus("Nenhuma planilha 'NGPESP' encontrada no seu Google Drive. Você pode criar uma nova ou colar o ID/link manualmente.");
+      } else {
+        setGoogleSyncType("ok");
+        setGoogleSyncStatus(`Encontrada(s) ${files.length} planilha(s) no seu Google Drive.`);
+      }
+    } catch (err: any) {
+      setGoogleSyncType("err");
+      setGoogleSyncStatus(`Erro ao buscar no Drive: ${err.message || err}`);
+    } finally {
+      setIsSearchingDrive(false);
+    }
+  };
+
+  const handleLinkAndRestoreSpreadsheet = async (sheetIdOrUrl: string) => {
+    const sheetId = extractSpreadsheetId(sheetIdOrUrl);
+    if (!googleToken) {
+      onToast("Por favor, conecte-se ao Google primeiro.", "err");
+      return;
+    }
+    if (!sheetId) {
+      onToast("Por favor, informe o ID ou link de uma planilha válida.", "err");
+      return;
+    }
+
+    setIsGoogleSyncing(true);
+    setGoogleSyncType("info");
+    setGoogleSyncStatus("Carregando dados da planilha do Google Drive...");
+
+    try {
+      const fullData = await loadFullStateFromBackup(googleToken, sheetId, (prog) => {
+        setGoogleSyncStatus(prog.message);
+        setGoogleSyncType(prog.type);
+      });
+
+      updateState(prev => {
+        // 1. Merge Servidores
+        const existingMap = new Map();
+        prev.servidores.forEach(s => {
+          const norm = normalizeMatricula(s.matricula);
+          if (norm) existingMap.set(norm, s);
+        });
+
+        fullData.servidores.forEach(srv => {
+          const norm = normalizeMatricula(srv.matricula);
+          if (norm) {
+            if (existingMap.has(norm)) {
+              const existingSrv = existingMap.get(norm);
+              existingMap.set(norm, { ...existingSrv, ...srv, matricula: existingSrv.matricula });
+            } else {
+              existingMap.set(norm, srv);
+            }
+          }
+        });
+
+        // 2. Merge Historico
+        const histSet = new Set(prev.historico.map(h => `${h.mat}_${h.ts}`));
+        const newHist = [...prev.historico];
+        fullData.historico.forEach(h => {
+          const key = `${h.mat}_${h.ts}`;
+          if (!histSet.has(key)) {
+            histSet.add(key);
+            newHist.push(h);
+          }
+        });
+
+        // 3. Respostas
+        const respMap = new Map(prev.respostas.map(r => [r.nome, r.texto]));
+        fullData.respostas.forEach(r => {
+          if (r.nome) respMap.set(r.nome, r.texto);
+        });
+
+        // 4. Afastamentos
+        const afastSet = new Set(prev.afastamentos.map(a => `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`));
+        const newAfast = [...prev.afastamentos];
+        fullData.afastamentos.forEach(a => {
+          const key = `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`;
+          if (!afastSet.has(key)) {
+            afastSet.add(key);
+            newAfast.push(a);
+          }
+        });
+
+        // 5. FAQ
+        const faqMap = new Map(prev.faq.map(f => [f.titulo, f.resposta]));
+        fullData.faq.forEach(f => {
+          if (f.titulo) faqMap.set(f.titulo, f.resposta);
+        });
+
+        const importedMatriculas = fullData.servidores.map(srv => normalizeMatricula(srv.matricula)).filter(Boolean);
+        const importedCount = fullData.servidores.length;
+        const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
+        return {
+          servidores: Array.from(existingMap.values()),
+          historico: newHist,
+          respostas: Array.from(respMap.entries()).map(([nome, texto]) => ({ nome, texto })),
+          afastamentos: newAfast,
+          faq: Array.from(faqMap.entries()).map(([titulo, resposta]) => ({ titulo, resposta })),
+          config: {
+            ...prev.config,
+            spreadsheetId: sheetId,
+            backupEnabled: true,
+            ultimoUpdateServidores: importedCount ? `${dateStr} (${importedCount} servidores)` : prev.config.ultimoUpdateServidores,
+            lastImportedMatriculas: importedMatriculas.length ? importedMatriculas : prev.config.lastImportedMatriculas,
+            lastImportCount: importedCount || prev.config.lastImportCount
+          }
+        };
+      });
+
+      setGoogleSyncType("ok");
+      setGoogleSyncStatus(`Planilha vinculada e ${fullData.servidores.length} servidores sincronizados do backup!`);
+      onToast(`Planilha vinculada com sucesso! ${fullData.servidores.length} servidores restaurados.`, "ok");
+      setManualSheetInput("");
+      setFoundDriveFiles([]);
+    } catch (err: any) {
+      setGoogleSyncType("err");
+      setGoogleSyncStatus(`Erro ao vincular planilha: ${err.message || err}`);
+      onToast(`Erro ao vincular planilha: ${err.message || err}`, "err");
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  };
 
   const handleDirectBackupSync = async () => {
     if (!googleToken) {
@@ -123,82 +269,15 @@ export default function RotinaPanel({
       return;
     }
     if (!sheetId) {
-      onToast("Nenhuma planilha de backup configurada. Realize o backup primeiro para criar uma planilha.", "err");
+      onToast("Nenhuma planilha de backup configurada.", "err");
       return;
     }
     
-    if (!confirm("Isso irá acrescentar os servidores da planilha à sua lista local (novos serão adicionados e os existentes serão atualizados sem apagar os antigos). Deseja prosseguir?")) {
+    if (!confirm("Isso irá mesclar os dados da planilha de backup no Google Drive com seus dados locais. Deseja prosseguir?")) {
       return;
     }
     
-    setIsGoogleSyncing(true);
-    setGoogleSyncType("info");
-    setGoogleSyncStatus("Carregando servidores da planilha...");
-    try {
-      const backupServers = await loadServersFromBackup(googleToken, sheetId, (prog) => {
-        setGoogleSyncStatus(prog.message);
-        setGoogleSyncType(prog.type);
-      });
-      
-      if (backupServers.length === 0) {
-        setGoogleSyncType("err");
-        setGoogleSyncStatus("Nenhum servidor encontrado no backup.");
-        onToast("Nenhum dado encontrado para restaurar", "err");
-        return;
-      }
-      
-      updateState(prev => {
-        const existingMap = new Map();
-        prev.servidores.forEach(s => {
-          const norm = normalizeMatricula(s.matricula);
-          if (norm) {
-            existingMap.set(norm, s);
-          }
-        });
-
-        backupServers.forEach(srv => {
-          const norm = normalizeMatricula(srv.matricula);
-          if (norm) {
-            if (existingMap.has(norm)) {
-              const existingSrv = existingMap.get(norm);
-              existingMap.set(norm, { 
-                ...existingSrv, 
-                ...srv,
-                matricula: existingSrv.matricula // Preserve original formatting
-              });
-            } else {
-              existingMap.set(norm, srv);
-            }
-          }
-        });
-
-        const importedMatriculas = backupServers
-          .map(srv => normalizeMatricula(srv.matricula))
-          .filter(Boolean);
-        const importedCount = backupServers.length;
-        const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-
-        return { 
-          servidores: Array.from(existingMap.values()),
-          config: {
-            ...prev.config,
-            ultimoUpdateServidores: `${dateStr} (${importedCount} servidores)`,
-            lastImportedMatriculas: importedMatriculas,
-            lastImportCount: importedCount
-          }
-        };
-      });
-      
-      setGoogleSyncType("ok");
-      setGoogleSyncStatus(`Importação concluída! ${backupServers.length} servidores sincronizados.`);
-      onToast(`${backupServers.length} servidores sincronizados do backup!`, "ok");
-    } catch (err: any) {
-      setGoogleSyncType("err");
-      setGoogleSyncStatus(`Erro na importação: ${err.message || err}`);
-      onToast("Falha ao carregar servidores do backup", "err");
-    } finally {
-      setIsGoogleSyncing(false);
-    }
+    await handleLinkAndRestoreSpreadsheet(sheetId);
   };
 
   // Vida Funcional
@@ -974,11 +1053,23 @@ export default function RotinaPanel({
                   </div>
 
                   {state.config.spreadsheetId ? (
-                    <div className="flex flex-col gap-2">
-                      <div className="p-2.5 bg-[var(--bg)] border border-[var(--border2)] rounded-lg font-mono text-[10px] text-[var(--text2)] break-all select-all">
-                        Spreadsheet ID: {state.config.spreadsheetId}
+                    <div className="flex flex-col gap-3">
+                      <div className="p-2.5 bg-[var(--bg)] border border-[var(--border2)] rounded-lg font-mono text-[10px] text-[var(--text2)] break-all select-all flex items-center justify-between">
+                        <span>Spreadsheet ID: {state.config.spreadsheetId}</span>
+                        <button
+                          onClick={() => {
+                            if (confirm("Deseja desvincular esta planilha? Seus dados locais permanecerão salvos.")) {
+                              updateState(prev => ({ config: { ...prev.config, spreadsheetId: "" } }));
+                              onToast("Planilha desvinculada. Você pode buscar ou vincular outra planilha.", "info");
+                            }
+                          }}
+                          className="text-amber-500 hover:text-amber-600 font-bold text-[10px] flex items-center gap-1 cursor-pointer ml-2 flex-shrink-0"
+                          title="Desvincular planilha atual para escolher outra"
+                        >
+                          <Unlink size={12} /> Desvincular
+                        </button>
                       </div>
-                      <div className="flex flex-wrap gap-2 mt-2">
+                      <div className="flex flex-wrap gap-2 mt-1">
                         <button
                           onClick={handleDirectBackupSync}
                           disabled={isGoogleSyncing}
@@ -1007,18 +1098,81 @@ export default function RotinaPanel({
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col gap-2">
-                      <p className="text-[10px] text-[var(--text2)] font-semibold mb-2">
-                        Você ainda não criou sua planilha de backup automático. Clique no botão abaixo para criar uma planilha formatada no seu Drive e fazer a primeira sincronização.
+                    <div className="flex flex-col gap-4">
+                      <p className="text-xs text-[var(--text2)] font-semibold leading-relaxed">
+                        Se você já criou uma planilha de backup anteriormente (ou em outro dispositivo), busque-a abaixo no seu Google Drive ou insira o link/ID da planilha para sincronizar seus dados.
                       </p>
-                      <button
-                        onClick={handleDirectBackupSync}
-                        disabled={isGoogleSyncing}
-                        className="self-start px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
-                      >
-                        <Plus size={14} className={isGoogleSyncing ? "animate-spin" : ""} />
-                        Criar Planilha de Backup Inicial
-                      </button>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={handleSearchDriveBackups}
+                          disabled={isSearchingDrive || isGoogleSyncing}
+                          className="px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <Search size={14} className={isSearchingDrive ? "animate-spin" : ""} />
+                          Procurar Minha Planilha no Google Drive
+                        </button>
+
+                        <button
+                          onClick={handleDirectBackupSync}
+                          disabled={isGoogleSyncing}
+                          className="px-4 py-2 bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] disabled:opacity-50 text-[var(--text)] text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <Plus size={14} className={isGoogleSyncing ? "animate-spin" : ""} />
+                          Criar Nova Planilha do Zero
+                        </button>
+                      </div>
+
+                      {/* Discovered Drive Files List */}
+                      {foundDriveFiles.length > 0 && (
+                        <div className="p-3 bg-[var(--bg)] border border-[var(--blue-mid)] rounded-xl flex flex-col gap-2">
+                          <div className="text-xs font-bold text-[var(--blue-mid)] flex items-center gap-1.5">
+                            <FolderOpen size={14} /> Planilhas Encontradas no Seu Google Drive:
+                          </div>
+                          <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
+                            {foundDriveFiles.map(file => (
+                              <div key={file.id} className="p-2.5 bg-[var(--surface)] border border-[var(--border2)] rounded-lg flex items-center justify-between gap-3 text-xs">
+                                <div className="truncate">
+                                  <div className="font-extrabold text-[var(--text)] truncate">{file.name}</div>
+                                  <div className="text-[10px] text-[var(--text2)] font-mono">
+                                    Modificada em: {new Date(file.modifiedTime).toLocaleString('pt-BR')}
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => handleLinkAndRestoreSpreadsheet(file.id)}
+                                  disabled={isGoogleSyncing}
+                                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold text-[11px] rounded-lg flex items-center gap-1 cursor-pointer flex-shrink-0"
+                                >
+                                  <LinkIcon size={12} /> Vincular e Restaurar
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Manual Input for Spreadsheet ID or Link */}
+                      <div className="pt-2 border-t border-[var(--border2)] flex flex-col gap-1.5">
+                        <label className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
+                          <LinkIcon size={12} /> Ou cole o link ou ID de uma planilha existente:
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="https://docs.google.com/spreadsheets/d/1ABC.../edit ou ID da planilha"
+                            value={manualSheetInput}
+                            onChange={(e) => setManualSheetInput(e.target.value)}
+                            className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs text-[var(--text)] focus:outline-none focus:border-[var(--blue-mid)] font-mono"
+                          />
+                          <button
+                            onClick={() => handleLinkAndRestoreSpreadsheet(manualSheetInput)}
+                            disabled={!manualSheetInput.trim() || isGoogleSyncing}
+                            className="px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-1 cursor-pointer shadow-xs"
+                          >
+                            <LinkIcon size={14} /> Vincular
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )}
 
