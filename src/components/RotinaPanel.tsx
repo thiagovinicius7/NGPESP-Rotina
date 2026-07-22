@@ -997,28 +997,6 @@ export default function RotinaPanel({
 
   return (
     <div className="flex flex-col gap-6">
-      
-      {/* Sub Tabs selectors */}
-      <div className="flex p-1 bg-[var(--border)] rounded-xl gap-1 select-none">
-        <button 
-          onClick={() => setSubTab('importar')}
-          className={`flex-1 py-3 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'importar' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)]'}`}
-        >
-          <UploadCloud size={16} /> Importar & Conexão
-        </button>
-        <button 
-          onClick={() => setSubTab('vida')}
-          className={`flex-1 py-3 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'vida' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)]'}`}
-        >
-          <Contact size={16} /> Vida Funcional
-        </button>
-        <button 
-          onClick={() => setSubTab('produtividade')}
-          className={`flex-1 py-3 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'produtividade' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)]'}`}
-        >
-          <TrendingUp size={16} /> Produtividade
-        </button>
-      </div>
 
       {/* IMPORT TAB CONTENT */}
       {subTab === 'importar' && (

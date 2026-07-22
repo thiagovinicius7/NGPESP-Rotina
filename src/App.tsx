@@ -9,13 +9,13 @@ import RelatorioPanel from "./components/RelatorioPanel.js";
 import { 
   ClipboardCheck, CalendarDays, Briefcase, BarChart3, HelpCircle, 
   Layers, Moon, Sun, Droplet, RefreshCw, Check, X, LogIn, LogOut, Key,
-  DownloadCloud, LayoutDashboard
+  DownloadCloud, LayoutDashboard, UploadCloud, Contact, TrendingUp
 } from "lucide-react";
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'rotina' | 'balcao' | 'relatorio'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'importar' | 'vida' | 'produtividade' | 'balcao' | 'relatorio'>('dashboard');
   const [sisrefSubTab, setSisrefSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
   const [rotinaSubTab, setRotinaSubTab] = useState<'importar' | 'vida' | 'produtividade'>('importar');
   const [sisrefShowPendencias, setSisrefShowPendencias] = useState(false);
@@ -612,10 +612,22 @@ export default function App() {
             <CalendarDays size={18} /> SIGRH
           </button>
           <button 
-            onClick={() => setActiveTab('rotina')}
-            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'rotina' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+            onClick={() => setActiveTab('importar')}
+            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'importar' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
           >
-            <Briefcase size={18} /> Rotina
+            <UploadCloud size={18} /> Importar & Conexão
+          </button>
+          <button 
+            onClick={() => setActiveTab('vida')}
+            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'vida' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+          >
+            <Contact size={18} /> Vida Funcional
+          </button>
+          <button 
+            onClick={() => setActiveTab('produtividade')}
+            className={`flex-1 lg:flex-none py-3 px-4 text-xs font-bold rounded-xl flex items-center justify-center lg:justify-start gap-2.5 transition-all cursor-pointer ${activeTab === 'produtividade' ? 'bg-[var(--surface)] text-[var(--blue)] border border-[var(--border)] shadow-xs' : 'text-[var(--text2)] hover:bg-[var(--surface)]/30'}`}
+          >
+            <TrendingUp size={18} /> Produtividade
           </button>
           <button 
             onClick={() => setActiveTab('balcao')}
@@ -663,7 +675,7 @@ export default function App() {
               onToast={showToast} 
             />
           )}
-          {activeTab === 'rotina' && (
+          {(activeTab === 'importar' || activeTab === 'vida' || activeTab === 'produtividade') && (
             <RotinaPanel 
               state={state} 
               updateState={updateState} 
@@ -674,8 +686,8 @@ export default function App() {
               googleToken={googleToken}
               onGoogleLogin={handleGoogleLogin}
               onGoogleLogout={handleGoogleLogout}
-              subTab={rotinaSubTab}
-              setSubTab={setRotinaSubTab}
+              subTab={activeTab}
+              setSubTab={(t) => setActiveTab(t as any)}
             />
           )}
           {activeTab === 'balcao' && (
