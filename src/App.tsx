@@ -133,14 +133,22 @@ export default function App() {
           const fullData = await loadFullStateFromBackup(result.accessToken, targetSheetId, () => {});
 
           updateState(prev => {
+            const safePrevServidores = prev?.servidores || [];
+            const safePrevHistorico = prev?.historico || [];
+            const safePrevRespostas = prev?.respostas || [];
+            const safePrevAfastamentos = prev?.afastamentos || [];
+            const safePrevFaq = prev?.faq || [];
+            const safePrevCodigos = prev?.codigos || [];
+            const safePrevSei = prev?.sei || [];
+
             const existingMap = new Map();
-            prev.servidores.forEach(s => {
-              const norm = s.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
+            safePrevServidores.forEach(s => {
+              const norm = s?.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
               if (norm) existingMap.set(norm, s);
             });
 
-            (fullData.servidores || []).forEach(srv => {
-              const norm = srv.matricula ? String(srv.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
+            (fullData?.servidores || []).forEach(srv => {
+              const norm = srv?.matricula ? String(srv.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
               if (norm) {
                 if (existingMap.has(norm)) {
                   const existingSrv = existingMap.get(norm);
@@ -151,38 +159,44 @@ export default function App() {
               }
             });
 
-            const histSet = new Set(prev.historico.map(h => `${h.mat}_${h.ts}`));
-            const newHist = [...prev.historico];
-            (fullData.historico || []).forEach(h => {
-              const key = `${h.mat}_${h.ts}`;
-              if (!histSet.has(key)) {
-                histSet.add(key);
-                newHist.push(h);
+            const histSet = new Set(safePrevHistorico.map(h => `${h?.mat}_${h?.ts}`));
+            const newHist = [...safePrevHistorico];
+            (fullData?.historico || []).forEach(h => {
+              if (h && h.mat && h.ts) {
+                const key = `${h.mat}_${h.ts}`;
+                if (!histSet.has(key)) {
+                  histSet.add(key);
+                  newHist.push(h);
+                }
               }
             });
 
-            const respMap = new Map(prev.respostas.map(r => [r.nome, r.texto]));
-            (fullData.respostas || []).forEach(r => { if (r.nome) respMap.set(r.nome, r.texto); });
+            const respMap = new Map(safePrevRespostas.map(r => [r?.nome, r?.texto]));
+            (fullData?.respostas || []).forEach(r => { if (r && r.nome) respMap.set(r.nome, r.texto); });
 
-            const afastSet = new Set(prev.afastamentos.map(a => `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`));
-            const newAfast = [...prev.afastamentos];
-            (fullData.afastamentos || []).forEach(a => {
-              const key = `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`;
-              if (!afastSet.has(key)) { afastSet.add(key); newAfast.push(a); }
+            const afastSet = new Set(safePrevAfastamentos.map(a => `${a?.dia}_${a?.mes}_${a?.tipo}_${a?.sisref}`));
+            const newAfast = [...safePrevAfastamentos];
+            (fullData?.afastamentos || []).forEach(a => {
+              if (a) {
+                const key = `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`;
+                if (!afastSet.has(key)) { afastSet.add(key); newAfast.push(a); }
+              }
             });
 
-            const faqMap = new Map(prev.faq.map(f => [f.titulo, f.resposta]));
-            (fullData.faq || []).forEach(f => { if (f.titulo) faqMap.set(f.titulo, f.resposta); });
+            const faqMap = new Map(safePrevFaq.map(f => [f?.titulo, f?.resposta]));
+            (fullData?.faq || []).forEach(f => { if (f && f.titulo) faqMap.set(f.titulo, f.resposta); });
 
-            const codMap = new Map(prev.codigos.map(c => [c.num, c]));
-            (fullData.codigos || []).forEach(c => { if (c.num) codMap.set(c.num, c); });
+            const codMap = new Map(safePrevCodigos.map(c => [c?.num, c]));
+            (fullData?.codigos || []).forEach(c => { if (c && c.num) codMap.set(c.num, c); });
 
-            const seiMap = new Map(prev.sei.map(s => [s.num, s]));
-            (fullData.sei || []).forEach(s => { if (s.num) seiMap.set(s.num, s); });
+            const seiMap = new Map(safePrevSei.map(s => [s?.num, s]));
+            (fullData?.sei || []).forEach(s => { if (s && s.num) seiMap.set(s.num, s); });
 
-            const importedMatriculas = (fullData.servidores || []).map(s => s.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "").filter(Boolean);
-            const importedCount = (fullData.servidores || []).length;
+            const importedMatriculas = (fullData?.servidores || []).map(s => s?.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "").filter(Boolean);
+            const importedCount = (fullData?.servidores || []).length;
             const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
+            const prevConfig = prev?.config || {};
 
             return {
               servidores: Array.from(existingMap.values()),
@@ -190,21 +204,21 @@ export default function App() {
               respostas: Array.from(respMap.entries()).map(([nome, texto]) => ({ nome, texto })),
               afastamentos: newAfast,
               faq: Array.from(faqMap.entries()).map(([titulo, resposta]) => ({ titulo, resposta })),
-              produtividade: Object.keys(fullData.produtividade || {}).length ? fullData.produtividade : prev.produtividade,
-              filaAvulsa: (fullData.filaAvulsa && fullData.filaAvulsa.listas && Object.keys(fullData.filaAvulsa.listas).length) ? fullData.filaAvulsa : prev.filaAvulsa,
+              produtividade: (fullData?.produtividade && typeof fullData.produtividade === 'object' && Object.keys(fullData.produtividade).length) ? fullData.produtividade : (prev?.produtividade || {}),
+              filaAvulsa: (fullData?.filaAvulsa && fullData.filaAvulsa.listas && typeof fullData.filaAvulsa.listas === 'object' && Object.keys(fullData.filaAvulsa.listas).length) ? fullData.filaAvulsa : (prev?.filaAvulsa || { listas: { "Padrão": { fila: [], idx: 0 } }, ativa: "Padrão", natal: [], configProd: { tipos: [], sistemas: [] }, pendencias: [] }),
               codigos: Array.from(codMap.values()),
               sei: Array.from(seiMap.values()),
-              ferias: Object.keys(fullData.ferias || {}).length ? fullData.ferias : prev.ferias,
-              abonos: Object.keys(fullData.abonos || {}).length ? fullData.abonos : prev.abonos,
-              balcaoAtendimentos: Object.keys(fullData.balcaoAtendimentos || {}).length ? fullData.balcaoAtendimentos : prev.balcaoAtendimentos,
+              ferias: (fullData?.ferias && typeof fullData.ferias === 'object' && Object.keys(fullData.ferias).length) ? fullData.ferias : (prev?.ferias || {}),
+              abonos: (fullData?.abonos && typeof fullData.abonos === 'object' && Object.keys(fullData.abonos).length) ? fullData.abonos : (prev?.abonos || {}),
+              balcaoAtendimentos: (fullData?.balcaoAtendimentos && typeof fullData.balcaoAtendimentos === 'object' && Object.keys(fullData.balcaoAtendimentos).length) ? fullData.balcaoAtendimentos : (prev?.balcaoAtendimentos || {}),
               config: {
-                ...prev.config,
-                ...(fullData.config || {}),
+                ...prevConfig,
+                ...(fullData?.config || {}),
                 spreadsheetId: targetSheetId,
                 backupEnabled: true,
-                ultimoUpdateServidores: importedCount ? `${dateStr} (${importedCount} servidores)` : prev.config.ultimoUpdateServidores,
-                lastImportedMatriculas: importedMatriculas.length ? importedMatriculas : prev.config.lastImportedMatriculas,
-                lastImportCount: importedCount || prev.config.lastImportCount
+                ultimoUpdateServidores: importedCount ? `${dateStr} (${importedCount} servidores)` : (prevConfig.ultimoUpdateServidores || ""),
+                lastImportedMatriculas: importedMatriculas.length ? importedMatriculas : (prevConfig.lastImportedMatriculas || []),
+                lastImportCount: importedCount || (prevConfig.lastImportCount || 0)
               }
             };
           });
