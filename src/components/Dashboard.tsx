@@ -67,9 +67,28 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   const totalServidores = state.servidores.length;
   const totalSetores = new Set(state.servidores.map(s => s.codLotacao || s.lotacao)).size;
 
-  const totalLancamentos = state.historico.length;
-  const hoje = new Date().toISOString().split('T')[0];
-  const lancamentosHoje = state.historico.filter(h => h.ts?.startsWith(hoje)).length;
+  const hojeStr = new Date().toISOString().split('T')[0];
+
+  // Calculate total e daily lançamentos dynamically from history entries and productivity items
+  const histLancamentos = state.historico.reduce((acc, h) => acc + (typeof h.qtd === 'number' ? h.qtd : 1), 0);
+
+  let prodLancamentos = 0;
+  let prodLancamentosHoje = 0;
+
+  Object.entries(state.produtividade || {}).forEach(([dateStr, dayData]) => {
+    const countDay = (dayData.manha?.length || 0) + (dayData.tarde?.length || 0);
+    prodLancamentos += countDay;
+    if (dateStr === hojeStr) {
+      prodLancamentosHoje += countDay;
+    }
+  });
+
+  const histLancamentosHoje = state.historico
+    .filter(h => h.ts && h.ts.slice(0, 10) === hojeStr)
+    .reduce((acc, h) => acc + (typeof h.qtd === 'number' ? h.qtd : 1), 0);
+
+  const totalLancamentos = histLancamentos + prodLancamentos;
+  const lancamentosHoje = histLancamentosHoje + prodLancamentosHoje;
 
   const pendenciasAvulsa = state.filaAvulsa?.pendencias?.length || 0;
   const filaAtiva = state.filaAvulsa?.listas?.[state.filaAvulsa?.ativa || "Padrão"] || { fila: [], idx: 0 };

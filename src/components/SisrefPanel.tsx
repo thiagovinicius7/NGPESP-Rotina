@@ -154,7 +154,7 @@ export default function SisrefPanel({
       };
 
       updateState(prev => ({
-        historico: [newEntry, ...prev.historico].slice(0, 500)
+        historico: [newEntry, ...prev.historico].slice(0, 5000)
       }));
 
       setSetorIdx(prev => prev + 1);
@@ -252,7 +252,7 @@ export default function SisrefPanel({
       };
 
       updateState(prev => ({
-        historico: [newEntry, ...prev.historico].slice(0, 500)
+        historico: [newEntry, ...prev.historico].slice(0, 5000)
       }));
 
       setSelectedServer(null);
@@ -410,7 +410,7 @@ export default function SisrefPanel({
         };
 
         return {
-          historico: [newLog, ...prev.historico].slice(0, 500),
+          historico: [newLog, ...prev.historico].slice(0, 5000),
           filaAvulsa: {
             ...prev.filaAvulsa,
             listas: {
