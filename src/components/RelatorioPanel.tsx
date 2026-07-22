@@ -147,10 +147,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       }
     };
 
-    // Track which queue items were processed today
-    const processedServerTypesToday = new Set<string>();
-
-    // 1. From Queue list (filaAvulsa)
+    // From Queue list (filaAvulsa - Sisref)
     if (state.filaAvulsa && state.filaAvulsa.listas) {
       Object.keys(state.filaAvulsa.listas).forEach(listName => {
         const queue = state.filaAvulsa.listas[listName];
@@ -164,45 +161,11 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
             if (o.checked) {
               const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
               addStat(o.tipo, ocIsToday, 1);
-              if (ocIsToday) {
-                processedServerTypesToday.add(`${server.matricula}_${cleanTipoName(o.tipo).toLowerCase()}`);
-              }
             }
           });
         });
       });
     }
-
-    // 2. From Produtividade (daily activity entries)
-    if (state.produtividade && typeof state.produtividade === 'object') {
-      Object.entries(state.produtividade).forEach(([dateStr, dayData]) => {
-        if (dayData && typeof dayData === 'object') {
-          const isDayToday = isToday(dateStr);
-          const allItems = [...(dayData.manha || []), ...(dayData.tarde || [])];
-          allItems.forEach(item => {
-            if (item && item.tipo) {
-              const q = typeof item.qtd === 'number' ? item.qtd : (parseInt(String(item.qtd), 10) || 1);
-              addStat(item.tipo, isDayToday, q);
-            }
-          });
-        }
-      });
-    }
-
-    // 3. From History (state.historico) - for entries with recorded ocorrencias
-    (state.historico || []).forEach(h => {
-      if (h && Array.isArray(h.ocorrencias)) {
-        const hIsToday = isToday(h.ts);
-        h.ocorrencias.forEach(ocType => {
-          const normOc = cleanTipoName(ocType).toLowerCase();
-          const key = `${h.mat}_${normOc}`;
-          // Add if not already counted from filaAvulsa for today
-          if (!hIsToday || !processedServerTypesToday.has(key)) {
-            addStat(ocType, hIsToday, 1);
-          }
-        });
-      }
-    });
 
     return Object.values(typeMap)
       .sort((a, b) => b.acumulado - a.acumulado || a.tipoLabel.localeCompare(b.tipoLabel, "pt-BR"))
