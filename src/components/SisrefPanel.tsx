@@ -372,7 +372,12 @@ export default function SisrefPanel({
       const nextFila = [...q.fila];
       const nextServer = { ...nextFila[q.idx] };
       const nextOcs = [...nextServer.ocorrencias];
-      nextOcs[ocIdx] = { ...nextOcs[ocIdx], checked: !nextOcs[ocIdx].checked };
+      const isNowChecked = !nextOcs[ocIdx].checked;
+      nextOcs[ocIdx] = { 
+        ...nextOcs[ocIdx], 
+        checked: isNowChecked,
+        dataLancamento: isNowChecked ? new Date().toISOString() : undefined
+      };
       nextServer.ocorrencias = nextOcs;
       nextFila[q.idx] = nextServer;
 
@@ -400,13 +405,25 @@ export default function SisrefPanel({
         const q = prev.filaAvulsa.listas[activeQueueName];
         if (!q) return {};
 
-        // Add history entry
+        const nowIso = new Date().toISOString();
+
+        // Stamp dataLancamento on checked occurrences in queue
+        const nextFila = [...q.fila];
+        const serverIdx = q.idx;
+        if (nextFila[serverIdx]) {
+          const srv = { ...nextFila[serverIdx] };
+          srv.ocorrencias = srv.ocorrencias.map(oc => oc.checked ? { ...oc, dataLancamento: oc.dataLancamento || nowIso } : oc);
+          nextFila[serverIdx] = srv;
+        }
+
+        // Add history entry with occurrences list
         const newLog: HistoryEntry = {
           mat: currentQueueServer.matricula,
           nome: currentQueueServer.nome,
           setor: "Avulsa Fila",
           qtd: qtd,
-          ts: new Date().toISOString()
+          ts: nowIso,
+          ocorrencias: checkedOcs.map(o => o.tipo)
         };
 
         return {
@@ -415,7 +432,7 @@ export default function SisrefPanel({
             ...prev.filaAvulsa,
             listas: {
               ...prev.filaAvulsa.listas,
-              [activeQueueName]: { ...q, idx: q.idx + 1 }
+              [activeQueueName]: { ...q, fila: nextFila, idx: q.idx + 1 }
             }
           }
         };
