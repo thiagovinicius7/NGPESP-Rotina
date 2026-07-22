@@ -108,19 +108,37 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     setExpandedSetores(prev => ({ ...prev, [sName]: !prev[sName] }));
   };
 
+  // Clean launch type to group documents together without trailing dates/statuses
+  const cleanTipoName = (rawStr: string): string => {
+    if (!rawStr) return "Outros";
+    let s = String(rawStr).trim();
+    // Remove trailing date in parenthesis, e.g. " (31/12/2025)", " (03/03/2026)"
+    s = s.replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/g, "");
+    // Remove trailing date without parenthesis, e.g. " 31/12/2025"
+    s = s.replace(/\s*\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/g, "");
+    // Remove status tags
+    s = s.replace(/\b(Anexado|Aprovado|Pendente)\b/gi, "");
+    // Remove trailing dashes, colons, or whitespace
+    s = s.replace(/[-–—:]\s*$/g, "").trim();
+    return s || "Outros";
+  };
+
   // Launch Category Statistics (Diário vs Acumulado)
   const getLancamentoStatsByTipo = () => {
     const typeMap: Record<string, { tipoLabel: string; hoje: number; acumulado: number }> = {};
 
     const addStat = (typeStr: string, isTodayFlag: boolean, count = 1) => {
-      let raw = String(typeStr || '').trim();
-      if (!raw) return;
-      const norm = raw.toLowerCase();
+      const cleaned = cleanTipoName(typeStr);
+      if (!cleaned) return;
+      const norm = cleaned.toLowerCase();
 
       if (!typeMap[norm]) {
-        typeMap[norm] = { tipoLabel: raw, hoje: 0, acumulado: 0 };
-      } else if (raw !== raw.toLowerCase() && typeMap[norm].tipoLabel === typeMap[norm].tipoLabel.toLowerCase()) {
-        typeMap[norm].tipoLabel = raw;
+        typeMap[norm] = { tipoLabel: cleaned, hoje: 0, acumulado: 0 };
+      } else {
+        // Prefer capitalized / nicely cased label
+        if (cleaned !== cleaned.toLowerCase() && typeMap[norm].tipoLabel === typeMap[norm].tipoLabel.toLowerCase()) {
+          typeMap[norm].tipoLabel = cleaned;
+        }
       }
 
       typeMap[norm].acumulado += count;
@@ -128,6 +146,9 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
         typeMap[norm].hoje += count;
       }
     };
+
+    // Track which queue items were processed today
+    const processedServerTypesToday = new Set<string>();
 
     // 1. From Queue list (filaAvulsa)
     if (state.filaAvulsa && state.filaAvulsa.listas) {
@@ -143,6 +164,9 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
             if (o.checked) {
               const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
               addStat(o.tipo, ocIsToday, 1);
+              if (ocIsToday) {
+                processedServerTypesToday.add(`${server.matricula}_${cleanTipoName(o.tipo).toLowerCase()}`);
+              }
             }
           });
         });
@@ -170,13 +194,18 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       if (h && Array.isArray(h.ocorrencias)) {
         const hIsToday = isToday(h.ts);
         h.ocorrencias.forEach(ocType => {
-          addStat(ocType, hIsToday, 1);
+          const normOc = cleanTipoName(ocType).toLowerCase();
+          const key = `${h.mat}_${normOc}`;
+          // Add if not already counted from filaAvulsa for today
+          if (!hIsToday || !processedServerTypesToday.has(key)) {
+            addStat(ocType, hIsToday, 1);
+          }
         });
       }
     });
 
     return Object.values(typeMap)
-      .sort((a, b) => b.acumulado - a.acumulado || a.tipoLabel.localeCompare(b.tipoLabel))
+      .sort((a, b) => b.acumulado - a.acumulado || a.tipoLabel.localeCompare(b.tipoLabel, "pt-BR"))
       .map(item => ({
         tipo: item.tipoLabel,
         hoje: item.hoje,
