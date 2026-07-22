@@ -118,7 +118,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = async (): Promise<string | null> => {
     setIsLoggingIn(true);
     try {
       const result = await googleSignIn();
@@ -213,6 +213,8 @@ export default function App() {
         } catch (autoErr) {
           console.warn("Auto-restore warning:", autoErr);
         }
+
+        return result.accessToken;
       }
     } catch (err: any) {
       console.error(err);
@@ -220,6 +222,7 @@ export default function App() {
     } finally {
       setIsLoggingIn(false);
     }
+    return null;
   };
 
   const handleGoogleLogout = async () => {
