@@ -6,13 +6,22 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// Request standard user info + Google Sheets scope
+// Request standard user info + Google Sheets & Drive scopes
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+provider.addScope('https://www.googleapis.com/auth/drive.file');
+provider.addScope('https://www.googleapis.com/auth/drive.readonly');
 provider.addScope('https://www.googleapis.com/auth/userinfo.profile');
 provider.addScope('https://www.googleapis.com/auth/userinfo.email');
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
+
+export const getAccessToken = (): string | null => {
+  if (!cachedAccessToken) {
+    cachedAccessToken = sessionStorage.getItem("ngpesp_google_token") || localStorage.getItem("ngpesp_google_token");
+  }
+  return cachedAccessToken;
+};
 
 // Initialize auth state listener. Call this on app load.
 export const initAuth = (
@@ -21,16 +30,12 @@ export const initAuth = (
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        // Try to fetch token if user is signed in but we don't have it cached.
-        // For security or persistence, we might need a re-sign-in or popup.
-        // We can just keep cachedAccessToken in memory during the session.
-        if (onAuthFailure) onAuthFailure();
-      }
+      const token = getAccessToken() || "";
+      if (onAuthSuccess) onAuthSuccess(user, token);
     } else {
       cachedAccessToken = null;
+      sessionStorage.removeItem("ngpesp_google_token");
+      localStorage.removeItem("ngpesp_google_token");
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -47,8 +52,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
 
     cachedAccessToken = credential.accessToken;
-    // Save to session storage for refreshing within the same browser tab session
+    // Save to storage for persistence across tabs and sessions
     sessionStorage.setItem("ngpesp_google_token", cachedAccessToken);
+    localStorage.setItem("ngpesp_google_token", cachedAccessToken);
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);
@@ -58,15 +64,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
-export const getAccessToken = (): string | null => {
-  if (!cachedAccessToken) {
-    cachedAccessToken = sessionStorage.getItem("ngpesp_google_token");
-  }
-  return cachedAccessToken;
-};
-
 export const logout = async () => {
   await auth.signOut();
   cachedAccessToken = null;
   sessionStorage.removeItem("ngpesp_google_token");
+  localStorage.removeItem("ngpesp_google_token");
 };
