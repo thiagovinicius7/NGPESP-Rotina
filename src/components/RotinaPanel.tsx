@@ -578,9 +578,20 @@ export default function RotinaPanel({
       }
 
       else if (type === 'filaAvulsa') {
+        const normMat = (m: any) => String(m || '').trim().replace(/[^a-zA-Z0-9]/g, '').replace(/^0+/, '').toLowerCase();
         const data = rawRows.map(r => {
-          const matricula = r['MATRICULA'] || r['MATRÍCULA'] || r['MAT'] || '';
-          const nome = r['NOME'] || r['NOME COMPLETO'] || '';
+          const rawMat = r['MATRICULA'] || r['MATRÍCULA'] || r['MAT'] || '';
+          let matricula = rawMat;
+          let nome = r['NOME'] || r['NOME COMPLETO'] || '';
+          
+          if (rawMat && state.servidores && state.servidores.length > 0) {
+            const found = state.servidores.find(s => normMat(s.matricula) === normMat(rawMat));
+            if (found) {
+              matricula = found.matricula;
+              nome = found.nome;
+            }
+          }
+
           const tiposRaw = r['TIPOS'] || r['TAGS'] || '';
           const tipos = tiposRaw ? tiposRaw.split('|').map((t: string) => t.trim()) : [];
           return {

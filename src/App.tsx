@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
+import { GlobalConfig } from "./types.js";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'importar' | 'vida' | 'produtividade' | 'balcao' | 'relatorio'>('dashboard');
@@ -196,7 +197,7 @@ export default function App() {
             const importedCount = (fullData?.servidores || []).length;
             const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 
-            const prevConfig = prev?.config || {};
+            const prevConfig: GlobalConfig = prev?.config || { gmov_data: "" };
 
             return {
               servidores: Array.from(existingMap.values()),

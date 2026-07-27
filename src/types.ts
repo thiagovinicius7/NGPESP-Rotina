@@ -78,6 +78,7 @@ export interface QueueOcorrencia {
   tipo: string;
   data: string;
   checked: boolean;
+  dataLancamento?: string;
 }
 
 export interface QueueServer {
