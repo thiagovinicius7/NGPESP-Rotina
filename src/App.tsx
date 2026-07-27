@@ -15,6 +15,15 @@ import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
 import { GlobalConfig } from "./types.js";
 
+const normalizeMatricula = (m: any): string => {
+  if (!m) return "";
+  let clean = String(m).trim().replace(/[^a-zA-Z0-9]/g, "");
+  if (/^\d+$/.test(clean) && clean.length > 0 && clean.length < 8) {
+    clean = clean.padStart(8, "0");
+  }
+  return clean.toLowerCase();
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'importar' | 'vida' | 'produtividade' | 'balcao' | 'relatorio'>('dashboard');
   const [sisrefSubTab, setSisrefSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
@@ -144,12 +153,12 @@ export default function App() {
 
             const existingMap = new Map();
             safePrevServidores.forEach(s => {
-              const norm = s?.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
+              const norm = normalizeMatricula(s?.matricula);
               if (norm) existingMap.set(norm, s);
             });
 
             (fullData?.servidores || []).forEach(srv => {
-              const norm = srv?.matricula ? String(srv.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "";
+              const norm = normalizeMatricula(srv?.matricula);
               if (norm) {
                 if (existingMap.has(norm)) {
                   const existingSrv = existingMap.get(norm);
@@ -193,7 +202,7 @@ export default function App() {
             const seiMap = new Map(safePrevSei.map(s => [s?.num, s]));
             (fullData?.sei || []).forEach(s => { if (s && s.num) seiMap.set(s.num, s); });
 
-            const importedMatriculas = (fullData?.servidores || []).map(s => s?.matricula ? String(s.matricula).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "") : "").filter(Boolean);
+            const importedMatriculas = (fullData?.servidores || []).map(s => normalizeMatricula(s?.matricula)).filter(Boolean);
             const importedCount = (fullData?.servidores || []).length;
             const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 

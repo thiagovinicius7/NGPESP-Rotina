@@ -31,17 +31,30 @@ export default function SisrefPanel({
 
 const normalizeMatricula = (m: any): string => {
   if (!m) return "";
-  return String(m).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "").toLowerCase();
+  let clean = String(m).trim().replace(/[^a-zA-Z0-9]/g, "");
+  if (/^\d+$/.test(clean) && clean.length > 0 && clean.length < 8) {
+    clean = clean.padStart(8, "0");
+  }
+  return clean.toLowerCase();
+};
+
+const formatMatricula = (m: any): string => {
+  if (!m) return "";
+  let clean = String(m).trim().replace(/[^a-zA-Z0-9]/g, "");
+  if (/^\d+$/.test(clean) && clean.length > 0 && clean.length < 8) {
+    clean = clean.padStart(8, "0");
+  }
+  return clean;
 };
 
 const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server[] = []): { matricula: string; nome: string } => {
-  if (!mat && !fallbackNome) return { matricula: mat || "", nome: fallbackNome || "" };
+  if (!mat && !fallbackNome) return { matricula: formatMatricula(mat) || "", nome: fallbackNome || "" };
 
   const normMat = normalizeMatricula(mat);
   if (normMat && servidores && servidores.length > 0) {
     const srvByMat = servidores.find(s => normalizeMatricula(s.matricula) === normMat);
     if (srvByMat) {
-      return { matricula: srvByMat.matricula, nome: srvByMat.nome };
+      return { matricula: formatMatricula(srvByMat.matricula), nome: srvByMat.nome };
     }
   }
 
@@ -49,11 +62,11 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
     const normNome = fallbackNome.trim().toLowerCase();
     const srvByName = servidores.find(s => s.nome && s.nome.trim().toLowerCase() === normNome);
     if (srvByName) {
-      return { matricula: srvByName.matricula, nome: srvByName.nome };
+      return { matricula: formatMatricula(srvByName.matricula), nome: srvByName.nome };
     }
   }
 
-  return { matricula: mat || "", nome: fallbackNome || "" };
+  return { matricula: formatMatricula(mat) || "", nome: fallbackNome || "" };
 };
   const [localSubTab, setLocalSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
 
