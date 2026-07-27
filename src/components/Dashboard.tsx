@@ -23,7 +23,12 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   const [modalSearchTerm, setModalSearchTerm] = useState("");
 
   const normalizeMatricula = (m: any): string => {
-    return String(m || "").trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "");
+    if (!m) return "";
+    let clean = String(m).trim().replace(/[^a-zA-Z0-9]/g, "");
+    if (/^\d+$/.test(clean) && clean.length > 0 && clean.length < 8) {
+      clean = clean.padStart(8, "0");
+    }
+    return clean.toLowerCase();
   };
 
   const lastImportedMatriculas = state.config?.lastImportedMatriculas || [];

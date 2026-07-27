@@ -18,7 +18,21 @@ import {
 } from "../lib/googleSheetsSync.js";
 
 const normalizeMatricula = (m: any): string => {
-  return String(m || "").trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "");
+  if (!m) return "";
+  let clean = String(m).trim().replace(/[^a-zA-Z0-9]/g, "");
+  if (/^\d+$/.test(clean) && clean.length > 0 && clean.length < 8) {
+    clean = clean.padStart(8, "0");
+  }
+  return clean.toLowerCase();
+};
+
+const formatMatricula = (m: any): string => {
+  if (!m) return "";
+  let clean = String(m).trim().replace(/[^a-zA-Z0-9]/g, "");
+  if (/^\d+$/.test(clean) && clean.length > 0 && clean.length < 8) {
+    clean = clean.padStart(8, "0");
+  }
+  return clean;
 };
 
 interface RotinaPanelProps {
@@ -484,7 +498,7 @@ export default function RotinaPanel({
 
       if (type === 'servidores') {
         const data: Server[] = rawRows.map(r => ({
-          matricula: r['MATRICULA'] || r['MATRÍCULA'] || r['MAT'] || '',
+          matricula: formatMatricula(r['MATRICULA'] || r['MATRÍCULA'] || r['MAT'] || ''),
           nome: r['NOME'] || r['NOME COMPLETO'] || '',
           cargo: r['CARGO'] || '',
           denominacao: r['DENOMINACAO'] || r['DENOMINAÇÃO'] || '',
@@ -578,10 +592,10 @@ export default function RotinaPanel({
       }
 
       else if (type === 'filaAvulsa') {
-        const normMat = (m: any) => String(m || '').trim().replace(/[^a-zA-Z0-9]/g, '').replace(/^0+/, '').toLowerCase();
+        const normMat = (m: any) => normalizeMatricula(m);
         const data = rawRows.map(r => {
           const rawMat = r['MATRICULA'] || r['MATRÍCULA'] || r['MAT'] || '';
-          let matricula = rawMat;
+          let matricula = formatMatricula(rawMat);
           let nome = r['NOME'] || r['NOME COMPLETO'] || '';
           
           if (rawMat && state.servidores && state.servidores.length > 0) {
