@@ -28,6 +28,33 @@ export default function SisrefPanel({
   showPendencias: controlledShowPendencias,
   setShowPendencias: setControlledShowPendencias
 }: SisrefPanelProps) {
+
+const normalizeMatricula = (m: any): string => {
+  if (!m) return "";
+  return String(m).trim().replace(/[^a-zA-Z0-9]/g, "").replace(/^0+/, "").toLowerCase();
+};
+
+const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server[] = []): { matricula: string; nome: string } => {
+  if (!mat && !fallbackNome) return { matricula: mat || "", nome: fallbackNome || "" };
+
+  const normMat = normalizeMatricula(mat);
+  if (normMat && servidores && servidores.length > 0) {
+    const srvByMat = servidores.find(s => normalizeMatricula(s.matricula) === normMat);
+    if (srvByMat) {
+      return { matricula: srvByMat.matricula, nome: srvByMat.nome };
+    }
+  }
+
+  if (fallbackNome && servidores && servidores.length > 0) {
+    const normNome = fallbackNome.trim().toLowerCase();
+    const srvByName = servidores.find(s => s.nome && s.nome.trim().toLowerCase() === normNome);
+    if (srvByName) {
+      return { matricula: srvByName.matricula, nome: srvByName.nome };
+    }
+  }
+
+  return { matricula: mat || "", nome: fallbackNome || "" };
+};
   const [localSubTab, setLocalSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
 
   const subTab = controlledSubTab !== undefined ? controlledSubTab : localSubTab;
@@ -270,41 +297,107 @@ export default function SisrefPanel({
       return;
     }
 
+    // Index registered servidores in state (canonical source from SIGRH)
+    const srvByMatMap = new Map<string, Server>();
+    const srvByNameMap = new Map<string, Server>();
+    (state.servidores || []).forEach(s => {
+      if (s.matricula) {
+        const nm = normalizeMatricula(s.matricula);
+        if (nm) srvByMatMap.set(nm, s);
+      }
+      if (s.nome) {
+        srvByNameMap.set(s.nome.trim().toLowerCase(), s);
+      }
+    });
+
     const map: Record<string, QueueServer> = {};
     const linhas = txt.split(/\n/);
 
     linhas.forEach((linha, idx) => {
+      if (!linha.trim()) return;
+
       const dataMatch = linha.match(/(\d{2}\/\d{2}\/\d{4})/);
-      const m = linha.match(/(\d{7,}[A-Z0-9]?)\s*-\s*([A-Za-zÀ-ÿ\s]+)/);
+      const data = dataMatch ? dataMatch[0] : "";
 
-      if (m) {
-        const matricula = m[1].trim();
-        const nome = m[2].trim().split("Anexado")[0].split("Aprovado")[0].trim();
+      // Look for 6 to 9 digit matriculas or Matrícula labels
+      const matMatch = linha.match(/\b(\d{6,9}[A-Z0-9]?)\b/i) || linha.match(/(?:matrícula|mat|matr)\s*[:.]?\s*(\d{6,9}[A-Z0-9]?)/i);
+      let matricula = matMatch ? matMatch[1].trim() : "";
+      let nomeExtraido = "";
+
+      if (matricula) {
+        let rest = linha
+          .replace(matMatch![0], "")
+          .replace(/(?:matrícula|mat|matr)\s*[:.]?/gi, "")
+          .replace(/(\d{2}\/\d{2}\/\d{4})/g, "")
+          .replace(/\b(Anexado|Aprovado|Pendente)\b/gi, "")
+          .trim();
         
-        let tipo = linha.split(m[1])[0].trim();
-        if (!tipo || tipo.length < 3) tipo = "Afastamento/Atestado";
+        rest = rest.replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, "").trim();
 
-        let data = dataMatch ? dataMatch[0] : "";
-        if (!data && idx > 0) {
-          const dataAnterior = linhas[idx - 1].match(/(\d{2}\/\d{2}\/\d{4})/);
-          if (dataAnterior) data = dataAnterior[0];
+        const parts = rest.split(/[\-–—]/).map(p => p.trim()).filter(Boolean);
+        for (const p of parts) {
+          const cleaned = p.replace(/\s*\([^)]*\)/g, "").trim();
+          if (/^[A-Za-zÀ-ÿ\s]{4,}$/.test(cleaned) && !/^(atest|licença|licenca|falta|férias|ferias|afastamento|reunião|reuniao|ticket|servidor)/i.test(cleaned)) {
+            nomeExtraido = cleaned;
+            break;
+          }
         }
-
-        if (!map[matricula]) {
-          map[matricula] = { matricula, nome, tipos: [], ocorrencias: [] };
+        if (!nomeExtraido && parts.length > 0) {
+          const lastPart = parts[parts.length - 1].replace(/\s*\([^)]*\)/g, "").trim();
+          if (/^[A-Za-zÀ-ÿ\s]+$/.test(lastPart) && lastPart.length >= 3) {
+            nomeExtraido = lastPart;
+          }
         }
-
-        const tipoLimpo = tipo.replace(/Anexado|Aprovado|Pendente|0[0-9]\/202[0-9]/g, "").trim();
-
-        map[matricula].ocorrencias.push({
-          tipo: tipoLimpo || "Atestado",
-          data: data,
-          checked: false
-        });
-
-        if (!map[matricula].tipos.includes(tipoLimpo)) {
-          map[matricula].tipos.push(tipoLimpo);
+      } else {
+        // No matricula digits found in line - check if line contains a name from srvByNameMap
+        for (const [normName, srv] of srvByNameMap.entries()) {
+          if (linha.toLowerCase().includes(normName)) {
+            matricula = srv.matricula;
+            nomeExtraido = srv.nome;
+            break;
+          }
         }
+      }
+
+      // Resolve against registered servidores (canonical source)
+      const normMat = normalizeMatricula(matricula);
+      let officialServer = normMat ? srvByMatMap.get(normMat) : undefined;
+
+      if (!officialServer && nomeExtraido) {
+        officialServer = srvByNameMap.get(nomeExtraido.trim().toLowerCase());
+      }
+
+      const finalMatricula = officialServer ? officialServer.matricula : (matricula || "");
+      const finalNome = officialServer ? officialServer.nome : (nomeExtraido || "");
+
+      if (!finalMatricula) return;
+
+      // Clean occurrence type (tipo)
+      let tipo = linha;
+      if (finalMatricula) tipo = tipo.replace(finalMatricula, "");
+      if (finalNome) tipo = tipo.replace(finalNome, "");
+      tipo = tipo.replace(/(\d{2}\/\d{2}\/\d{4})/g, "")
+                 .replace(/\b(Anexado|Aprovado|Pendente)\b/gi, "")
+                 .replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, "")
+                 .trim();
+      
+      const tipoLimpo = tipo || "Atestado";
+
+      if (!map[finalMatricula]) {
+        map[finalMatricula] = { matricula: finalMatricula, nome: finalNome || `Servidor (${finalMatricula})`, tipos: [], ocorrencias: [] };
+      } else if (officialServer) {
+        map[finalMatricula].nome = officialServer.nome;
+      }
+
+      const dataAnterior = (idx > 0 && linhas[idx - 1].match(/(\d{2}\/\d{2}\/\d{4})/)) ? linhas[idx - 1].match(/(\d{2}\/\d{2}\/\d{4})/)![0] : "";
+      map[finalMatricula].ocorrencias.push({
+        tipo: tipoLimpo,
+        data: data || dataAnterior,
+        checked: false
+      });
+
+      if (!map[finalMatricula].tipos.includes(tipoLimpo)) {
+        map[finalMatricula].tipos.push(tipoLimpo);
       }
     });
 
@@ -324,7 +417,15 @@ export default function SisrefPanel({
   };
 
   const iniciarFilaConferencia = () => {
-    const selectedServers = avulsaResultados.filter((_, i) => avulsaSelected[i]);
+    const selectedServers = avulsaResultados.filter((_, i) => avulsaSelected[i]).map(s => {
+      const official = getOfficialServer(s.matricula, s.nome, state.servidores);
+      return {
+        ...s,
+        matricula: official.matricula,
+        nome: official.nome
+      };
+    });
+
     if (selectedServers.length === 0) {
       onToast("Selecione pelo menos um servidor para a fila", "err");
       return;
@@ -396,10 +497,11 @@ export default function SisrefPanel({
   const confirmarAvulsaServer = () => {
     if (!currentQueueServer) return;
     
+    const official = getOfficialServer(currentQueueServer.matricula, currentQueueServer.nome, state.servidores);
     const checkedOcs = currentQueueServer.ocorrencias.filter(o => o.checked);
     const qtdCalculada = checkedOcs.length;
 
-    openModal(currentQueueServer.nome, currentQueueServer.matricula, "SISREF Avulsa", (qtd) => {
+    openModal(official.nome, official.matricula, "SISREF Avulsa", (qtd) => {
       updateState(prev => {
         const activeQueueName = prev.filaAvulsa.ativa || "Padrão";
         const q = prev.filaAvulsa.listas[activeQueueName];
@@ -412,14 +514,16 @@ export default function SisrefPanel({
         const serverIdx = q.idx;
         if (nextFila[serverIdx]) {
           const srv = { ...nextFila[serverIdx] };
+          srv.nome = official.nome;
+          srv.matricula = official.matricula;
           srv.ocorrencias = srv.ocorrencias.map(oc => oc.checked ? { ...oc, dataLancamento: oc.dataLancamento || nowIso } : oc);
           nextFila[serverIdx] = srv;
         }
 
         // Add history entry with occurrences list
         const newLog: HistoryEntry = {
-          mat: currentQueueServer.matricula,
-          nome: currentQueueServer.nome,
+          mat: official.matricula,
+          nome: official.nome,
           setor: "Avulsa Fila",
           qtd: qtd,
           ts: nowIso,
@@ -445,12 +549,13 @@ export default function SisrefPanel({
   const marcarAvulsaPendente = () => {
     if (!currentQueueServer) return;
     
-    const motivo = prompt(`Por que não foi possível realizar o lançamento de ${currentQueueServer.nome}?`);
+    const official = getOfficialServer(currentQueueServer.matricula, currentQueueServer.nome, state.servidores);
+    const motivo = prompt(`Por que não foi possível realizar o lançamento de ${official.nome}?`);
     if (!motivo) return;
 
     const pendencia = {
-      matricula: currentQueueServer.matricula,
-      nome: currentQueueServer.nome,
+      matricula: official.matricula,
+      nome: official.nome,
       tipos: currentQueueServer.tipos,
       ocorrencias: currentQueueServer.ocorrencias,
       motivo: motivo.trim(),
@@ -1194,9 +1299,11 @@ export default function SisrefPanel({
                   <div className="p-6 bg-[var(--blue-light)]/20 border-b border-[var(--border)] flex flex-col gap-4">
                     <div className="flex justify-between items-start gap-4">
                       <div className="min-w-0 flex-1">
-                        <div className="text-lg font-bold text-[var(--text)] truncate">{currentQueueServer.nome}</div>
+                        <div className="text-lg font-bold text-[var(--text)] truncate">
+                          {getOfficialServer(currentQueueServer.matricula, currentQueueServer.nome, state.servidores).nome}
+                        </div>
                         <div className="text-xs font-bold text-[var(--blue-mid)] font-mono mt-1">
-                          Matrícula: {currentQueueServer.matricula}
+                          Matrícula: {getOfficialServer(currentQueueServer.matricula, currentQueueServer.nome, state.servidores).matricula}
                         </div>
                         <div className="text-xs font-semibold text-[var(--text2)] mt-1 truncate">
                           Tipos: {currentQueueServer.tipos.join(' · ')}
@@ -1204,7 +1311,7 @@ export default function SisrefPanel({
                       </div>
                       <div className="flex flex-col gap-2 flex-shrink-0">
                         <button 
-                          onClick={() => copiarTexto(currentQueueServer.matricula)}
+                          onClick={() => copiarTexto(getOfficialServer(currentQueueServer.matricula, currentQueueServer.nome, state.servidores).matricula)}
                           className="px-3 py-1.5 bg-white border border-[rgba(37,99,235,0.2)] text-[var(--blue-mid)] hover:bg-[var(--blue-mid)] hover:text-white text-xs font-bold rounded-lg transition"
                         >
                           Copiar mat.
