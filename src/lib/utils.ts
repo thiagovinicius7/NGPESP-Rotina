@@ -191,3 +191,126 @@ export function reconstructProdutividadeFromState(
 
   return reconstructed;
 }
+
+/**
+ * Safely merges two FilaAvulsa objects so no queues or server lists are lost.
+ */
+export function mergeFilaAvulsa(f1: any, f2: any): any {
+  if (!f1 || !f1.listas || Object.keys(f1.listas).length === 0) return f2 || { listas: { "Padrão": { fila: [], idx: 0 } }, ativa: "Padrão" };
+  if (!f2 || !f2.listas || Object.keys(f2.listas).length === 0) return f1;
+
+  const mergedListas: Record<string, { fila: any[]; idx: number }> = { ...f1.listas };
+
+  for (const [listName, qObj2] of Object.entries(f2.listas as Record<string, { fila: any[]; idx: number }>)) {
+    if (!qObj2) continue;
+    if (!mergedListas[listName]) {
+      mergedListas[listName] = qObj2;
+    } else {
+      const qObj1 = mergedListas[listName];
+      const fila1 = Array.isArray(qObj1.fila) ? qObj1.fila : [];
+      const fila2 = Array.isArray(qObj2.fila) ? qObj2.fila : [];
+
+      if (fila1.length === 0 && fila2.length > 0) {
+        mergedListas[listName] = qObj2;
+      } else if (fila1.length > 0 && fila2.length > 0) {
+        const map = new Map();
+        fila1.forEach(item => {
+          if (item && item.matricula) map.set(String(item.matricula), item);
+        });
+        fila2.forEach(item => {
+          if (!item || !item.matricula) return;
+          const m = String(item.matricula);
+          if (map.has(m)) {
+            const existing = map.get(m);
+            const ocMap = new Map();
+            (existing.ocorrencias || []).forEach((oc: any) => ocMap.set(`${oc.tipo}_${oc.data}`, oc));
+            (item.ocorrencias || []).forEach((oc: any) => ocMap.set(`${oc.tipo}_${oc.data}`, oc));
+            map.set(m, {
+              ...existing,
+              ...item,
+              ocorrencias: Array.from(ocMap.values())
+            });
+          } else {
+            map.set(m, item);
+          }
+        });
+        mergedListas[listName] = {
+          fila: Array.from(map.values()),
+          idx: Math.max(qObj1.idx || 0, qObj2.idx || 0)
+        };
+      }
+    }
+  }
+
+  const mergedNatal = Array.from(new Set([...(f1.natal || []), ...(f2.natal || [])]));
+  const mergedPendencias = [...(f1.pendencias || [])];
+  (f2.pendencias || []).forEach((p: any) => {
+    if (p && !mergedPendencias.some(x => x.matricula === p.matricula && x.motivo === p.motivo)) {
+      mergedPendencias.push(p);
+    }
+  });
+
+  return {
+    listas: mergedListas,
+    ativa: f1.ativa || f2.ativa || "Padrão",
+    natal: mergedNatal,
+    configProd: (f1.configProd?.tipos && f1.configProd.tipos.length > 0) ? f1.configProd : (f2.configProd || { tipos: ["documento", "processo", "análise", "atendimento", "reunião", "outro"], sistemas: ["SISREF", "SEI", "SIAPE", "SOUGOV", "E-mail", "Físico", "Outro"] }),
+    pendencias: mergedPendencias
+  };
+}
+
+const SNAPSHOTS_KEY = "ngpesp_local_snapshots";
+
+export interface StateSnapshot {
+  timestamp: number;
+  dateFormatted: string;
+  summary: string;
+  state: AppState;
+}
+
+export function saveLocalSnapshot(state: AppState) {
+  try {
+    if (!state || !state.servidores) return;
+    const raw = localStorage.getItem(SNAPSHOTS_KEY);
+    let snapshots: StateSnapshot[] = raw ? JSON.parse(raw) : [];
+
+    const now = Date.now();
+    const dateFormatted = new Date(now).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    
+    const numServ = (state.servidores || []).length;
+    const numHist = (state.historico || []).length;
+    const numProdDays = Object.keys(state.produtividade || {}).length;
+    const numFilaListas = Object.keys(state.filaAvulsa?.listas || {}).length;
+    let totalFilaItems = 0;
+    if (state.filaAvulsa?.listas) {
+      Object.values(state.filaAvulsa.listas).forEach((l: any) => {
+        totalFilaItems += (l.fila || []).length;
+      });
+    }
+
+    const summary = `${numServ} servidores, ${numHist} histórico, ${numProdDays} dias prod., ${totalFilaItems} itens Fila (${numFilaListas} listas)`;
+
+    if (snapshots.length > 0) {
+      const last = snapshots[0];
+      if (last.summary === summary && (now - last.timestamp) < 300000) {
+        return;
+      }
+    }
+
+    snapshots.unshift({ timestamp: now, dateFormatted, summary, state });
+    snapshots = snapshots.slice(0, 15);
+    localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots));
+  } catch (err) {
+    console.warn("Could not save local snapshot", err);
+  }
+}
+
+export function getLocalSnapshots(): StateSnapshot[] {
+  try {
+    const raw = localStorage.getItem(SNAPSHOTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
