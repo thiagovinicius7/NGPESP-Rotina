@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { AppState } from "../types.js";
+import { mergeProdutividade } from "../lib/utils";
 
 const LOCAL_STORAGE_KEY = "ngpesp_local_state";
 const LOCAL_TIMESTAMP_KEY = "ngpesp_local_updated_at";
@@ -187,21 +188,48 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         return;
       }
       try {
+        let cachedState: AppState | null = null;
+        try {
+          const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+          if (raw) cachedState = JSON.parse(raw);
+        } catch (_) {}
+
         const res = await fetch("/api/state");
         if (res.ok) {
           const data = await res.json();
           if (data.status === "ok") {
             const serverTime = Number(data.updatedAt);
-            
-            // Accept the server state to ensure we align with cloud storage
-            setStateState(data.state);
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data.state));
+            const serverState: AppState = data.state || {};
+
+            // Safely merge server state with cached local state so no local productivity/history is lost
+            const mergedState: AppState = {
+              ...defaultState,
+              ...serverState,
+              servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (cachedState?.servidores || []),
+              historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (cachedState?.historico || []),
+              respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState?.respostas || []),
+              faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState?.faq || []),
+              produtividade: mergeProdutividade(cachedState?.produtividade || {}, serverState.produtividade || {}),
+              filaAvulsa: (serverState.filaAvulsa?.listas && Object.keys(serverState.filaAvulsa.listas).length)
+                ? serverState.filaAvulsa
+                : (cachedState?.filaAvulsa || defaultState.filaAvulsa),
+              balcaoAtendimentos: { ...(cachedState?.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
+              config: { ...(cachedState?.config || {}), ...(serverState.config || {}) }
+            };
+
+            setStateState(mergedState);
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
             setLastUpdated(serverTime);
             localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
-            
+
+            // If local state had productivity that server lacked, push merged back to server
+            if (cachedState?.produtividade && Object.keys(cachedState.produtividade).length > 0) {
+              pushStateToServer(mergedState);
+            }
+
             hasLoadedFromServerRef.current = true;
             isDirtyRef.current = false;
-            console.log("Successfully initialized state from cloud server");
+            console.log("Successfully initialized merged state from cloud server and local storage");
           } else {
             setIsStaticMode(true);
             hasLoadedFromServerRef.current = true;
@@ -212,7 +240,6 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         }
       } catch (err) {
         console.warn("Could not connect to server on startup, using offline cache in static mode", err);
-        // Fallback: mark as loaded and set static mode so user can still work offline without errors
         setIsStaticMode(true);
         hasLoadedFromServerRef.current = true;
       }

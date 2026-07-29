@@ -16,6 +16,7 @@ import {
   extractSpreadsheetId, 
   DriveBackupFile 
 } from "../lib/googleSheetsSync.js";
+import { getLocalDateIso, toYmdDate, mergeProdutividade, reconstructProdutividadeFromState } from "../lib/utils.js";
 
 const normalizeMatricula = (m: any): string => {
   if (!m) return "";
@@ -215,7 +216,7 @@ export default function RotinaPanel({
         });
 
         // 6. Produtividade
-        const newProdutividade = { ...prev.produtividade, ...(fullData.produtividade || {}) };
+        const newProdutividade = mergeProdutividade(prev.produtividade, fullData.produtividade);
 
         // 7. Fila Avulsa
         const newFilaAvulsa = (fullData.filaAvulsa && fullData.filaAvulsa.listas && Object.keys(fullData.filaAvulsa.listas).length)
@@ -340,11 +341,11 @@ export default function RotinaPanel({
   const [abonosAno, setAbonosAno] = useState(new Date().getFullYear().toString());
 
   // Produtividade
-  const [prodData, setProdData] = useState(new Date().toISOString().split("T")[0]);
+  const [prodData, setProdData] = useState(getLocalDateIso());
   const [prodCfgOpen, setProdCfgOpen] = useState(false);
   const [cfgTipos, setCfgTipos] = useState("");
   const [cfgSistemas, setCfgSistemas] = useState("");
-  const [histFiltroMes, setHistFiltroMes] = useState(new Date().toISOString().slice(0, 7));
+  const [histFiltroMes, setHistFiltroMes] = useState(getLocalDateIso().slice(0, 7));
   const [expandedHistDia, setExpandedHistDia] = useState<string | null>(null);
 
   useEffect(() => {
@@ -864,7 +865,22 @@ export default function RotinaPanel({
 
   // Produtividade calculations and logs
   const getDayData = (): ProdutividadeDia => {
-    return state.produtividade[prodData] || { situacao: "normal", sitObs: "", manha: [], tarde: [] };
+    if (state.produtividade[prodData]) return state.produtividade[prodData];
+    const dParts = prodData.split('-');
+    if (dParts.length === 3) {
+      const ddmm = `${dParts[2]}/${dParts[1]}/${dParts[0]}`;
+      if (state.produtividade[ddmm]) return state.produtividade[ddmm];
+    }
+    const matchKey = Object.keys(state.produtividade || {}).find(k => toYmdDate(k) === prodData);
+    if (matchKey && state.produtividade[matchKey]) return state.produtividade[matchKey];
+    return { situacao: "normal", sitObs: "", manha: [], tarde: [] };
+  };
+
+  const handleReconstructProdutividade = () => {
+    const reconstructed = reconstructProdutividadeFromState(state);
+    updateState({ produtividade: reconstructed });
+    const totalDays = Object.keys(reconstructed).length;
+    onToast(`Produtividade recuperada para ${totalDays} dia(s) a partir dos lançamentos e ocorrências!`, "ok");
   };
 
   const setSituacaoDia = (sit: string) => {
@@ -2031,6 +2047,13 @@ function doGet(e) {
               </div>
               <div className="flex gap-2 items-center flex-wrap pt-2">
                 {getDayEscalaBadge()}
+                <button
+                  onClick={handleReconstructProdutividade}
+                  className="px-3.5 py-2.5 bg-[var(--blue-light)] text-[var(--blue)] border border-[var(--blue)] font-bold text-xs rounded-xl flex items-center gap-1.5 hover:bg-[var(--blue)] hover:text-white transition cursor-pointer shadow-2xs"
+                  title="Reconstruir e recuperar registros de produtividade a partir dos lançamentos do histórico e da fila"
+                >
+                  <RefreshCw size={15} /> Recuperar Lançamentos
+                </button>
                 <button 
                   onClick={openCfgForm}
                   className="px-3.5 py-2.5 bg-[var(--surface)] border border-[var(--border2)] rounded-xl flex items-center justify-center text-[var(--text2)] hover:bg-[var(--bg)] transition"

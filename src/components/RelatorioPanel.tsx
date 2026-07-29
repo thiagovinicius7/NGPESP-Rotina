@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, HistoryEntry } from "../types.js";
+import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
 import { 
   Users, CalendarCheck2, Network, Timer, List, PieChart, 
   Trash2, ChevronRight, Edit2, LineChart, Calendar as CalendarIcon, 
@@ -45,33 +46,22 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
   // Helper to check if a date value is today
   const isToday = (dateVal?: string | number) => {
     if (!dateVal) return false;
+    const hojeYMD = getLocalDateIso();
+    const strYmd = toYmdDate(dateVal);
+    if (strYmd === hojeYMD) return true;
+
     const now = new Date();
-    const hojeYMD = now.toISOString().split('T')[0];
     const hojeDMY = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
     const hojeDMShort = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 
-    if (typeof dateVal === 'number') {
-      const d = new Date(dateVal);
-      return !isNaN(d.getTime()) && d.toISOString().split('T')[0] === hojeYMD;
-    }
-
     const str = String(dateVal).trim();
-    if (str.startsWith(hojeYMD)) return true;
-    if (str.includes(hojeDMY)) return true;
-    if (str.startsWith(hojeDMShort)) return true;
-
-    try {
-      const d = new Date(str);
-      if (!isNaN(d.getTime())) {
-        return d.toISOString().split('T')[0] === hojeYMD;
-      }
-    } catch (_) {}
+    if (str.includes(hojeDMY) || str.startsWith(hojeDMShort)) return true;
 
     return false;
   };
 
   // Daily Turn stats (M vs T)
-  const hojeISO = new Date().toISOString().split('T')[0];
+  const hojeISO = getLocalDateIso();
   const confHoje = (state.historico || []).filter(h => h && h.ts && isToday(h.ts));
   const confHojeMatriculas = new Set(confHoje.map(h => h.mat));
   

@@ -14,6 +14,7 @@ import {
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
 import { GlobalConfig } from "./types.js";
+import { mergeProdutividade } from "./lib/utils.js";
 
 const normalizeMatricula = (m: any): string => {
   if (!m) return "";
@@ -214,7 +215,7 @@ export default function App() {
               respostas: Array.from(respMap.entries()).map(([nome, texto]) => ({ nome, texto })),
               afastamentos: newAfast,
               faq: Array.from(faqMap.entries()).map(([titulo, resposta]) => ({ titulo, resposta })),
-              produtividade: (fullData?.produtividade && typeof fullData.produtividade === 'object' && Object.keys(fullData.produtividade).length) ? fullData.produtividade : (prev?.produtividade || {}),
+              produtividade: mergeProdutividade(prev?.produtividade || {}, fullData?.produtividade || {}),
               filaAvulsa: (fullData?.filaAvulsa && fullData.filaAvulsa.listas && typeof fullData.filaAvulsa.listas === 'object' && Object.keys(fullData.filaAvulsa.listas).length) ? fullData.filaAvulsa : (prev?.filaAvulsa || { listas: { "Padrão": { fila: [], idx: 0 } }, ativa: "Padrão", natal: [], configProd: { tipos: [], sistemas: [] }, pendencias: [] }),
               codigos: Array.from(codMap.values()),
               sei: Array.from(seiMap.values()),
