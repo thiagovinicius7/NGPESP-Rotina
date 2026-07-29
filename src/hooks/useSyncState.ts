@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { AppState } from "../types.js";
-import { mergeProdutividade } from "../lib/utils";
+import { mergeProdutividade, mergeFilaAvulsa, saveLocalSnapshot } from "../lib/utils";
 
 const LOCAL_STORAGE_KEY = "ngpesp_local_state";
 const LOCAL_TIMESTAMP_KEY = "ngpesp_local_updated_at";
@@ -93,6 +93,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       
       // Save locally immediately
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+      saveLocalSnapshot(updated);
       latestStateRef.current = updated;
       stateRef.current = updated;
       
@@ -102,7 +103,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     // Mark as dirty since we have a local change
     isDirtyRef.current = true;
 
-    // Debounce pushing to cloud server (1000ms is standard, non-disruptive, safe time for typing)
+    // Debounce pushing to cloud server
     if (hasLoadedFromServerRef.current && !isStaticMode) {
       if (pushTimeoutRef.current) {
         clearTimeout(pushTimeoutRef.current);
@@ -127,7 +128,6 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
           setLastUpdated(serverTime);
           
-          // Clear dirty flag since we successfully pushed our changes
           isDirtyRef.current = false;
         }
       }
@@ -152,22 +152,30 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         const data = await res.json();
         if (data.status === "ok") {
           const serverTime = Number(data.updatedAt);
-          const localTime = lastUpdatedRef.current;
+          const serverState = data.state || {};
+          
+          const mergedState: AppState = {
+            ...defaultState,
+            ...serverState,
+            servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (stateRef.current.servidores || []),
+            historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (stateRef.current.historico || []),
+            respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (stateRef.current.respostas || []),
+            faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (stateRef.current.faq || []),
+            produtividade: mergeProdutividade(stateRef.current.produtividade || {}, serverState.produtividade || {}),
+            filaAvulsa: mergeFilaAvulsa(stateRef.current.filaAvulsa, serverState.filaAvulsa),
+            balcaoAtendimentos: { ...(stateRef.current.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
+            config: { ...(stateRef.current.config || {}), ...(serverState.config || {}) }
+          };
 
-          // If the server has a newer state or if our local state is empty (not yet loaded), accept server
-          if (serverTime > localTime || !hasLoadedFromServerRef.current || stateRef.current.servidores.length === 0) {
-            setStateState(data.state);
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data.state));
-            setLastUpdated(serverTime);
-            localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
-            hasLoadedFromServerRef.current = true;
-            isDirtyRef.current = false;
-            onToast("Dados carregados e sincronizados da nuvem", "ok");
-          } else {
-            // Local is newer or same, force push local to server
-            await pushStateToServer(stateRef.current);
-            onToast("Dados locais salvos na nuvem com sucesso", "ok");
-          }
+          setStateState(mergedState);
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
+          saveLocalSnapshot(mergedState);
+          setLastUpdated(serverTime);
+          localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
+          hasLoadedFromServerRef.current = true;
+          isDirtyRef.current = false;
+          await pushStateToServer(mergedState);
+          onToast("Dados sincronizados com sucesso sem perdas!", "ok");
         }
       } else {
         onToast("Erro de rede ao sincronizar", "err");
@@ -201,7 +209,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             const serverTime = Number(data.updatedAt);
             const serverState: AppState = data.state || {};
 
-            // Safely merge server state with cached local state so no local productivity/history is lost
+            // Safely merge server state with cached local state so no local data is lost
             const mergedState: AppState = {
               ...defaultState,
               ...serverState,
@@ -210,22 +218,18 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
               respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState?.respostas || []),
               faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState?.faq || []),
               produtividade: mergeProdutividade(cachedState?.produtividade || {}, serverState.produtividade || {}),
-              filaAvulsa: (serverState.filaAvulsa?.listas && Object.keys(serverState.filaAvulsa.listas).length)
-                ? serverState.filaAvulsa
-                : (cachedState?.filaAvulsa || defaultState.filaAvulsa),
+              filaAvulsa: mergeFilaAvulsa(cachedState?.filaAvulsa, serverState.filaAvulsa),
               balcaoAtendimentos: { ...(cachedState?.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
               config: { ...(cachedState?.config || {}), ...(serverState.config || {}) }
             };
 
             setStateState(mergedState);
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
+            saveLocalSnapshot(mergedState);
             setLastUpdated(serverTime);
             localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
 
-            // If local state had productivity that server lacked, push merged back to server
-            if (cachedState?.produtividade && Object.keys(cachedState.produtividade).length > 0) {
-              pushStateToServer(mergedState);
-            }
+            pushStateToServer(mergedState);
 
             hasLoadedFromServerRef.current = true;
             isDirtyRef.current = false;

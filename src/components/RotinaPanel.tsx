@@ -16,7 +16,7 @@ import {
   extractSpreadsheetId, 
   DriveBackupFile 
 } from "../lib/googleSheetsSync.js";
-import { getLocalDateIso, toYmdDate, mergeProdutividade, reconstructProdutividadeFromState } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, mergeProdutividade, reconstructProdutividadeFromState, getLocalSnapshots, StateSnapshot, mergeFilaAvulsa } from "../lib/utils.js";
 
 const normalizeMatricula = (m: any): string => {
   if (!m) return "";
@@ -105,6 +105,38 @@ export default function RotinaPanel({
   const [manualSheetInput, setManualSheetInput] = useState("");
   const [foundDriveFiles, setFoundDriveFiles] = useState<DriveBackupFile[]>([]);
   const [isSearchingDrive, setIsSearchingDrive] = useState(false);
+  const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);
+
+  const handleRestoreSnapshot = (snap: StateSnapshot) => {
+    if (confirm(`Deseja restaurar o backup local salvo em ${snap.dateFormatted}?\n(${snap.summary})`)) {
+      updateState(prev => ({
+        ...snap.state,
+        produtividade: mergeProdutividade(prev.produtividade, snap.state?.produtividade),
+        filaAvulsa: mergeFilaAvulsa(prev.filaAvulsa, snap.state?.filaAvulsa)
+      }));
+      onToast(`Backup local de ${snap.dateFormatted} restaurado com sucesso!`, "ok");
+      setShowSnapshotsModal(false);
+    }
+  };
+
+  const handleRestoreFromLocalStorage = () => {
+    try {
+      const raw = localStorage.getItem("ngpesp_local_state");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        updateState(prev => ({
+          ...parsed,
+          produtividade: mergeProdutividade(prev.produtividade, parsed?.produtividade),
+          filaAvulsa: mergeFilaAvulsa(prev.filaAvulsa, parsed?.filaAvulsa)
+        }));
+        onToast("Dados do armazenamento local do navegador restaurados e mesclados!", "ok");
+      } else {
+        onToast("Nenhum dado anterior encontrado no localStorage deste navegador.", "info");
+      }
+    } catch (e: any) {
+      onToast("Erro ao ler do localStorage: " + e.message, "err");
+    }
+  };
 
   const getValidToken = async (): Promise<string | null> => {
     if (googleToken) return googleToken;
@@ -1676,7 +1708,65 @@ function doGet(e) {
             </div>
           </div>
 
-          {/* 3. JSON STATE BACKUP AND RESTORE */}
+          {/* 3. LOCAL BROWSER SNAPSHOTS AND RECOVERY */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
+            <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>Recuperação e Histórico de Backups Locais (Navegador)</span>
+              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full">Automático</span>
+            </div>
+            <p className="text-xs text-[var(--text2)] mb-4 leading-relaxed font-semibold">
+              O sistema gera automaticamente pontos de restauração no navegador a cada alteração. Se dados como a Fila Avulsa ou Lançamentos sumirem, você pode restaurar qualquer ponto anterior.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+              <button 
+                onClick={() => {
+                  const snaps = getLocalSnapshots();
+                  if (snaps.length === 0) {
+                    onToast("Nenhum histórico de snapshot recente encontrado no navegador ainda.", "info");
+                  } else {
+                    setShowSnapshotsModal(!showSnapshotsModal);
+                  }
+                }}
+                className="py-2.5 px-4 bg-[var(--blue-light)] hover:bg-[var(--blue-mid)] hover:text-white text-[var(--blue-mid)] border border-[var(--blue)] text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition"
+              >
+                <History size={16} /> Ver Snapshots Recentes ({getLocalSnapshots().length})
+              </button>
+              
+              <button 
+                onClick={handleRestoreFromLocalStorage}
+                className="py-2.5 px-4 bg-[var(--surface)] hover:bg-[var(--bg)] border border-[var(--border2)] text-[var(--text)] text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition"
+              >
+                <RefreshCw size={16} /> Restaurar Cópia Salva do Navegador
+              </button>
+            </div>
+
+            {showSnapshotsModal && (
+              <div className="mt-4 p-4 border border-[var(--border2)] bg-[var(--bg)]/30 rounded-xl">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-xs font-bold text-[var(--text)]">Pontos de Restauração Automática Salvos no Navegador:</span>
+                  <button onClick={() => setShowSnapshotsModal(false)} className="text-xs text-gray-500 hover:text-black font-bold">Fechar ✕</button>
+                </div>
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {getLocalSnapshots().map((snap, i) => (
+                    <div key={i} className="p-3 bg-white border border-[var(--border)] rounded-lg flex justify-between items-center text-xs gap-2">
+                      <div>
+                        <div className="font-bold text-[var(--blue-mid)]">{snap.dateFormatted}</div>
+                        <div className="text-[11px] text-[var(--text2)] mt-0.5">{snap.summary}</div>
+                      </div>
+                      <button
+                        onClick={() => handleRestoreSnapshot(snap)}
+                        className="px-3 py-1.5 bg-[var(--blue)] hover:bg-[var(--blue-mid)] text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap"
+                      >
+                        Restaurar Este
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 4. JSON STATE BACKUP AND RESTORE */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
             <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-2">
               Cópia de Segurança do Banco (Backup Completo .json)
