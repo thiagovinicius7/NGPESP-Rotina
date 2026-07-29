@@ -329,7 +329,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
     linhas.forEach((linha, idx) => {
       if (!linha.trim()) return;
 
-      const dataMatch = linha.match(/(\d{2}\/\d{2}\/\d{4})/);
+      const dataMatch = linha.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/) || linha.match(/(\d{1,2}\/\d{2,4})/) || linha.match(/(\d{4}-\d{1,2}(?:-\d{1,2})?)/);
       const data = dataMatch ? dataMatch[0] : "";
 
       // Look for 6 to 9 digit matriculas or Matrícula labels
@@ -402,7 +402,8 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
         map[finalMatricula].nome = officialServer.nome;
       }
 
-      const dataAnterior = (idx > 0 && linhas[idx - 1].match(/(\d{2}\/\d{2}\/\d{4})/)) ? linhas[idx - 1].match(/(\d{2}\/\d{2}\/\d{4})/)![0] : "";
+      const matchPrevDate = idx > 0 ? (linhas[idx - 1].match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/) || linhas[idx - 1].match(/(\d{1,2}\/\d{2,4})/)) : null;
+      const dataAnterior = matchPrevDate ? matchPrevDate[0] : "";
       map[finalMatricula].ocorrencias.push({
         tipo: tipoLimpo,
         data: data || dataAnterior,

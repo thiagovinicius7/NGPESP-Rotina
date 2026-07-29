@@ -123,6 +123,99 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     return s || "Outros";
   };
 
+  // Helper to extract Month and Year from any date string or text
+  const parseMonthYear = (text: any): { month: string; year: string; mesAno: string } | null => {
+    if (!text) return null;
+    const str = String(text).trim();
+    if (!str) return null;
+
+    // 1. DD/MM/YYYY or D/M/YYYY (e.g. "15/05/2025", "1/5/2025")
+    let m = str.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+    if (m) {
+      const monthNum = parseInt(m[2], 10);
+      const yearNum = parseInt(m[3], 10);
+      if (monthNum >= 1 && monthNum <= 12 && yearNum >= 1990 && yearNum <= 2100) {
+        const mm = String(monthNum).padStart(2, '0');
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+      }
+    }
+
+    // 2. DD/MM/YY or D/M/YY (e.g. "15/05/25", "1/5/25")
+    m = str.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2})\b/);
+    if (m) {
+      const monthNum = parseInt(m[2], 10);
+      let yy = parseInt(m[3], 10);
+      if (monthNum >= 1 && monthNum <= 12) {
+        const yearNum = yy < 70 ? 2000 + yy : 1900 + yy;
+        const mm = String(monthNum).padStart(2, '0');
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+      }
+    }
+
+    // 3. MM/YYYY or M/YYYY (e.g. "05/2025", "5/2025")
+    m = str.match(/\b(\d{1,2})\/(\d{4})\b/);
+    if (m) {
+      const monthNum = parseInt(m[1], 10);
+      const yearNum = parseInt(m[2], 10);
+      if (monthNum >= 1 && monthNum <= 12 && yearNum >= 1990 && yearNum <= 2100) {
+        const mm = String(monthNum).padStart(2, '0');
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+      }
+    }
+
+    // 4. MM/YY or M/YY (e.g. "05/25", "5/25")
+    m = str.match(/\b(\d{1,2})\/(\d{2})\b/);
+    if (m) {
+      const monthNum = parseInt(m[1], 10);
+      let yy = parseInt(m[2], 10);
+      if (monthNum >= 1 && monthNum <= 12) {
+        const yearNum = yy < 70 ? 2000 + yy : 1900 + yy;
+        const mm = String(monthNum).padStart(2, '0');
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+      }
+    }
+
+    // 5. ISO date YYYY-MM-DD or YYYY-MM (e.g. "2025-05-15", "2025-05")
+    m = str.match(/\b(\d{4})-(\d{1,2})(?:-(\d{1,2}))?\b/);
+    if (m) {
+      const yearNum = parseInt(m[1], 10);
+      const monthNum = parseInt(m[2], 10);
+      if (monthNum >= 1 && monthNum <= 12 && yearNum >= 1990 && yearNum <= 2100) {
+        const mm = String(monthNum).padStart(2, '0');
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+      }
+    }
+
+    // 6. Textual months e.g. "Maio 2025", "Mai/2025", "Maio/25"
+    const ptMonths: Record<string, string> = {
+      jan: '01', janeiro: '01',
+      fev: '02', fevereiro: '02',
+      mar: '03', marco: '03', março: '03',
+      abr: '04', abril: '04',
+      mai: '05', maio: '05',
+      jun: '06', junho: '06',
+      jul: '07', julho: '07',
+      ago: '08', agosto: '08',
+      set: '09', setembro: '09',
+      out: '10', outubro: '10',
+      nov: '11', novembro: '11',
+      dez: '12', dezembro: '12'
+    };
+
+    const textMatch = str.toLowerCase().match(/\b(jan(?:eiro)?|fev(?:ereiro)?|mar(?:ço|co)?|abr(?:il)?|mai(?:o)?|jun(?:ho)?|jul(?:ho)?|ago(?:sto)?|set(?:embro)?|out(?:ubro)?|nov(?:embro)?|dez(?:embro)?)\b.*?(\d{2,4})/i);
+    if (textMatch) {
+      const mStr = textMatch[1].toLowerCase().replace('ço', 'co');
+      const mm = ptMonths[mStr] || ptMonths[mStr.slice(0, 3)];
+      let yy = parseInt(textMatch[2], 10);
+      if (mm) {
+        const yearNum = yy < 100 ? (yy < 70 ? 2000 + yy : 1900 + yy) : yy;
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+      }
+    }
+
+    return null;
+  };
+
   // Launch Category Statistics (Diário vs Acumulado)
   const getLancamentoStatsByTipo = () => {
     const typeMap: Record<string, { tipoLabel: string; hoje: number; acumulado: number }> = {};
@@ -153,12 +246,13 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
         const queue = state.filaAvulsa.listas[listName];
         const fila = queue.fila || [];
 
-        fila.forEach(server => {
+        fila.forEach((server, sIdx) => {
           const ocs = server.ocorrencias || [];
           const serverProcessedToday = confHojeMatriculas.has(server.matricula);
+          const isProcessedServer = sIdx < (queue.idx || 0);
 
           ocs.forEach(o => {
-            if (o.checked) {
+            if (o.checked || isProcessedServer || Boolean(o.dataLancamento)) {
               const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
               addStat(o.tipo, ocIsToday, 1);
             }
@@ -182,28 +276,69 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     const anosDisponiveis = new Set<string>();
     anosDisponiveis.add(new Date().getFullYear().toString());
 
-    Object.keys(state.filaAvulsa.listas).forEach(listName => {
-      const q = state.filaAvulsa.listas[listName];
-      const list = q.fila || [];
+    const countedKeys = new Set<string>();
 
-      list.forEach(server => {
-        const ocs = server.ocorrencias || [];
-        ocs.forEach(o => {
-          if (o.checked) {
-            const dateMatch = String(o.data || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
-            if (dateMatch) {
-              const ano = dateMatch[3];
-              anosDisponiveis.add(ano);
-              const mesAno = `${dateMatch[2]}/${dateMatch[3]}`; // MM/YYYY
-              
-              if (anoFiltro === "todos" || anoFiltro === ano) {
-                map[mesAno] = (map[mesAno] || 0) + 1;
+    // 1. Process queue occurrences (filaAvulsa)
+    if (state.filaAvulsa && state.filaAvulsa.listas) {
+      Object.keys(state.filaAvulsa.listas).forEach(listName => {
+        const q = state.filaAvulsa.listas[listName];
+        const list = q.fila || [];
+
+        list.forEach((server, sIdx) => {
+          const ocs = server.ocorrencias || [];
+          const isProcessedServer = sIdx < (q.idx || 0);
+
+          ocs.forEach(o => {
+            if (o.checked || Boolean(o.dataLancamento) || isProcessedServer) {
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(o.dataLancamento);
+              if (dateObj) {
+                anosDisponiveis.add(dateObj.year);
+                const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj.mesAno}`;
+                if (!countedKeys.has(itemKey)) {
+                  countedKeys.add(itemKey);
+                  if (anoFiltro === "todos" || anoFiltro === dateObj.year) {
+                    map[dateObj.mesAno] = (map[dateObj.mesAno] || 0) + 1;
+                  }
+                }
+              }
+            }
+          });
+        });
+      });
+    }
+
+    // 2. Process history entries (historico) for any occurrences or entries not in queue
+    if (state.historico && state.historico.length > 0) {
+      state.historico.forEach(h => {
+        if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
+          h.ocorrencias.forEach(ocStr => {
+            const dateObj = parseMonthYear(ocStr) || parseMonthYear(h.ts);
+            if (dateObj) {
+              anosDisponiveis.add(dateObj.year);
+              const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj.mesAno}`;
+              if (!countedKeys.has(itemKey)) {
+                countedKeys.add(itemKey);
+                if (anoFiltro === "todos" || anoFiltro === dateObj.year) {
+                  map[dateObj.mesAno] = (map[dateObj.mesAno] || 0) + 1;
+                }
+              }
+            }
+          });
+        } else if (h.qtd && h.qtd > 0) {
+          const dateObj = parseMonthYear(h.ts);
+          if (dateObj) {
+            anosDisponiveis.add(dateObj.year);
+            const itemKey = `${h.mat || ''}_general_${h.ts || ''}_${dateObj.mesAno}`;
+            if (!countedKeys.has(itemKey)) {
+              countedKeys.add(itemKey);
+              if (anoFiltro === "todos" || anoFiltro === dateObj.year) {
+                map[dateObj.mesAno] = (map[dateObj.mesAno] || 0) + (h.qtd || 1);
               }
             }
           }
-        });
+        }
       });
-    });
+    }
 
     const parsedMonthList = Object.keys(map).map(mStr => ({
       mesAno: mStr,
