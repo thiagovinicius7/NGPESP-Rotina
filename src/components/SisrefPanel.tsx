@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
+import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
 import { 
   Building2, ListTodo, MessageSquareQuote, Search, UserCheck, 
   Copy, Check, X, ClipboardList, Trash2, Network, ChevronRight, 
@@ -124,10 +125,10 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
     const map: Record<string, { codigo: string; nome: string; total: number; conferidos: number }> = {};
     
     // Count conferences from history for today
-    const hoje = new Date().toISOString().split('T')[0];
+    const hoje = getLocalDateIso();
     const conferidosHoje = new Set(
       state.historico
-        .filter(h => h.ts && h.ts.startsWith(hoje))
+        .filter(h => h.ts && toYmdDate(h.ts) === hoje)
         .map(h => h.mat)
     );
 

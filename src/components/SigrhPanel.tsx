@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, LaunchCode, NatalAnalysis } from "../types.js";
+import { getLocalDateIso } from "../lib/utils.js";
 import { 
   Calculator, FileCode, Image as ImageIcon, Gift, Plus, Search, 
   Trash2, FileUp, X, Save, Edit2, ExternalLink, FilePlus2, 
@@ -14,7 +15,7 @@ interface SigrhPanelProps {
 
 export default function SigrhPanel({ state, updateState, onToast }: SigrhPanelProps) {
   // Calculadora
-  const [calcData, setCalcData] = useState(new Date().toISOString().split("T")[0]);
+  const [calcData, setCalcData] = useState(getLocalDateIso());
   const [calcDias, setCalcDias] = useState("");
   const [calcOp, setCalcOp] = useState<"soma" | "sub">("soma");
   const [calcUteis, setCalcUteis] = useState(false);

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { AppState } from "../types.js";
+import { getLocalDateIso } from "../lib/utils.js";
 import { 
   PhoneCall, Play, Check, BookOpen, Plus, Search, 
   Trash2, Save, X, HelpCircle, Edit, ChevronDown
@@ -13,7 +14,7 @@ interface BalcaoPanelProps {
 
 export default function BalcaoPanel({ state, updateState, onToast }: BalcaoPanelProps) {
   // Desk notes
-  const [balcaoDate, setBalcaoDate] = useState(new Date().toISOString().split("T")[0]);
+  const [balcaoDate, setBalcaoDate] = useState(getLocalDateIso());
   const [isAttendanceActive, setIsAttendanceActive] = useState(false);
   const [lastFinishedTime, setLastFinishedTime] = useState<string | null>(null);
 

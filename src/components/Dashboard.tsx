@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState } from "../types.js";
+import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
 import { 
   Users, Building2, Clock, UserCheck, TrendingUp, PlusCircle, 
   Search, ListTodo, AlertOctagon, PlayCircle, Palmtree, CalendarCheck, Stethoscope, CheckCircle2, Gift,
@@ -72,10 +73,10 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   const totalServidores = (state.servidores || []).length;
   const totalSetores = new Set((state.servidores || []).map(s => s?.codLotacao || s?.lotacao || "Sem setor")).size;
 
-  const hoje = new Date().toISOString().split('T')[0];
+  const hoje = getLocalDateIso();
   const hojeStr = hoje;
 
-  // Calculate total e daily lançamentos dynamically from history entries and productivity items
+  // Calculate total and daily lançamentos dynamically from history entries and productivity items
   const histLancamentos = (state.historico || []).reduce((acc, h) => acc + (typeof h?.qtd === 'number' ? h.qtd : 1), 0);
 
   let prodLancamentos = 0;
@@ -88,7 +89,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
         const tardeLen = Array.isArray(dayData.tarde) ? dayData.tarde.length : 0;
         const countDay = manhaLen + tardeLen;
         prodLancamentos += countDay;
-        if (dateStr === hojeStr) {
+        if (dateStr === hojeStr || toYmdDate(dateStr) === hojeStr) {
           prodLancamentosHoje += countDay;
         }
       }
@@ -98,7 +99,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   const histLancamentosHoje = (state.historico || [])
     .filter(h => {
       if (!h || !h.ts) return false;
-      const tsStr = typeof h.ts === 'number' ? new Date(h.ts).toISOString().split('T')[0] : String(h.ts).slice(0, 10);
+      const tsStr = toYmdDate(h.ts);
       return tsStr === hojeStr;
     })
     .reduce((acc, h) => acc + (typeof h?.qtd === 'number' ? h.qtd : 1), 0);
