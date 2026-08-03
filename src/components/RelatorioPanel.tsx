@@ -271,13 +271,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
               addStat(ocStr, hIsToday, 1);
             }
           });
-        } else if (h.qtd && h.qtd > 0) {
-          const dateObj = parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
-          const itemKey = `${h.mat || ''}_general_${h.ts || ''}_${dateObj?.mesAno || ''}`;
-          if (!countedKeys.has(itemKey)) {
-            countedKeys.add(itemKey);
-            addStat(h.desc || "Outros", hIsToday, h.qtd || 1);
-          }
         }
       });
     }
@@ -345,18 +338,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
               }
             }
           });
-        } else if (h.qtd && h.qtd > 0) {
-          const dateObj = parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
-          if (dateObj) {
-            anosDisponiveis.add(dateObj.year);
-            const itemKey = `${h.mat || ''}_general_${h.ts || ''}_${dateObj.mesAno}`;
-            if (!countedKeys.has(itemKey)) {
-              countedKeys.add(itemKey);
-              if (anoFiltro === "todos" || anoFiltro === dateObj.year) {
-                map[dateObj.mesAno] = (map[dateObj.mesAno] || 0) + (h.qtd || 1);
-              }
-            }
-          }
         }
       });
     }
