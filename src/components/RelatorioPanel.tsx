@@ -230,6 +230,8 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       }
     };
 
+    const countedKeys = new Set<string>();
+
     // From Queue list (filaAvulsa - Sisref)
     if (state.filaAvulsa && state.filaAvulsa.listas) {
       Object.keys(state.filaAvulsa.listas).forEach(listName => {
@@ -244,10 +246,39 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
           ocs.forEach(o => {
             if (o.checked || isProcessedServer || Boolean(o.dataLancamento)) {
               const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
-              addStat(o.tipo, ocIsToday, 1);
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
+              const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj?.mesAno || ''}`;
+              if (!countedKeys.has(itemKey)) {
+                countedKeys.add(itemKey);
+                addStat(o.tipo, ocIsToday, 1);
+              }
             }
           });
         });
+      });
+    }
+
+    // From History entries (historico)
+    if (state.historico && state.historico.length > 0) {
+      state.historico.forEach(h => {
+        const hIsToday = isToday(h.ts);
+        if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
+          h.ocorrencias.forEach(ocStr => {
+            const dateObj = parseMonthYear(ocStr) || parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
+            const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj?.mesAno || ''}`;
+            if (!countedKeys.has(itemKey)) {
+              countedKeys.add(itemKey);
+              addStat(ocStr, hIsToday, 1);
+            }
+          });
+        } else if (h.qtd && h.qtd > 0) {
+          const dateObj = parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
+          const itemKey = `${h.mat || ''}_general_${h.ts || ''}_${dateObj?.mesAno || ''}`;
+          if (!countedKeys.has(itemKey)) {
+            countedKeys.add(itemKey);
+            addStat(h.desc || "Outros", hIsToday, h.qtd || 1);
+          }
+        }
       });
     }
 
