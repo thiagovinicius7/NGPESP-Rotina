@@ -280,7 +280,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
 
           ocs.forEach(o => {
             if (o.checked || Boolean(o.dataLancamento) || isProcessedServer) {
-              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(o.dataLancamento);
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
               if (dateObj) {
                 anosDisponiveis.add(dateObj.year);
                 const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj.mesAno}`;
@@ -302,7 +302,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       state.historico.forEach(h => {
         if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
           h.ocorrencias.forEach(ocStr => {
-            const dateObj = parseMonthYear(ocStr) || parseMonthYear(h.ts);
+            const dateObj = parseMonthYear(ocStr) || parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
             if (dateObj) {
               anosDisponiveis.add(dateObj.year);
               const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj.mesAno}`;
@@ -315,7 +315,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
             }
           });
         } else if (h.qtd && h.qtd > 0) {
-          const dateObj = parseMonthYear(h.ts);
+          const dateObj = parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
           if (dateObj) {
             anosDisponiveis.add(dateObj.year);
             const itemKey = `${h.mat || ''}_general_${h.ts || ''}_${dateObj.mesAno}`;
