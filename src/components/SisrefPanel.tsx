@@ -542,7 +542,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
           setor: "Avulsa Fila",
           qtd: qtd,
           ts: nowIso,
-          ocorrencias: checkedOcs.map(o => o.tipo)
+          ocorrencias: checkedOcs.map(o => o.data ? `${o.tipo} (${o.data})` : o.tipo)
         };
 
         return {
