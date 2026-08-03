@@ -246,9 +246,9 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
           ocs.forEach(o => {
             if (o.checked || isProcessedServer || Boolean(o.dataLancamento)) {
               const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
-              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo);
-              if (anoFiltro === "todos" || !dateObj || anoFiltro === dateObj.year) {
-                const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj?.mesAno || ''}`;
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
+              if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
+                const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
                 if (!countedKeys.has(itemKey)) {
                   countedKeys.add(itemKey);
                   addStat(o.tipo, ocIsToday, 1);
@@ -267,8 +267,8 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
         if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
           h.ocorrencias.forEach(ocStr => {
             const dateObj = parseMonthYear(ocStr) || parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
-            if (anoFiltro === "todos" || !dateObj || anoFiltro === dateObj.year) {
-              const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj?.mesAno || ''}`;
+            if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
+              const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
               if (!countedKeys.has(itemKey)) {
                 countedKeys.add(itemKey);
                 addStat(ocStr, hIsToday, 1);
@@ -308,15 +308,16 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
 
           ocs.forEach(o => {
             if (o.checked || Boolean(o.dataLancamento) || isProcessedServer) {
-              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo);
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
               if (dateObj) {
                 anosDisponiveis.add(dateObj.year);
-                const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj.mesAno}`;
+              }
+              if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
+                const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
                 if (!countedKeys.has(itemKey)) {
                   countedKeys.add(itemKey);
-                  if (anoFiltro === "todos" || anoFiltro === dateObj.year) {
-                    map[dateObj.mesAno] = (map[dateObj.mesAno] || 0) + 1;
-                  }
+                  const mesKey = dateObj ? dateObj.mesAno : "Sem Mês de Referência";
+                  map[mesKey] = (map[mesKey] || 0) + 1;
                 }
               }
             }
@@ -325,7 +326,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       });
     }
 
-    // 2. Process history entries (historico) for any occurrences or entries not in queue
+    // 2. Process history entries (historico) for any occurrences
     if (state.historico && state.historico.length > 0) {
       state.historico.forEach(h => {
         if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
@@ -333,12 +334,13 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
             const dateObj = parseMonthYear(ocStr) || parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
             if (dateObj) {
               anosDisponiveis.add(dateObj.year);
-              const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj.mesAno}`;
+            }
+            if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
+              const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
               if (!countedKeys.has(itemKey)) {
                 countedKeys.add(itemKey);
-                if (anoFiltro === "todos" || anoFiltro === dateObj.year) {
-                  map[dateObj.mesAno] = (map[dateObj.mesAno] || 0) + 1;
-                }
+                const mesKey = dateObj ? dateObj.mesAno : "Sem Mês de Referência";
+                map[mesKey] = (map[mesKey] || 0) + 1;
               }
             }
           });
@@ -350,6 +352,8 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       mesAno: mStr,
       total: map[mStr]
     })).sort((a, b) => {
+      if (a.mesAno === "Sem Mês de Referência") return 1;
+      if (b.mesAno === "Sem Mês de Referência") return -1;
       const partsA = a.mesAno.split('/');
       const partsB = b.mesAno.split('/');
       return new Date(Number(partsA[1]), Number(partsA[0]) - 1).getTime() - new Date(Number(partsB[1]), Number(partsB[0]) - 1).getTime();
