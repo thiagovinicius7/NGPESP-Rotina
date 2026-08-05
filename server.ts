@@ -2,14 +2,30 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 import { AppState } from "./src/types.js";
 
 const app = express();
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), "db.json");
+const CONFIG_FILE = path.join(process.cwd(), "firebase-applet-config.json");
 
 // Parse JSON bodies up to 50MB (to allow importing lists of servers comfortably)
 app.use(express.json({ limit: "50mb" }));
+
+// Initialize Firebase Firestore for cloud persistence if config exists
+let firestoreDb: any = null;
+if (fs.existsSync(CONFIG_FILE)) {
+  try {
+    const firebaseConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    const firebaseApp = initializeApp(firebaseConfig);
+    firestoreDb = getFirestore(firebaseApp);
+    console.log("Firebase initialized successfully on server for cloud persistence.");
+  } catch (err) {
+    console.warn("Could not initialize Firebase on server:", err);
+  }
+}
 
 // Default initial state
 const defaultState: AppState = {
@@ -41,6 +57,77 @@ const defaultState: AppState = {
 let appState: AppState = { ...defaultState };
 let stateUpdatedAt = Date.now();
 
+let saveCloudTimeout: any = null;
+
+async function loadCloudState(): Promise<AppState | null> {
+  if (!firestoreDb) return null;
+  try {
+    const mainRef = doc(firestoreDb, "app_state", "main");
+    const mainSnap = await getDoc(mainRef);
+    if (!mainSnap.exists()) return null;
+
+    const mainData = mainSnap.data() || {};
+    let baseState: AppState = { ...defaultState, ...(mainData.state || {}) };
+
+    try {
+      const servRef = doc(firestoreDb, "app_state", "servidores");
+      const servSnap = await getDoc(servRef);
+      if (servSnap.exists()) {
+        const d = servSnap.data();
+        if (d && Array.isArray(d.list)) baseState.servidores = d.list;
+      }
+    } catch (_) {}
+
+    try {
+      const histRef = doc(firestoreDb, "app_state", "historico");
+      const histSnap = await getDoc(histRef);
+      if (histSnap.exists()) {
+        const d = histSnap.data();
+        if (d && Array.isArray(d.list)) baseState.historico = d.list;
+      }
+    } catch (_) {}
+
+    console.log("Loaded persistent state directly from Firebase Firestore Cloud Database!");
+    return baseState;
+  } catch (err) {
+    console.warn("Could not load state from Firestore:", err);
+    return null;
+  }
+}
+
+function saveCloudState(stateToSave: AppState) {
+  if (!firestoreDb) return;
+  if (saveCloudTimeout) clearTimeout(saveCloudTimeout);
+  saveCloudTimeout = setTimeout(async () => {
+    try {
+      const { servidores, historico, ...mainPart } = stateToSave;
+
+      await setDoc(doc(firestoreDb, "app_state", "main"), {
+        state: mainPart,
+        updatedAt: Date.now()
+      });
+
+      if (servidores && servidores.length > 0) {
+        await setDoc(doc(firestoreDb, "app_state", "servidores"), {
+          list: servidores,
+          updatedAt: Date.now()
+        });
+      }
+
+      if (historico && historico.length > 0) {
+        await setDoc(doc(firestoreDb, "app_state", "historico"), {
+          list: historico,
+          updatedAt: Date.now()
+        });
+      }
+
+      console.log("Successfully saved state to Firebase Firestore Cloud Database.");
+    } catch (err) {
+      console.warn("Error persisting state to Firebase Firestore:", err);
+    }
+  }, 500);
+}
+
 // Load state from file on startup
 try {
   if (fs.existsSync(DB_FILE)) {
@@ -60,13 +147,14 @@ try {
   console.error("Error initializing database file:", error);
 }
 
-// Function to save state to file
+// Function to save state to file and cloud
 function saveState() {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(appState, null, 2), "utf-8");
   } catch (error) {
     console.error("Error saving state to disk:", error);
   }
+  saveCloudState(appState);
 }
 
 // API Routes
@@ -161,6 +249,23 @@ app.post("/api/gas-sync", async (req, res) => {
 
 // Vite & Static file serving setup
 async function startServer() {
+  try {
+    const cloudState = await loadCloudState();
+    if (cloudState) {
+      appState = {
+        ...defaultState,
+        ...cloudState
+      };
+      stateUpdatedAt = Date.now();
+      try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(appState, null, 2), "utf-8");
+      } catch (_) {}
+      console.log("Restored cloud state from Firebase Firestore into memory & disk cache.");
+    }
+  } catch (err) {
+    console.warn("Cloud state restore skipped:", err);
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

@@ -199,6 +199,17 @@ export function mergeFilaAvulsa(f1: any, f2: any): any {
   if (!f1 || !f1.listas || Object.keys(f1.listas).length === 0) return f2 || { listas: { "Padrão": { fila: [], idx: 0 } }, ativa: "Padrão" };
   if (!f2 || !f2.listas || Object.keys(f2.listas).length === 0) return f1;
 
+  const totalFila1 = Object.values(f1.listas as Record<string, { fila: any[] }>).reduce((sum, l) => sum + (Array.isArray(l?.fila) ? l.fila.length : 0), 0);
+  const totalFila2 = Object.values(f2.listas as Record<string, { fila: any[] }>).reduce((sum, l) => sum + (Array.isArray(l?.fila) ? l.fila.length : 0), 0);
+
+  if (totalFila1 === 0 && totalFila2 > 0) {
+    return {
+      ...f2,
+      natal: Array.from(new Set([...(f1.natal || []), ...(f2.natal || [])])),
+      pendencias: f2.pendencias || f1.pendencias || []
+    };
+  }
+
   const mergedListas: Record<string, { fila: any[]; idx: number }> = { ...f1.listas };
 
   for (const [listName, qObj2] of Object.entries(f2.listas as Record<string, { fila: any[]; idx: number }>)) {
@@ -250,9 +261,11 @@ export function mergeFilaAvulsa(f1: any, f2: any): any {
     }
   });
 
+  const activeName = (f1.ativa && mergedListas[f1.ativa]) ? f1.ativa : (f2.ativa && mergedListas[f2.ativa] ? f2.ativa : Object.keys(mergedListas)[0] || "Padrão");
+
   return {
     listas: mergedListas,
-    ativa: f1.ativa || f2.ativa || "Padrão",
+    ativa: activeName,
     natal: mergedNatal,
     configProd: (f1.configProd?.tipos && f1.configProd.tipos.length > 0) ? f1.configProd : (f2.configProd || { tipos: ["documento", "processo", "análise", "atendimento", "reunião", "outro"], sistemas: ["SISREF", "SEI", "SIAPE", "SOUGOV", "E-mail", "Físico", "Outro"] }),
     pendencias: mergedPendencias

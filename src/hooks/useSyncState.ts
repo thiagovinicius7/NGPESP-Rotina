@@ -209,19 +209,28 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             const serverTime = Number(data.updatedAt);
             const serverState: AppState = data.state || {};
 
-            // Safely merge server state with cached local state so no local data is lost
-            const mergedState: AppState = {
-              ...defaultState,
-              ...serverState,
-              servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (cachedState?.servidores || []),
-              historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (cachedState?.historico || []),
-              respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState?.respostas || []),
-              faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState?.faq || []),
-              produtividade: mergeProdutividade(cachedState?.produtividade || {}, serverState.produtividade || {}),
-              filaAvulsa: mergeFilaAvulsa(cachedState?.filaAvulsa, serverState.filaAvulsa),
-              balcaoAtendimentos: { ...(cachedState?.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
-              config: { ...(cachedState?.config || {}), ...(serverState.config || {}) }
-            };
+            let mergedState: AppState;
+            if (!cachedState) {
+              // Brand new device / browser: adopt server state directly
+              mergedState = {
+                ...defaultState,
+                ...serverState
+              };
+            } else {
+              // Existing device: merge safely
+              mergedState = {
+                ...defaultState,
+                ...serverState,
+                servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (cachedState.servidores || []),
+                historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (cachedState.historico || []),
+                respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState.respostas || []),
+                faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState.faq || []),
+                produtividade: mergeProdutividade(cachedState.produtividade || {}, serverState.produtividade || {}),
+                filaAvulsa: mergeFilaAvulsa(cachedState.filaAvulsa, serverState.filaAvulsa),
+                balcaoAtendimentos: { ...(cachedState.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
+                config: { gmov_data: "", ...(cachedState.config || {}), ...(serverState.config || {}) }
+              };
+            }
 
             setStateState(mergedState);
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
@@ -229,11 +238,13 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             setLastUpdated(serverTime);
             localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
 
-            pushStateToServer(mergedState);
+            if (cachedState) {
+              pushStateToServer(mergedState);
+            }
 
             hasLoadedFromServerRef.current = true;
             isDirtyRef.current = false;
-            console.log("Successfully initialized merged state from cloud server and local storage");
+            console.log("Successfully initialized state from cloud server and local storage");
           } else {
             setIsStaticMode(true);
             hasLoadedFromServerRef.current = true;

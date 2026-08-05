@@ -266,7 +266,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
         const hIsToday = isToday(h.ts);
         if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
           h.ocorrencias.forEach(ocStr => {
-            const dateObj = parseMonthYear(ocStr) || parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
+            const dateObj = parseMonthYear(ocStr) || parseMonthYear((h as any).desc) || parseMonthYear((h as any).sitObs);
             if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
               const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
               if (!countedKeys.has(itemKey)) {
@@ -331,7 +331,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       state.historico.forEach(h => {
         if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
           h.ocorrencias.forEach(ocStr => {
-            const dateObj = parseMonthYear(ocStr) || parseMonthYear(h.desc) || parseMonthYear(h.sitObs);
+            const dateObj = parseMonthYear(ocStr) || parseMonthYear((h as any).desc) || parseMonthYear((h as any).sitObs);
             if (dateObj) {
               anosDisponiveis.add(dateObj.year);
             }
