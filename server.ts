@@ -89,8 +89,14 @@ async function loadCloudState(): Promise<AppState | null> {
 
     console.log("Loaded persistent state directly from Firebase Firestore Cloud Database!");
     return baseState;
-  } catch (err) {
-    console.warn("Could not load state from Firestore:", err);
+  } catch (err: any) {
+    const errMsg = String(err?.message || err || "");
+    if (errMsg.includes("NOT_FOUND") || errMsg.includes("not-found") || err?.code === "not-found" || err?.code === 5) {
+      console.warn("Firestore database (default) is not provisioned on this Firebase project. Disabling Firestore sync and falling back to db.json disk database.");
+      firestoreDb = null;
+    } else {
+      console.warn("Could not load state from Firestore:", err);
+    }
     return null;
   }
 }
@@ -99,6 +105,7 @@ function saveCloudState(stateToSave: AppState) {
   if (!firestoreDb) return;
   if (saveCloudTimeout) clearTimeout(saveCloudTimeout);
   saveCloudTimeout = setTimeout(async () => {
+    if (!firestoreDb) return;
     try {
       const { servidores, historico, ...mainPart } = stateToSave;
 
@@ -122,8 +129,14 @@ function saveCloudState(stateToSave: AppState) {
       }
 
       console.log("Successfully saved state to Firebase Firestore Cloud Database.");
-    } catch (err) {
-      console.warn("Error persisting state to Firebase Firestore:", err);
+    } catch (err: any) {
+      const errMsg = String(err?.message || err || "");
+      if (errMsg.includes("NOT_FOUND") || errMsg.includes("not-found") || err?.code === "not-found" || err?.code === 5) {
+        console.warn("Firestore database (default) is not provisioned on this Firebase project. Disabling Firestore sync.");
+        firestoreDb = null;
+      } else {
+        console.warn("Error persisting state to Firebase Firestore:", err);
+      }
     }
   }, 500);
 }
