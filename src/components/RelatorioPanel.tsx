@@ -262,12 +262,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
               addStat(ocStr, hIsToday, 1);
             }
           });
-        } else if (h.qtd && h.qtd > 0) {
-          const dateObj = parseMonthYear(h.ts) || parseMonthYear((h as any).desc);
-          const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
-          if (matchesYear) {
-            addStat("Conferência de Lançamentos", hIsToday, h.qtd);
-          }
         }
       });
     }
@@ -293,7 +287,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
           ocs.forEach(o => {
             if (o.checked || Boolean(o.dataLancamento)) {
               const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
-              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo);
               const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
 
               if (matchesYear) {
@@ -335,16 +329,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
               map[mesKey] = (map[mesKey] || 0) + 1;
             }
           });
-        } else if (h.qtd && h.qtd > 0) {
-          const dateObj = parseMonthYear(h.ts) || parseMonthYear((h as any).desc);
-          if (dateObj) {
-            anosDisponiveis.add(dateObj.year);
-          }
-          const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
-          if (matchesYear) {
-            const mesKey = dateObj ? dateObj.mesAno : "Sem Mês de Referência";
-            map[mesKey] = (map[mesKey] || 0) + h.qtd;
-          }
         }
       });
     }
@@ -366,7 +350,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
 
           ocs.forEach(o => {
             if (o.checked || Boolean(o.dataLancamento)) {
-              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo);
               if (dateObj) {
                 anosDisponiveis.add(dateObj.year);
               }
