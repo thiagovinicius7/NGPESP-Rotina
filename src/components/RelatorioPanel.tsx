@@ -98,24 +98,36 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     setExpandedSetores(prev => ({ ...prev, [sName]: !prev[sName] }));
   };
 
-  // Clean launch type to group documents together without trailing dates/statuses
+  // Clean launch type to group documents together without trailing dates/statuses/server names
   const cleanTipoName = (rawStr: string): string => {
     if (!rawStr) return "Outros";
     let s = String(rawStr).trim();
 
-    // 1. Remove dates in parentheses e.g. "(15/05/2025)", "(01/01/2026 à 05/01/2026)"
+    // 1. If string contains a separator like " - " or " – ", separate the document type from the server name
+    const sepMatch = s.match(/^(.*?)(?:\s+[\-–—:]\s+|\s+[\-–—]\s*|\s+0\s*[\-–—:]?\s*)([A-ZÀ-Ú][a-zà-ú]+.*)$/);
+    if (sepMatch && sepMatch[1] && sepMatch[1].trim().length > 2) {
+      s = sepMatch[1].trim();
+    } else {
+      // Direct regex to remove trailing " - Servidor Name" or " 0 - Servidor Name"
+      s = s.replace(/\s+(?:0\s*)?[\-–—:]\s+[A-ZÀ-Úa-zà-ú\s]{3,}$/g, "");
+    }
+
+    // 2. Remove index number suffix (e.g. " 0", " 1", " 2" before server name or at end)
+    s = s.replace(/\s+\d+\s*$/g, "");
+
+    // 3. Remove dates in parentheses e.g. "(15/05/2025)", "(01/01/2026 à 05/01/2026)"
     s = s.replace(/\s*\(\s*\d{1,2}\/\d{1,2}.*?\)\s*/gi, " ");
     s = s.replace(/\s*\(\s*\d{1,2}\/\d{2,4}.*?\)\s*/gi, " ");
 
-    // 2. Remove standalone dates e.g. "15/05/2025", "05/2025"
+    // 4. Remove standalone dates e.g. "15/05/2025", "05/2025"
     s = s.replace(/\s*\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b\s*/g, " ");
     s = s.replace(/\s*\b\d{1,2}\/\d{2,4}\b\s*/g, " ");
 
-    // 3. Remove status tags
+    // 5. Remove status tags
     s = s.replace(/\s*\((Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\)\s*/gi, " ");
     s = s.replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\b/gi, "");
 
-    // 4. Clean up multiple spaces and leading/trailing punctuation
+    // 6. Clean up multiple spaces and leading/trailing punctuation
     s = s.replace(/\s+/g, " ").replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "").trim();
 
     return s || "Outros";
@@ -237,38 +249,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       }
     };
 
-    // 1. From Queue list (filaAvulsa - Sisref): Count checked/launched items in queue
-    if (state.filaAvulsa && state.filaAvulsa.listas) {
-      Object.keys(state.filaAvulsa.listas).forEach(listName => {
-        const queue = state.filaAvulsa.listas[listName];
-        const fila = queue.fila || [];
-
-        fila.forEach((server, sIdx) => {
-          const ocs = server.ocorrencias || [];
-          const serverProcessedToday = confHojeMatriculas.has(server.matricula);
-          const isProcessedInQueue = sIdx < (queue.idx || 0);
-
-          ocs.forEach(o => {
-            if (o.checked || Boolean(o.dataLancamento) || isProcessedInQueue) {
-              // Skip queue items already represented in state.historico to avoid double-counting
-              if (isProcessedInQueue && state.historico && state.historico.length > 0) {
-                return;
-              }
-
-              const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
-              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
-              const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
-
-              if (matchesYear) {
-                addStat(o.tipo, ocIsToday, 1);
-              }
-            }
-          });
-        });
-      });
-    }
-
-    // 2. From History entries (historico)
+    // 1. From History entries (historico) - primary source of confirmed launches
     if (state.historico && state.historico.length > 0) {
       state.historico.forEach(h => {
         const hIsToday = isToday(h.ts);
@@ -291,6 +272,39 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       });
     }
 
+    // 2. From Queue list (filaAvulsa - Sisref): Count pending/checked unlogged items in current active queue
+    if (state.filaAvulsa && state.filaAvulsa.listas) {
+      const hasHistory = state.historico && state.historico.length > 0;
+      Object.keys(state.filaAvulsa.listas).forEach(listName => {
+        const queue = state.filaAvulsa.listas[listName];
+        const fila = queue.fila || [];
+
+        fila.forEach((server, sIdx) => {
+          const ocs = server.ocorrencias || [];
+          const serverProcessedToday = confHojeMatriculas.has(server.matricula);
+          const isProcessedInQueue = sIdx < (queue.idx || 0);
+
+          // If history exists, history already records all processed queue items.
+          // In that case, only include unprocessed items that are explicitly checked or stamped today.
+          if (hasHistory && isProcessedInQueue) {
+            return;
+          }
+
+          ocs.forEach(o => {
+            if (o.checked || Boolean(o.dataLancamento)) {
+              const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
+              const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
+
+              if (matchesYear) {
+                addStat(o.tipo, ocIsToday, 1);
+              }
+            }
+          });
+        });
+      });
+    }
+
     return Object.values(typeMap)
       .sort((a, b) => b.acumulado - a.acumulado || a.tipoLabel.localeCompare(b.tipoLabel, "pt-BR"))
       .map(item => ({
@@ -306,38 +320,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     const anosDisponiveis = new Set<string>();
     anosDisponiveis.add(new Date().getFullYear().toString());
 
-    // 1. Process queue occurrences (filaAvulsa)
-    if (state.filaAvulsa && state.filaAvulsa.listas) {
-      Object.keys(state.filaAvulsa.listas).forEach(listName => {
-        const q = state.filaAvulsa.listas[listName];
-        const list = q.fila || [];
-
-        list.forEach((server, sIdx) => {
-          const ocs = server.ocorrencias || [];
-          const isProcessedInQueue = sIdx < (q.idx || 0);
-
-          ocs.forEach(o => {
-            if (o.checked || Boolean(o.dataLancamento) || isProcessedInQueue) {
-              if (isProcessedInQueue && state.historico && state.historico.length > 0) {
-                return;
-              }
-
-              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
-              if (dateObj) {
-                anosDisponiveis.add(dateObj.year);
-              }
-              const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
-              if (matchesYear) {
-                const mesKey = dateObj ? dateObj.mesAno : "Sem Mês de Referência";
-                map[mesKey] = (map[mesKey] || 0) + 1;
-              }
-            }
-          });
-        });
-      });
-    }
-
-    // 2. Process history entries (historico) for any occurrences
+    // 1. Process history entries (historico) for any occurrences - primary source of truth
     if (state.historico && state.historico.length > 0) {
       state.historico.forEach(h => {
         if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
@@ -352,7 +335,49 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
               map[mesKey] = (map[mesKey] || 0) + 1;
             }
           });
+        } else if (h.qtd && h.qtd > 0) {
+          const dateObj = parseMonthYear(h.ts) || parseMonthYear((h as any).desc);
+          if (dateObj) {
+            anosDisponiveis.add(dateObj.year);
+          }
+          const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
+          if (matchesYear) {
+            const mesKey = dateObj ? dateObj.mesAno : "Sem Mês de Referência";
+            map[mesKey] = (map[mesKey] || 0) + h.qtd;
+          }
         }
+      });
+    }
+
+    // 2. Process active queue occurrences (filaAvulsa)
+    if (state.filaAvulsa && state.filaAvulsa.listas) {
+      const hasHistory = state.historico && state.historico.length > 0;
+      Object.keys(state.filaAvulsa.listas).forEach(listName => {
+        const q = state.filaAvulsa.listas[listName];
+        const list = q.fila || [];
+
+        list.forEach((server, sIdx) => {
+          const ocs = server.ocorrencias || [];
+          const isProcessedInQueue = sIdx < (q.idx || 0);
+
+          if (hasHistory && isProcessedInQueue) {
+            return;
+          }
+
+          ocs.forEach(o => {
+            if (o.checked || Boolean(o.dataLancamento)) {
+              const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
+              if (dateObj) {
+                anosDisponiveis.add(dateObj.year);
+              }
+              const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
+              if (matchesYear) {
+                const mesKey = dateObj ? dateObj.mesAno : "Sem Mês de Referência";
+                map[mesKey] = (map[mesKey] || 0) + 1;
+              }
+            }
+          });
+        });
       });
     }
 
