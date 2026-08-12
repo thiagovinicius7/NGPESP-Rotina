@@ -388,28 +388,28 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
 
       // Clean occurrence type (tipo)
       let tipo = linha;
+
+      // 1. Remove matricula
       if (finalMatricula) {
-        tipo = tipo.replace(new RegExp(`\\b${finalMatricula.replace(/\D/g, "")}\\b`, "gi"), "");
+        const cleanMat = finalMatricula.replace(/\D/g, "");
+        if (cleanMat.length >= 4) {
+          tipo = tipo.replace(new RegExp(`\\b${cleanMat}\\b`, "gi"), "");
+        }
       }
+
+      // 2. Remove full server name if it appears in the line
       if (finalNome && finalNome.trim().length > 2) {
         const normNome = finalNome.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        // Remove full name case/accent insensitive
         const normTipo = tipo.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const idx = normTipo.toLowerCase().indexOf(normNome.toLowerCase());
         if (idx !== -1) {
           tipo = tipo.substring(0, idx) + tipo.substring(idx + normNome.length);
-        } else {
-          // Remove individual words if full name didn't match directly
-          const words = normNome.split(/\s+/).filter(w => w.length > 2);
-          words.forEach(w => {
-            const wIdx = tipo.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().indexOf(w.toLowerCase());
-            if (wIdx !== -1) {
-              tipo = tipo.substring(0, wIdx) + tipo.substring(wIdx + w.length);
-            }
-          });
         }
       }
-      tipo = tipo.replace(/(\d{2}\/\d{2}\/\d{4})/g, "")
+
+      // 3. Remove standalone dates, status tags, and extra dashes/punctuation
+      tipo = tipo.replace(/(\d{1,2}\/\d{1,2}\/\d{2,4})/g, "")
+                 .replace(/(\d{1,2}\/\d{2,4})/g, "")
                  .replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\b/gi, "")
                  .replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "")
                  .trim();
