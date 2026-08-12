@@ -98,18 +98,31 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     setExpandedSetores(prev => ({ ...prev, [sName]: !prev[sName] }));
   };
 
-  // Clean launch type to group documents together without trailing dates/statuses
+  // Clean launch type to group documents together without trailing dates/statuses/server names
   const cleanTipoName = (rawStr: string): string => {
     if (!rawStr) return "Outros";
     let s = String(rawStr).trim();
-    // Remove trailing date in parenthesis, e.g. " (31/12/2025)", " (03/03/2026)"
-    s = s.replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/g, "");
-    // Remove trailing date without parenthesis, e.g. " 31/12/2025"
-    s = s.replace(/\s*\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/g, "");
-    // Remove status tags
-    s = s.replace(/\b(Anexado|Aprovado|Pendente)\b/gi, "");
-    // Remove trailing dashes, colons, or whitespace
-    s = s.replace(/[-–—:]\s*$/g, "").trim();
+
+    // 1. Remove trailing server name or detail suffix separated by " - " or " – " or " — "
+    s = s.replace(/\s*[-–—]\s+[A-ZÀ-Úa-zà-ú0-9].*$/g, "");
+    s = s.replace(/\s*[-–—]\s*$/g, "");
+
+    // 2. Remove date patterns in parentheses or standalone, e.g. "(31/12/2025)", "(03/2026)", "31/12/2025"
+    s = s.replace(/\s*\(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\)\s*/g, " ");
+    s = s.replace(/\s*\(\d{1,2}\/\d{2,4}\)\s*/g, " ");
+    s = s.replace(/\s*\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b\s*/g, " ");
+    s = s.replace(/\s*\b\d{1,2}\/\d{2,4}\b\s*/g, " ");
+
+    // 3. Remove status tags in parentheses or standalone
+    s = s.replace(/\s*\((Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\)\s*/gi, " ");
+    s = s.replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado)\b/gi, "");
+
+    // 4. Remove trailing or standalone index numbers (e.g. " 0", " 1") at the end of the string
+    s = s.replace(/\s+\d+\s*$/g, "");
+
+    // 5. Clean up multiple spaces and trailing punctuation
+    s = s.replace(/\s+/g, " ").replace(/[-–—:]\s*$/g, "").trim();
+
     return s || "Outros";
   };
 
