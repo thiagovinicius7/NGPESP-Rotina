@@ -98,30 +98,78 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     setExpandedSetores(prev => ({ ...prev, [sName]: !prev[sName] }));
   };
 
+  // Helper to remove accents for case/accent insensitive string matching
+  const removeAccents = (str: string): string => {
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  };
+
   // Clean launch type to group documents together without trailing dates/statuses/server names
-  const cleanTipoName = (rawStr: string): string => {
+  const cleanTipoName = (rawStr: string, specificName?: string, specificMat?: string): string => {
     if (!rawStr) return "Outros";
     let s = String(rawStr).trim();
 
-    // 1. Remove trailing server name or detail suffix separated by " - " or " – " or " — "
-    s = s.replace(/\s*[-–—]\s+[A-ZÀ-Úa-zà-ú0-9].*$/g, "");
-    s = s.replace(/\s*[-–—]\s*$/g, "");
+    // 1. Remove specific matricula if provided
+    if (specificMat) {
+      const cleanMat = String(specificMat).replace(/\D/g, "");
+      if (cleanMat.length >= 4) {
+        s = s.replace(new RegExp(`\\b${cleanMat}\\b`, "gi"), "");
+      }
+    }
 
-    // 2. Remove date patterns in parentheses or standalone, e.g. "(31/12/2025)", "(03/2026)", "31/12/2025"
+    // 2. Remove specific server name if provided (case & accent insensitive)
+    if (specificName && specificName.trim().length > 2) {
+      const normS = removeAccents(s);
+      const normName = removeAccents(specificName.trim());
+      const idx = normS.toLowerCase().indexOf(normName.toLowerCase());
+      if (idx !== -1) {
+        s = s.substring(0, idx) + s.substring(idx + normName.length);
+      } else {
+        // Remove individual words of the name if full name didn't match directly
+        const words = normName.split(/\s+/).filter(w => w.length > 2);
+        if (words.length >= 2) {
+          words.forEach(w => {
+            const wordIdx = removeAccents(s).toLowerCase().indexOf(w.toLowerCase());
+            if (wordIdx !== -1) {
+              s = s.substring(0, wordIdx) + s.substring(wordIdx + w.length);
+            }
+          });
+        }
+      }
+    }
+
+    // 3. Remove registered server names from state.servidores if they appear in the string
+    if (state.servidores && state.servidores.length > 0) {
+      const normS = removeAccents(s).toLowerCase();
+      for (const srv of state.servidores) {
+        if (srv.nome && srv.nome.trim().length > 3) {
+          const normSrv = removeAccents(srv.nome.trim()).toLowerCase();
+          if (normS.includes(normSrv)) {
+            const idx = normS.indexOf(normSrv);
+            s = s.substring(0, idx) + s.substring(idx + normSrv.length);
+            break;
+          }
+        }
+      }
+    }
+
+    // 4. Remove any remaining trailing person-name-like string after a dash, minus, colon, or space
+    s = s.replace(/\s*[-\u2010-\u2015\u2212\uFE63\uFF0D:]\s+[A-Za-zÀ-ÖØ-öø-ÿ\s]{3,}$/g, "");
+
+    // 5. Remove dates in parentheses or standalone, e.g. "(31/12/2025)", "(03/2026)", "31/12/2025"
     s = s.replace(/\s*\(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\)\s*/g, " ");
     s = s.replace(/\s*\(\d{1,2}\/\d{2,4}\)\s*/g, " ");
     s = s.replace(/\s*\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b\s*/g, " ");
     s = s.replace(/\s*\b\d{1,2}\/\d{2,4}\b\s*/g, " ");
 
-    // 3. Remove status tags in parentheses or standalone
+    // 6. Remove status tags
     s = s.replace(/\s*\((Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\)\s*/gi, " ");
-    s = s.replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado)\b/gi, "");
+    s = s.replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\b/gi, "");
 
-    // 4. Remove trailing or standalone index numbers (e.g. " 0", " 1") at the end of the string
+    // 7. Remove standalone index numbers at the end (e.g. " 0", " 1", " 2")
     s = s.replace(/\s+\d+\s*$/g, "");
 
-    // 5. Clean up multiple spaces and trailing punctuation
-    s = s.replace(/\s+/g, " ").replace(/[-–—:]\s*$/g, "").trim();
+    // 8. Clean up multiple spaces and trailing/leading punctuation
+    s = s.replace(/\s+/g, " ").replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "").trim();
 
     return s || "Outros";
   };
@@ -223,8 +271,8 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
   const getLancamentoStatsByTipo = () => {
     const typeMap: Record<string, { tipoLabel: string; hoje: number; acumulado: number }> = {};
 
-    const addStat = (typeStr: string, isTodayFlag: boolean, count = 1) => {
-      const cleaned = cleanTipoName(typeStr);
+    const addStat = (typeStr: string, isTodayFlag: boolean, srvName?: string, srvMat?: string, count = 1) => {
+      const cleaned = cleanTipoName(typeStr, srvName, srvMat);
       if (!cleaned) return;
       const norm = cleaned.toLowerCase();
 
@@ -260,11 +308,14 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
             if (o.checked || isProcessedServer || Boolean(o.dataLancamento)) {
               const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
               const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo) || parseMonthYear(listName);
-              if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
-                const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
+              const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
+
+              if (matchesYear) {
+                const cleanedType = cleanTipoName(o.tipo, server.nome, server.matricula);
+                const itemKey = `${server.matricula || ''}_${cleanedType.toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
                 if (!countedKeys.has(itemKey)) {
                   countedKeys.add(itemKey);
-                  addStat(o.tipo, ocIsToday, 1);
+                  addStat(o.tipo, ocIsToday, server.nome, server.matricula, 1);
                 }
               }
             }
@@ -280,14 +331,27 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
         if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
           h.ocorrencias.forEach(ocStr => {
             const dateObj = parseMonthYear(ocStr) || parseMonthYear((h as any).desc) || parseMonthYear((h as any).sitObs);
-            if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
-              const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
+            const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
+
+            if (matchesYear) {
+              const cleanedType = cleanTipoName(ocStr, h.nome, h.mat);
+              const itemKey = `${h.mat || ''}_${cleanedType.toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
               if (!countedKeys.has(itemKey)) {
                 countedKeys.add(itemKey);
-                addStat(ocStr, hIsToday, 1);
+                addStat(ocStr, hIsToday, h.nome, h.mat, 1);
               }
             }
           });
+        } else if (h.qtd && h.qtd > 0) {
+          const dateObj = parseMonthYear(h.ts) || parseMonthYear((h as any).desc);
+          const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
+          if (matchesYear) {
+            const itemKey = `${h.mat || ''}_conferencia_${dateObj?.mesAno || 'sem_data'}`;
+            if (!countedKeys.has(itemKey)) {
+              countedKeys.add(itemKey);
+              addStat("Conferência de Lançamentos", hIsToday, h.nome, h.mat, h.qtd);
+            }
+          }
         }
       });
     }
@@ -325,8 +389,10 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
               if (dateObj) {
                 anosDisponiveis.add(dateObj.year);
               }
-              if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
-                const itemKey = `${server.matricula || ''}_${cleanTipoName(o.tipo).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
+              const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
+              if (matchesYear) {
+                const cleanedType = cleanTipoName(o.tipo, server.nome, server.matricula);
+                const itemKey = `${server.matricula || ''}_${cleanedType.toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
                 if (!countedKeys.has(itemKey)) {
                   countedKeys.add(itemKey);
                   const mesKey = dateObj ? dateObj.mesAno : "Sem Mês de Referência";
@@ -348,8 +414,10 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
             if (dateObj) {
               anosDisponiveis.add(dateObj.year);
             }
-            if (anoFiltro === "todos" || (dateObj && anoFiltro === dateObj.year)) {
-              const itemKey = `${h.mat || ''}_${cleanTipoName(ocStr).toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
+            const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
+            if (matchesYear) {
+              const cleanedType = cleanTipoName(ocStr, h.nome, h.mat);
+              const itemKey = `${h.mat || ''}_${cleanedType.toLowerCase()}_${dateObj?.mesAno || 'sem_data'}`;
               if (!countedKeys.has(itemKey)) {
                 countedKeys.add(itemKey);
                 const mesKey = dateObj ? dateObj.mesAno : "Sem Mês de Referência";
