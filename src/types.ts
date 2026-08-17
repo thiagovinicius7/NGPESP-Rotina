@@ -119,6 +119,7 @@ export interface GlobalConfig {
   ultimoUpdateServidores?: string;
   lastImportedMatriculas?: string[];
   lastImportCount?: number;
+  matriculasCedidos?: string[];
 }
 
 export interface AppState {
