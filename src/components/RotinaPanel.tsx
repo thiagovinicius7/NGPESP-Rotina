@@ -6,7 +6,7 @@ import {
   Palmtree, CalendarCheck, Stethoscope, Save, Settings2, Plus, 
   X, Check, Sunrise, Sunset, History, Calendar, FileText, 
   ArrowRight, Edit, AlertTriangle, AlertCircle, CheckCircle,
-  Database, RefreshCw, Key, Search, Link as LinkIcon, ExternalLink, Unlink
+  Database, RefreshCw, Key, Search, Link as LinkIcon, ExternalLink, Unlink, UserX
 } from "lucide-react";
 import { 
   syncToGoogleSheets, 
@@ -96,6 +96,91 @@ export default function RotinaPanel({
     
     onToast("Senha do sistema alterada com sucesso!", "ok");
     setNewPassword("");
+  };
+
+  // Servidores Cedidos / Ignorados state
+  const [cedidosInput, setCedidosInput] = useState("");
+  const [cedidosSearch, setCedidosSearch] = useState("");
+
+  const handleAddCedidos = () => {
+    if (!cedidosInput.trim()) {
+      onToast("Digite ou cole ao menos uma matrícula.", "err");
+      return;
+    }
+
+    const rawList = cedidosInput.split(/[\n,; \t]+/).map(s => s.trim()).filter(Boolean);
+    const validMatriculas: string[] = [];
+
+    rawList.forEach(item => {
+      const formatted = formatMatricula(item);
+      if (formatted) {
+        validMatriculas.push(formatted);
+      }
+    });
+
+    if (validMatriculas.length === 0) {
+      onToast("Nenhuma matrícula válida identificada.", "err");
+      return;
+    }
+
+    let addedCount = 0;
+
+    updateState(prev => {
+      const currentList = prev.config?.matriculasCedidos || [];
+      const setNorm = new Set(currentList.map(m => normalizeMatricula(m)));
+      const added: string[] = [];
+
+      validMatriculas.forEach(mat => {
+        const norm = normalizeMatricula(mat);
+        if (norm && !setNorm.has(norm)) {
+          setNorm.add(norm);
+          added.push(mat);
+        }
+      });
+
+      addedCount = added.length;
+
+      if (added.length === 0) {
+        return {};
+      }
+
+      return {
+        config: {
+          ...prev.config,
+          matriculasCedidos: [...currentList, ...added]
+        }
+      };
+    });
+
+    if (addedCount > 0) {
+      setCedidosInput("");
+      onToast(`${addedCount} matrícula(s) de cedido adicionada(s) à lista!`, "ok");
+    } else {
+      onToast("As matrículas informadas já constam na lista de cedidos.", "info");
+    }
+  };
+
+  const handleRemoveCedido = (mat: string) => {
+    const norm = normalizeMatricula(mat);
+    updateState(prev => ({
+      config: {
+        ...prev.config,
+        matriculasCedidos: (prev.config?.matriculasCedidos || []).filter(m => normalizeMatricula(m) !== norm)
+      }
+    }));
+    onToast(`Matrícula ${mat} removida da lista de cedidos.`, "info");
+  };
+
+  const handleClearCedidos = () => {
+    if (confirm("Deseja realmente limpar toda a lista de servidores cedidos a ignorar?")) {
+      updateState(prev => ({
+        config: {
+          ...prev.config,
+          matriculasCedidos: []
+        }
+      }));
+      onToast("Lista de servidores cedidos foi limpa.", "info");
+    }
   };
 
   // Google Sheets Direct API Backup States
@@ -1320,6 +1405,126 @@ export default function RotinaPanel({
             <div className="mt-2 text-[10px] text-[var(--text2)] font-semibold">
               Senha atualmente em uso: <span className="font-mono font-black text-[var(--text)]">{state.config.appPassword || "456321 (Padrão)"}</span>
             </div>
+          </div>
+          
+          {/* SERVIDORES CEDIDOS / IGNORADOS (FILA AVULSA SISREF) */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+              <div className="text-xs font-bold text-[var(--text)] uppercase tracking-wider flex items-center gap-2">
+                <UserX className="text-amber-500" size={16} /> Servidores Cedidos (Ignorar nas Filas Avulsas do SISREF)
+              </div>
+              <span className="px-2.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-black rounded-full">
+                {(state.config?.matriculasCedidos || []).length} cadastrado(s)
+              </span>
+            </div>
+            
+            <p className="text-xs text-[var(--text2)] mb-4 font-semibold leading-relaxed">
+              Cadastre as matrículas de servidores que estão cedidos para outros órgãos. Mesmo que apareçam nos relatórios ou filas avulsas do SISREF, o sistema <strong>descartará automaticamente essas matrículas</strong> durante a importação do texto, evitando lançamentos indevidos.
+            </p>
+
+            {/* Inserção de Matrículas */}
+            <div className="bg-[var(--bg)] border border-[var(--border2)] rounded-xl p-4 mb-4">
+              <label className="block text-[10px] font-black text-[var(--text2)] uppercase tracking-wider mb-1.5">
+                Adicionar Matrículas de Cedidos (digite ou cole uma ou várias separadas por vírgula, espaço ou linha):
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <textarea
+                  rows={2}
+                  value={cedidosInput}
+                  onChange={(e) => setCedidosInput(e.target.value)}
+                  placeholder="Ex: 01234567, 07654321, 1458923..."
+                  className="flex-1 p-2.5 text-xs font-mono rounded-xl border border-[var(--border2)] bg-[var(--surface)] outline-none text-[var(--text)] focus:border-[var(--blue-mid)] resize-y min-h-[44px]"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCedidos}
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition-all self-stretch sm:self-auto flex-shrink-0"
+                >
+                  <Plus size={14} /> Adicionar à Lista
+                </button>
+              </div>
+            </div>
+
+            {/* Lista de Matrículas de Cedidos */}
+            {(state.config?.matriculasCedidos || []).length > 0 ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="relative flex-1 min-w-[200px] max-w-xs">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text2)] opacity-60" />
+                    <input
+                      type="text"
+                      placeholder="Buscar matrícula ou nome..."
+                      value={cedidosSearch}
+                      onChange={(e) => setCedidosSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-[var(--border2)] bg-[var(--bg)] outline-none text-[var(--text)]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleClearCedidos}
+                    className="text-xs text-red-500 hover:text-red-600 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <Trash2 size={12} /> Limpar Todos
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
+                  {(state.config?.matriculasCedidos || [])
+                    .filter(mat => {
+                      if (!cedidosSearch.trim()) return true;
+                      const q = cedidosSearch.trim().toLowerCase();
+                      const normMat = normalizeMatricula(mat);
+                      const srv = state.servidores.find(s => normalizeMatricula(s.matricula) === normMat);
+                      return mat.toLowerCase().includes(q) || (srv && srv.nome.toLowerCase().includes(q));
+                    })
+                    .map((mat) => {
+                      const normMat = normalizeMatricula(mat);
+                      const srv = state.servidores.find(s => normalizeMatricula(s.matricula) === normMat);
+                      return (
+                        <div
+                          key={mat}
+                          className="p-2.5 bg-[var(--bg)] border border-[var(--border2)] rounded-xl flex items-center justify-between gap-2 shadow-2xs hover:border-[var(--border)] transition-all"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono font-black text-xs text-[var(--text)]">
+                                {formatMatricula(mat)}
+                              </span>
+                              {srv && (
+                                <span className="text-[9px] px-1.5 py-0.2 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded font-bold">
+                                  SIGRH
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] font-semibold text-[var(--text2)] truncate" title={srv?.nome || "Servidor não localizado no cadastro geral"}>
+                              {srv ? srv.nome : "Fora do cadastro"}
+                            </div>
+                            {srv?.lotacao && (
+                              <div className="text-[9px] text-[var(--text2)] opacity-70 truncate">
+                                {srv.lotacao}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCedido(mat)}
+                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg cursor-pointer transition-colors flex-shrink-0"
+                            title={`Remover matrícula ${mat} da lista de cedidos`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-[var(--bg)]/40 border border-dashed border-[var(--border2)] rounded-xl text-center">
+                <p className="text-xs text-[var(--text2)] font-semibold">
+                  Nenhuma matrícula de servidor cedido cadastrada. Adicione matrículas no campo acima para que o SISREF as ignore automaticamente.
+                </p>
+              </div>
+            )}
           </div>
           
           {/* 1. GOOGLE SHEETS ACTIVE SYNCHRONIZER (APPS SCRIPT) */}

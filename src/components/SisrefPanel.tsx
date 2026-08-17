@@ -324,6 +324,10 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
       }
     });
 
+    // Set of cedidos/ignorados matriculas
+    const cedidosNormSet = new Set((state.config?.matriculasCedidos || []).map(m => normalizeMatricula(m)).filter(Boolean));
+    let cedidosIgnoradosCount = 0;
+
     const map: Record<string, QueueServer> = {};
     const linhas = txt.split(/\n/);
 
@@ -386,6 +390,13 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
 
       if (!finalMatricula) return;
 
+      // Ignore if server is registered as cedido
+      const normFinalMat = normalizeMatricula(finalMatricula);
+      if ((normMat && cedidosNormSet.has(normMat)) || (normFinalMat && cedidosNormSet.has(normFinalMat))) {
+        cedidosIgnoradosCount++;
+        return;
+      }
+
       // Clean occurrence type (tipo)
       let tipo = linha;
 
@@ -447,18 +458,26 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
       initialSel[i] = true;
     });
     setAvulsaSelected(initialSel);
-    onToast(`${parsedArr.length} servidores identificados!`, "ok");
+    if (cedidosIgnoradosCount > 0) {
+      onToast(`${parsedArr.length} servidores identificados (${cedidosIgnoradosCount} servidores cedidos ignorados)!`, "ok");
+    } else {
+      onToast(`${parsedArr.length} servidores identificados!`, "ok");
+    }
   };
 
   const iniciarFilaConferencia = () => {
-    const selectedServers = avulsaResultados.filter((_, i) => avulsaSelected[i]).map(s => {
-      const official = getOfficialServer(s.matricula, s.nome, state.servidores);
-      return {
-        ...s,
-        matricula: official.matricula,
-        nome: official.nome
-      };
-    });
+    const cedidosNormSet = new Set((state.config?.matriculasCedidos || []).map(m => normalizeMatricula(m)).filter(Boolean));
+    const selectedServers = avulsaResultados
+      .filter((_, i) => avulsaSelected[i])
+      .filter(s => !cedidosNormSet.has(normalizeMatricula(s.matricula)))
+      .map(s => {
+        const official = getOfficialServer(s.matricula, s.nome, state.servidores);
+        return {
+          ...s,
+          matricula: official.matricula,
+          nome: official.nome
+        };
+      });
 
     if (selectedServers.length === 0) {
       onToast("Selecione pelo menos um servidor para a fila", "err");
