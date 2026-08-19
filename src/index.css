@@ -6,7 +6,7 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
-:root {
+:root, [data-theme="claro"], .theme-claro {
   --blue: #4f46e5; /* Indigo-600 */
   --blue-light: #f0f2fe; /* Indigo-50 */
   --blue-mid: #6366f1; /* Indigo-500 */
@@ -35,7 +35,7 @@
   --shadow-bento: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
 }
 
-[data-theme="escuro"] {
+[data-theme="escuro"], .theme-escuro, .dark, html.dark, body.dark {
   --bg: #090d16; /* Bento dark space slate */
   --surface: #111827; /* Gray-900 / Slate-900 hybrid */
   --border: #1f2937; /* Gray-800 */
@@ -53,7 +53,7 @@
   --teal-light: rgba(20, 184, 166, 0.15);
 }
 
-[data-theme="petroleo"] {
+[data-theme="petroleo"], .theme-petroleo {
   --bg: #06131c; /* Petrol bento dark background */
   --surface: #0b2131; /* Deep petrol card surface */
   --border: #10324b; /* Petrol border */

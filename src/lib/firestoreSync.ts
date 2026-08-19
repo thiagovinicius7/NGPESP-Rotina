@@ -1,12 +1,31 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
-  getFirestore, doc, setDoc, getDoc, onSnapshot, Unsubscribe 
+  initializeFirestore, 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  onSnapshot, 
+  Unsubscribe 
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { AppState } from "../types.js";
 
+// Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const db = getFirestore(app);
+
+// Initialize Firestore with long-polling autodetection and undefined property handling
+let dbInstance: any = null;
+try {
+  dbInstance = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+    ignoreUndefinedProperties: true
+  });
+} catch (_) {
+  dbInstance = getFirestore(app);
+}
+
+export const db = dbInstance;
 
 const FIRESTORE_COLL = "ngpesp_sync";
 const DOC_STATE = "global_state";
@@ -19,13 +38,33 @@ let isWritingToCloud = false;
 let lastPushedTimestamp = 0;
 
 /**
+ * Timeout helper to prevent any cloud promise from hanging indefinitely
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(timeoutMsg));
+    }, ms);
+
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+/**
  * Deep cleaner to remove undefined values and ensure JSON-serializable structure
- * preventing Firestore SDK crashes with 'Unsupported field value: undefined'.
  */
 function cleanPayload<T>(obj: T): T {
   if (!obj) return obj;
   try {
-    return JSON.parse(JSON.stringify(obj, (key, value) => {
+    return JSON.parse(JSON.stringify(obj, (_, value) => {
       if (value === undefined) return null;
       return value;
     }));
@@ -39,13 +78,19 @@ function cleanPayload<T>(obj: T): T {
  */
 export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>; updatedAt: number } | null> {
   try {
-    const [stateSnap, filaSnap, servidoresSnap, histSnap, prodSnap] = await Promise.all([
+    const fetchPromises = [
       getDoc(doc(db, FIRESTORE_COLL, DOC_STATE)),
       getDoc(doc(db, FIRESTORE_COLL, DOC_FILA)),
       getDoc(doc(db, FIRESTORE_COLL, DOC_SERVIDORES)),
       getDoc(doc(db, FIRESTORE_COLL, DOC_HISTORICO)),
       getDoc(doc(db, FIRESTORE_COLL, DOC_PRODUTIVIDADE))
-    ]);
+    ];
+
+    const [stateSnap, filaSnap, servidoresSnap, histSnap, prodSnap] = await withTimeout(
+      Promise.all(fetchPromises),
+      12000,
+      "Tempo limite ao carregar dados da nuvem (12s). Verifique sua conexão."
+    );
 
     const stateExists = stateSnap.exists();
     const filaExists = filaSnap.exists();
@@ -89,12 +134,12 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
     return { state: partialState, updatedAt: updatedAt || Date.now() };
   } catch (err) {
     console.error("Firestore fetch error:", err);
-    return null;
+    throw err;
   }
 }
 
 /**
- * Pushes the full state and split documents to Firestore safely.
+ * Pushes the full state and split documents to Firestore safely with timeout protection.
  */
 export async function pushStateToFirestore(state: AppState): Promise<boolean> {
   if (!state) return false;
@@ -114,7 +159,7 @@ export async function pushStateToFirestore(state: AppState): Promise<boolean> {
     });
 
     const histPayload = cleanPayload({
-      historico: state.historico || [],
+      historico: (state.historico || []).slice(0, 1000), // Keep the latest 1000 logs for high speed
       updatedAt: now
     });
 
@@ -139,13 +184,19 @@ export async function pushStateToFirestore(state: AppState): Promise<boolean> {
       updatedAt: now
     });
 
-    await Promise.all([
+    const writes = [
       setDoc(doc(db, FIRESTORE_COLL, DOC_FILA), filaPayload, { merge: true }),
       setDoc(doc(db, FIRESTORE_COLL, DOC_SERVIDORES), servPayload, { merge: true }),
       setDoc(doc(db, FIRESTORE_COLL, DOC_HISTORICO), histPayload, { merge: true }),
       setDoc(doc(db, FIRESTORE_COLL, DOC_PRODUTIVIDADE), prodPayload, { merge: true }),
       setDoc(doc(db, FIRESTORE_COLL, DOC_STATE), globalPayload, { merge: true })
-    ]);
+    ];
+
+    await withTimeout(
+      Promise.all(writes),
+      15000,
+      "Tempo limite ao enviar dados para a nuvem Firestore (15s). Verifique sua conexão à internet."
+    );
 
     setTimeout(() => {
       isWritingToCloud = false;
@@ -156,7 +207,7 @@ export async function pushStateToFirestore(state: AppState): Promise<boolean> {
   } catch (err) {
     console.error("Firestore push error:", err);
     isWritingToCloud = false;
-    return false;
+    throw err;
   }
 }
 
