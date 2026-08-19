@@ -1482,7 +1482,7 @@ export default function RotinaPanel({
               <Key className="text-[var(--blue-mid)]" size={16} /> Senha de Segurança do Sistema
             </div>
             <p className="text-xs text-[var(--text2)] mb-4 font-semibold leading-relaxed">
-              Defina a senha numérica de acesso necessária para visualizar e operar este painel de conferência. Senha atual padrão se não configurada: <strong className="font-mono text-[var(--blue-mid)]">456321</strong>.
+              Defina a senha de acesso necessária para visualizar e operar este painel de conferência.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3 max-w-md">
@@ -1491,7 +1491,7 @@ export default function RotinaPanel({
                   type={showPass ? "text" : "password"} 
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Nova senha (ex: 456321)"
+                  placeholder="Nova senha de acesso"
                   className="w-full p-3 text-xs rounded-xl font-mono border border-[var(--border2)] bg-[var(--bg)] outline-none text-[var(--text)] pr-12"
                 />
                 <button
@@ -1510,7 +1510,7 @@ export default function RotinaPanel({
               </button>
             </div>
             <div className="mt-2 text-[10px] text-[var(--text2)] font-semibold">
-              Senha atualmente em uso: <span className="font-mono font-black text-[var(--text)]">{state.config.appPassword || "456321 (Padrão)"}</span>
+              Status da senha: <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">{state.config.appPassword ? "Configurada e Ativa" : "Padrão do Sistema Ativa"}</span>
             </div>
           </div>
           

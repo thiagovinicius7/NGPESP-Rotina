@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, HistoryEntry } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getSaoPauloHour } from "../lib/utils.js";
 import { 
   Users, CalendarCheck2, Network, Timer, List, PieChart, 
   Trash2, ChevronRight, Edit2, LineChart, Calendar as CalendarIcon, 
@@ -63,16 +63,74 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
   // Daily Turn stats (M vs T)
   const hojeISO = getLocalDateIso();
   const confHoje = (state.historico || []).filter(h => h && h.ts && isToday(h.ts));
-  const confHojeMatriculas = new Set(confHoje.map(h => h.mat));
   
-  const confManha = confHoje.filter(h => new Date(h.ts).getHours() < 13);
-  const confTarde = confHoje.filter(h => new Date(h.ts).getHours() >= 13);
+  let totalSrvManha = 0;
+  let totalLancManha = 0;
+  let totalSrvTarde = 0;
+  let totalLancTarde = 0;
 
-  const totalSrvManha = confManha.length;
-  const totalLancManha = confManha.reduce((s, h) => s + (h.qtd || 0), 0);
+  // 1. Count from state.historico (using precise São Paulo timezone hour)
+  confHoje.forEach(h => {
+    const hour = getSaoPauloHour(h.ts);
+    const lances = Math.max(1, typeof h.qtd === "number" && h.qtd > 0 ? h.qtd : (h.ocorrencias?.length || 1));
+    if (hour < 13) {
+      totalSrvManha++;
+      totalLancManha += lances;
+    } else {
+      totalSrvTarde++;
+      totalLancTarde += lances;
+    }
+  });
 
-  const totalSrvTarde = confTarde.length;
-  const totalLancTarde = confTarde.reduce((s, h) => s + (h.qtd || 0), 0);
+  // 2. Count from state.produtividade entries for today
+  if (state.produtividade && typeof state.produtividade === "object") {
+    Object.entries(state.produtividade).forEach(([dateKey, dayData]) => {
+      if (isToday(dateKey) && dayData && typeof dayData === "object") {
+        if (Array.isArray(dayData.manha)) {
+          dayData.manha.forEach((item: any) => {
+            const num = parseInt(String(item.qtd), 10);
+            const lances = !isNaN(num) && num > 0 ? num : 1;
+            totalSrvManha++;
+            totalLancManha += lances;
+          });
+        }
+        if (Array.isArray(dayData.tarde)) {
+          dayData.tarde.forEach((item: any) => {
+            const num = parseInt(String(item.qtd), 10);
+            const lances = !isNaN(num) && num > 0 ? num : 1;
+            totalSrvTarde++;
+            totalLancTarde += lances;
+          });
+        }
+      }
+    });
+  }
+
+  // 3. Count from any active/completed queue servers launched today
+  const confHojeMatriculas = new Set(confHoje.map(h => h.mat));
+  if (state.filaAvulsa && state.filaAvulsa.listas) {
+    Object.values(state.filaAvulsa.listas).forEach((q: any) => {
+      (q.fila || []).forEach((server: any, sIdx: number) => {
+        if (server && server.matricula && !confHojeMatriculas.has(server.matricula)) {
+          const isProcessed = sIdx < (q.idx || 0);
+          const hasTodayLaunch = (server.ocorrencias || []).some((o: any) => o.checked || isToday(o.dataLancamento));
+          if (isProcessed || hasTodayLaunch) {
+            const ocsCount = (server.ocorrencias || []).filter((o: any) => o.checked || isToday(o.dataLancamento)).length;
+            const lances = ocsCount > 0 ? ocsCount : (server.ocorrencias?.length || 1);
+            const nowHour = getSaoPauloHour();
+            if (nowHour < 13) {
+              totalSrvManha++;
+              totalLancManha += lances;
+            } else {
+              totalSrvTarde++;
+              totalLancTarde += lances;
+            }
+            confHojeMatriculas.add(server.matricula);
+          }
+        }
+      });
+    });
+  }
 
   // Group history by Sector
   const getSectoredConferences = () => {
@@ -80,11 +138,12 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     
     state.historico.forEach(h => {
       const s = h.setor || "Sem setor especificado";
+      const lances = Math.max(1, typeof h.qtd === "number" && h.qtd > 0 ? h.qtd : (h.ocorrencias?.length || 1));
       if (!map[s]) {
         map[s] = { totalConf: 0, totalLanc: 0, list: [] };
       }
       map[s].totalConf++;
-      map[s].totalLanc += (h.qtd || 0);
+      map[s].totalLanc += lances;
       map[s].list.push(h);
     });
 
