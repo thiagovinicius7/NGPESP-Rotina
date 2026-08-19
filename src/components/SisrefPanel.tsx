@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName } from "../lib/utils.js";
 import { 
   Building2, ListTodo, MessageSquareQuote, Search, UserCheck, 
   Copy, Check, X, ClipboardList, Trash2, Network, ChevronRight, 
@@ -425,7 +425,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                  .replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "")
                  .trim();
       
-      const tipoLimpo = tipo || "Atestado";
+      const tipoLimpo = cleanTipoName(tipo) || "Atestado";
 
       if (!map[finalMatricula]) {
         map[finalMatricula] = { matricula: finalMatricula, nome: finalNome || `Servidor (${finalMatricula})`, tipos: [], ocorrencias: [] };

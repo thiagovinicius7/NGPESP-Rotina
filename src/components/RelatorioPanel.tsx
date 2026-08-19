@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, HistoryEntry } from "../types.js";
-import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName } from "../lib/utils.js";
 import { 
   Users, CalendarCheck2, Network, Timer, List, PieChart, 
   Trash2, ChevronRight, Edit2, LineChart, Calendar as CalendarIcon, 
@@ -96,41 +96,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
 
   const toggleSectorExpand = (sName: string) => {
     setExpandedSetores(prev => ({ ...prev, [sName]: !prev[sName] }));
-  };
-
-  // Clean launch type to group documents together without trailing dates/statuses/server names
-  const cleanTipoName = (rawStr: string): string => {
-    if (!rawStr) return "Outros";
-    let s = String(rawStr).trim();
-
-    // 1. If string contains a separator like " - " or " – ", separate the document type from the server name
-    const sepMatch = s.match(/^(.*?)(?:\s+[\-–—:]\s+|\s+[\-–—]\s*|\s+0\s*[\-–—:]?\s*)([A-ZÀ-Ú][a-zà-ú]+.*)$/);
-    if (sepMatch && sepMatch[1] && sepMatch[1].trim().length > 2) {
-      s = sepMatch[1].trim();
-    } else {
-      // Direct regex to remove trailing " - Servidor Name" or " 0 - Servidor Name"
-      s = s.replace(/\s+(?:0\s*)?[\-–—:]\s+[A-ZÀ-Úa-zà-ú\s]{3,}$/g, "");
-    }
-
-    // 2. Remove index number suffix (e.g. " 0", " 1", " 2" before server name or at end)
-    s = s.replace(/\s+\d+\s*$/g, "");
-
-    // 3. Remove dates in parentheses e.g. "(15/05/2025)", "(01/01/2026 à 05/01/2026)"
-    s = s.replace(/\s*\(\s*\d{1,2}\/\d{1,2}.*?\)\s*/gi, " ");
-    s = s.replace(/\s*\(\s*\d{1,2}\/\d{2,4}.*?\)\s*/gi, " ");
-
-    // 4. Remove standalone dates e.g. "15/05/2025", "05/2025"
-    s = s.replace(/\s*\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b\s*/g, " ");
-    s = s.replace(/\s*\b\d{1,2}\/\d{2,4}\b\s*/g, " ");
-
-    // 5. Remove status tags
-    s = s.replace(/\s*\((Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\)\s*/gi, " ");
-    s = s.replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\b/gi, "");
-
-    // 6. Clean up multiple spaces and leading/trailing punctuation
-    s = s.replace(/\s+/g, " ").replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "").trim();
-
-    return s || "Outros";
   };
 
   // Helper to extract Month and Year from any date string or text
@@ -483,7 +448,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
             <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)] font-semibold">
               {catStats.map((c, i) => (
                 <tr key={i} className="hover:bg-[var(--bg)]/5 text-[var(--text)]">
-                  <td className="p-3 text-sm font-bold capitalize">{c.tipo}</td>
+                  <td className="p-3 text-sm font-bold">{c.tipo}</td>
                   <td className="p-3 text-center text-sm font-black text-[var(--blue-mid)]">{c.hoje}</td>
                   <td className="p-3 text-center text-sm font-black">{c.acumulado}</td>
                 </tr>
