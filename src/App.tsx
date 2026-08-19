@@ -75,7 +75,7 @@ export default function App() {
 
   const [inputVal, setInputVal] = useState("");
 
-  const { state, updateState, forceSync, syncing, isStaticMode } = useSyncState(showToast);
+  const { state, updateState, forceSync, syncing, isStaticMode, cloudSynced } = useSyncState(showToast);
 
   // Google Authentication State
   const [googleUser, setGoogleUser] = useState<any>(null);
@@ -539,6 +539,9 @@ export default function App() {
             setTheme(t);
             localStorage.setItem("ss_tema", t);
           }}
+          forceSync={forceSync}
+          syncing={syncing}
+          cloudSynced={cloudSynced}
         />
 
         {/* Global Toast */}
