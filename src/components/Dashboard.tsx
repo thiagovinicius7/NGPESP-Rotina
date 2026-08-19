@@ -4,7 +4,7 @@ import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
 import { 
   Users, Building2, Clock, UserCheck, TrendingUp, PlusCircle, 
   Search, ListTodo, AlertOctagon, PlayCircle, Palmtree, CalendarCheck, Stethoscope, CheckCircle2, Gift,
-  X, Trash2, AlertTriangle, FileSpreadsheet
+  X, Trash2, AlertTriangle, FileSpreadsheet, Zap
 } from "lucide-react";
 
 interface DashboardProps {
@@ -304,12 +304,29 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
               {progressPct}% concluído
             </div>
           </div>
-          <button 
-            onClick={iniciarConferenciaAvulsaRapida}
-            className="mt-3 w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-xs"
-          >
-            <PlayCircle size={16} /> Continuar Conferência
-          </button>
+          <div className="mt-3 flex gap-2">
+            <button 
+              onClick={iniciarConferenciaAvulsaRapida}
+              className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-xs"
+              title="Abrir no painel SISREF"
+            >
+              <PlayCircle size={15} /> Continuar
+            </button>
+            <button 
+              onClick={() => {
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("app", "lancamento");
+                  window.open(url.toString(), "LancadorSisrefApp", "width=1180,height=840,menubar=no,toolbar=no");
+                } catch (_) {}
+              }}
+              className="px-3 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition-all"
+              title="Abrir App de Lançamento Dedicado em Janela Separada"
+            >
+              <Zap size={14} className="fill-current text-amber-300" />
+              <span>App</span>
+            </button>
+          </div>
         </div>
       </div>
 
