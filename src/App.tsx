@@ -314,7 +314,7 @@ export default function App() {
                     setEnteredPass(e.target.value);
                     setPassError(false);
                   }}
-                  placeholder="Digite a senha numérica (padrão: 456321)"
+                  placeholder="Digite a senha de acesso"
                   autoFocus
                   className={`w-full px-4 py-3.5 bg-[var(--bg)] border-2 rounded-xl text-center font-mono text-base font-bold outline-none transition-all text-[var(--text)]
                     ${passError ? 'border-red-500 bg-red-500/5 focus:border-red-600' : 'border-[var(--border2)] focus:border-[var(--blue-mid)]'}`}

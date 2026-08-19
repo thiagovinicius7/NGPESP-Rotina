@@ -552,7 +552,8 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
     
     const official = getOfficialServer(currentQueueServer.matricula, currentQueueServer.nome, state.servidores);
     const checkedOcs = currentQueueServer.ocorrencias.filter(o => o.checked);
-    const qtdCalculada = checkedOcs.length;
+    const finalOcs = checkedOcs.length > 0 ? checkedOcs : (currentQueueServer.ocorrencias.length > 0 ? currentQueueServer.ocorrencias : []);
+    const qtdCalculada = finalOcs.length > 0 ? finalOcs.length : 1;
 
     openModal(official.nome, official.matricula, "SISREF Avulsa", (qtd) => {
       updateState(prev => {
@@ -562,25 +563,28 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
 
         const nowIso = new Date().toISOString();
 
-        // Stamp dataLancamento on checked occurrences in queue
+        // Stamp dataLancamento on occurrences in queue
         const nextFila = [...q.fila];
         const serverIdx = q.idx;
         if (nextFila[serverIdx]) {
           const srv = { ...nextFila[serverIdx] };
           srv.nome = official.nome;
           srv.matricula = official.matricula;
-          srv.ocorrencias = srv.ocorrencias.map(oc => oc.checked ? { ...oc, dataLancamento: oc.dataLancamento || nowIso } : oc);
+          srv.ocorrencias = srv.ocorrencias.map(oc => (oc.checked || checkedOcs.length === 0) ? { ...oc, dataLancamento: oc.dataLancamento || nowIso } : oc);
           nextFila[serverIdx] = srv;
         }
 
         // Add history entry with occurrences list
+        const finalQtd = qtd > 0 ? qtd : (qtdCalculada || 1);
         const newLog: HistoryEntry = {
           mat: official.matricula,
           nome: official.nome,
           setor: "Avulsa Fila",
-          qtd: qtd,
+          qtd: finalQtd,
           ts: nowIso,
-          ocorrencias: checkedOcs.map(o => o.data ? `${o.tipo} (${o.data})` : o.tipo)
+          ocorrencias: finalOcs.length > 0 
+            ? finalOcs.map(o => o.data ? `${o.tipo} (${o.data})` : o.tipo)
+            : (currentQueueServer.tipos || [])
         };
 
         return {

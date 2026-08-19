@@ -21,6 +21,33 @@ export function getLocalDateIso(d: Date = new Date()): string {
   }
 }
 
+export function getSaoPauloHour(dateVal?: any): number {
+  if (!dateVal) {
+    try {
+      const formatter = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        hour: "numeric",
+        hour12: false
+      });
+      return parseInt(formatter.format(new Date()), 10);
+    } catch (_) {
+      return new Date().getHours();
+    }
+  }
+  try {
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) return new Date().getHours();
+    const formatter = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "numeric",
+      hour12: false
+    });
+    return parseInt(formatter.format(d), 10);
+  } catch (_) {
+    return new Date(dateVal).getHours();
+  }
+}
+
 /**
  * Converts any date representation (ISO, DD/MM/YYYY, timestamp) to YYYY-MM-DD
  */
