@@ -12,7 +12,11 @@ import { AppState } from "../types.js";
 
 // Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-export const db = getFirestore(app);
+const dbId = (firebaseConfig as any).firestoreDatabaseId || "(default)";
+
+export const db = (firebaseConfig as any).firestoreDatabaseId 
+  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId) 
+  : getFirestore(app);
 
 const FIRESTORE_COLL = "ngpesp_sync";
 const DOC_STATE = "global_state";
@@ -50,7 +54,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Pr
  */
 async function writeDocViaRest(docId: string, data: any, timestamp: number): Promise<boolean> {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${FIRESTORE_COLL}/${docId}?key=${firebaseConfig.apiKey}`;
+    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents/${FIRESTORE_COLL}/${docId}?key=${firebaseConfig.apiKey}`;
     const jsonStr = JSON.stringify(data);
     const body = {
       fields: {
@@ -75,7 +79,7 @@ async function writeDocViaRest(docId: string, data: any, timestamp: number): Pro
  */
 async function readDocViaRest(docId: string): Promise<{ data: any; updatedAt: number } | null> {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${FIRESTORE_COLL}/${docId}?key=${firebaseConfig.apiKey}`;
+    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents/${FIRESTORE_COLL}/${docId}?key=${firebaseConfig.apiKey}`;
     const res = await fetch(url);
     if (!res.ok) return null;
     const json = await res.json();
