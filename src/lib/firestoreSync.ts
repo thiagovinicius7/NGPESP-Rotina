@@ -11,77 +11,139 @@ export const db = getFirestore(app);
 const FIRESTORE_COLL = "ngpesp_sync";
 const DOC_STATE = "global_state";
 const DOC_FILA = "fila_avulsa";
+const DOC_SERVIDORES = "servidores";
+const DOC_HISTORICO = "historico";
+const DOC_PRODUTIVIDADE = "produtividade";
 
 let isWritingToCloud = false;
 let lastPushedTimestamp = 0;
 
 /**
- * Loads both global state and fila avulsa from Firestore.
+ * Deep cleaner to remove undefined values and ensure JSON-serializable structure
+ * preventing Firestore SDK crashes with 'Unsupported field value: undefined'.
+ */
+function cleanPayload<T>(obj: T): T {
+  if (!obj) return obj;
+  try {
+    return JSON.parse(JSON.stringify(obj, (key, value) => {
+      if (value === undefined) return null;
+      return value;
+    }));
+  } catch (_) {
+    return obj;
+  }
+}
+
+/**
+ * Loads the entire state across split documents from Firestore.
  */
 export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>; updatedAt: number } | null> {
   try {
-    const [stateSnap, filaSnap] = await Promise.all([
+    const [stateSnap, filaSnap, servidoresSnap, histSnap, prodSnap] = await Promise.all([
       getDoc(doc(db, FIRESTORE_COLL, DOC_STATE)),
-      getDoc(doc(db, FIRESTORE_COLL, DOC_FILA))
+      getDoc(doc(db, FIRESTORE_COLL, DOC_FILA)),
+      getDoc(doc(db, FIRESTORE_COLL, DOC_SERVIDORES)),
+      getDoc(doc(db, FIRESTORE_COLL, DOC_HISTORICO)),
+      getDoc(doc(db, FIRESTORE_COLL, DOC_PRODUTIVIDADE))
     ]);
 
-    if (!stateSnap.exists() && !filaSnap.exists()) {
+    const stateExists = stateSnap.exists();
+    const filaExists = filaSnap.exists();
+    const servExists = servidoresSnap.exists();
+    const histExists = histSnap.exists();
+    const prodExists = prodSnap.exists();
+
+    if (!stateExists && !filaExists && !servExists && !histExists && !prodExists) {
+      console.log("Firestore is currently empty (no documents found)");
       return null;
     }
 
-    const stateData = stateSnap.exists() ? stateSnap.data() : {};
-    const filaData = filaSnap.exists() ? filaSnap.data() : {};
+    const stateData = stateExists ? stateSnap.data() : {};
+    const filaData = filaExists ? filaSnap.data() : {};
+    const servData = servExists ? servidoresSnap.data() : {};
+    const histData = histExists ? histSnap.data() : {};
+    const prodData = prodExists ? prodSnap.data() : {};
 
     const partialState: Partial<AppState> = {
       ...(stateData.state || {}),
-      ...(filaData.filaAvulsa ? { filaAvulsa: filaData.filaAvulsa } : {})
+      ...(filaData.filaAvulsa ? { filaAvulsa: filaData.filaAvulsa } : {}),
+      ...(servData.servidores ? { servidores: servData.servidores } : {}),
+      ...(histData.historico ? { historico: histData.historico } : {}),
+      ...(prodData.produtividade ? { produtividade: prodData.produtividade } : {})
     };
 
-    const updatedAt = Math.max(stateData.updatedAt || 0, filaData.updatedAt || 0);
+    const updatedAt = Math.max(
+      Number(stateData.updatedAt || 0),
+      Number(filaData.updatedAt || 0),
+      Number(servData.updatedAt || 0),
+      Number(histData.updatedAt || 0),
+      Number(prodData.updatedAt || 0)
+    );
 
-    return { state: partialState, updatedAt };
+    console.log("Successfully fetched state from Firestore:", {
+      servidoresCount: partialState.servidores?.length || 0,
+      historicoCount: partialState.historico?.length || 0,
+      hasFila: Boolean(partialState.filaAvulsa)
+    });
+
+    return { state: partialState, updatedAt: updatedAt || Date.now() };
   } catch (err) {
-    console.warn("Firestore fetch error:", err);
+    console.error("Firestore fetch error:", err);
     return null;
   }
 }
 
 /**
- * Pushes the full state and fila avulsa to Firestore.
+ * Pushes the full state and split documents to Firestore safely.
  */
 export async function pushStateToFirestore(state: AppState): Promise<boolean> {
+  if (!state) return false;
   try {
     isWritingToCloud = true;
     const now = Date.now();
     lastPushedTimestamp = now;
 
-    // 1. Separate fila avulsa to ensure high-priority instant queue sync
-    const filaPayload = {
-      filaAvulsa: state.filaAvulsa,
+    const filaPayload = cleanPayload({
+      filaAvulsa: state.filaAvulsa || {},
       updatedAt: now
-    };
+    });
 
-    // 2. Global state payload
-    const globalPayload = {
+    const servPayload = cleanPayload({
+      servidores: state.servidores || [],
+      updatedAt: now
+    });
+
+    const histPayload = cleanPayload({
+      historico: state.historico || [],
+      updatedAt: now
+    });
+
+    const prodPayload = cleanPayload({
+      produtividade: state.produtividade || {},
+      updatedAt: now
+    });
+
+    const globalPayload = cleanPayload({
       state: {
-        servidores: state.servidores || [],
-        historico: state.historico || [],
         respostas: state.respostas || [],
         codigos: state.codigos || [],
         sei: state.sei || [],
         afastamentos: state.afastamentos || [],
         ferias: state.ferias || {},
         abonos: state.abonos || {},
-        produtividade: state.produtividade || {},
         balcaoAtendimentos: state.balcaoAtendimentos || {},
         faq: state.faq || [],
-        config: state.config || {}
+        config: state.config || {},
+        gasUrl: state.gasUrl || ""
       },
       updatedAt: now
-    };
+    });
 
     await Promise.all([
       setDoc(doc(db, FIRESTORE_COLL, DOC_FILA), filaPayload, { merge: true }),
+      setDoc(doc(db, FIRESTORE_COLL, DOC_SERVIDORES), servPayload, { merge: true }),
+      setDoc(doc(db, FIRESTORE_COLL, DOC_HISTORICO), histPayload, { merge: true }),
+      setDoc(doc(db, FIRESTORE_COLL, DOC_PRODUTIVIDADE), prodPayload, { merge: true }),
       setDoc(doc(db, FIRESTORE_COLL, DOC_STATE), globalPayload, { merge: true })
     ]);
 
@@ -89,9 +151,10 @@ export async function pushStateToFirestore(state: AppState): Promise<boolean> {
       isWritingToCloud = false;
     }, 1000);
 
+    console.log("Successfully pushed full state to Firestore at", new Date(now).toISOString());
     return true;
   } catch (err) {
-    console.warn("Firestore push error:", err);
+    console.error("Firestore push error:", err);
     isWritingToCloud = false;
     return false;
   }
@@ -103,19 +166,17 @@ export async function pushStateToFirestore(state: AppState): Promise<boolean> {
 export function subscribeToFirestore(
   onUpdate: (partial: Partial<AppState>, updatedAt: number) => void
 ): () => void {
-  let unsubState: Unsubscribe | null = null;
-  let unsubFila: Unsubscribe | null = null;
+  const unsubs: Unsubscribe[] = [];
 
   try {
-    // Listen to Fila Avulsa changes in real time
-    unsubFila = onSnapshot(
+    // 1. Listen to Fila Avulsa in real time
+    const unsubFila = onSnapshot(
       doc(db, FIRESTORE_COLL, DOC_FILA),
       (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
           if (data && data.filaAvulsa) {
             const updatedAt = Number(data.updatedAt || 0);
-            // Ignore echo if we just pushed it
             if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
               return;
             }
@@ -127,9 +188,52 @@ export function subscribeToFirestore(
         console.warn("Firestore Fila subscription error:", error);
       }
     );
+    unsubs.push(unsubFila);
 
-    // Listen to Global State changes in real time
-    unsubState = onSnapshot(
+    // 2. Listen to Servidores in real time
+    const unsubServ = onSnapshot(
+      doc(db, FIRESTORE_COLL, DOC_SERVIDORES),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data && data.servidores) {
+            const updatedAt = Number(data.updatedAt || 0);
+            if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
+              return;
+            }
+            onUpdate({ servidores: data.servidores }, updatedAt);
+          }
+        }
+      },
+      (error) => {
+        console.warn("Firestore Servidores subscription error:", error);
+      }
+    );
+    unsubs.push(unsubServ);
+
+    // 3. Listen to Produtividade in real time
+    const unsubProd = onSnapshot(
+      doc(db, FIRESTORE_COLL, DOC_PRODUTIVIDADE),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data && data.produtividade) {
+            const updatedAt = Number(data.updatedAt || 0);
+            if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
+              return;
+            }
+            onUpdate({ produtividade: data.produtividade }, updatedAt);
+          }
+        }
+      },
+      (error) => {
+        console.warn("Firestore Produtividade subscription error:", error);
+      }
+    );
+    unsubs.push(unsubProd);
+
+    // 4. Listen to Global State in real time
+    const unsubState = onSnapshot(
       doc(db, FIRESTORE_COLL, DOC_STATE),
       (snapshot) => {
         if (snapshot.exists()) {
@@ -147,12 +251,16 @@ export function subscribeToFirestore(
         console.warn("Firestore State subscription error:", error);
       }
     );
+    unsubs.push(unsubState);
   } catch (err) {
     console.warn("Could not start Firestore listeners:", err);
   }
 
   return () => {
-    if (unsubFila) unsubFila();
-    if (unsubState) unsubState();
+    unsubs.forEach(unsub => {
+      try {
+        unsub();
+      } catch (_) {}
+    });
   };
 }

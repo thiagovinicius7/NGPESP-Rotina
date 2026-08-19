@@ -1,4 +1,13 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { 
+  CheckCircle, Database, DownloadCloud, LogOut, Moon, 
+  RefreshCw, Sun, LayoutDashboard, ClipboardCheck, 
+  CalendarDays, TrendingUp, HelpCircle, BarChart3, 
+  Contact, Wrench, AlertTriangle, ShieldCheck, Droplet,
+  Cloud, UploadCloud, FileDown, FileUp, Laptop, CheckCircle2,
+  X, ArrowRight
+} from "lucide-react";
+import { AppState, Server } from "./types.js";
 import { useSyncState } from "./hooks/useSyncState.js";
 import Dashboard from "./components/Dashboard.js";
 import SisrefPanel from "./components/SisrefPanel.js";
@@ -7,16 +16,9 @@ import RotinaPanel from "./components/RotinaPanel.js";
 import BalcaoPanel from "./components/BalcaoPanel.js";
 import RelatorioPanel from "./components/RelatorioPanel.js";
 import LancamentoApp from "./components/LancamentoApp.js";
-import { 
-  ClipboardCheck, CalendarDays, Briefcase, BarChart3, HelpCircle, 
-  Layers, Moon, Sun, Droplet, RefreshCw, Check, X, LogIn, LogOut, Key,
-  DownloadCloud, LayoutDashboard, UploadCloud, Contact, TrendingUp, Wrench,
-  Zap, ExternalLink
-} from "lucide-react";
-import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
-import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
-import { GlobalConfig } from "./types.js";
-import { mergeProdutividade } from "./lib/utils.js";
+import { loginWithGoogle, logoutFirebase, onAuthChange } from "./lib/firebaseAuth.js";
+import { syncToGoogleSheets, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
+import { mergeProdutividade, mergeFilaAvulsa } from "./lib/utils.js";
 
 const normalizeMatricula = (m: any): string => {
   if (!m) return "";
@@ -54,11 +56,11 @@ export default function App() {
   const [toastTimer, setToastTimer] = useState<any>(null);
 
   const showToast = useCallback((msg: string, type: 'ok' | 'err' | 'info' = 'ok') => {
-    setToastTimer(prev => {
+    setToastTimer((prev: any) => {
       if (prev) clearTimeout(prev);
       return setTimeout(() => {
         setToast(null);
-      }, 3200);
+      }, 3500);
     });
     setToast({ msg, type });
   }, []);
@@ -74,8 +76,21 @@ export default function App() {
   } | null>(null);
 
   const [inputVal, setInputVal] = useState("");
+  const [showCloudModal, setShowCloudModal] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { state, updateState, forceSync, syncing, isStaticMode, cloudSynced } = useSyncState(showToast);
+  const { 
+    state, 
+    updateState, 
+    forceSync, 
+    forcePushThisDeviceToCloud,
+    forcePullFromCloud,
+    syncing, 
+    isStaticMode, 
+    cloudSynced,
+    exportBackupJson,
+    importBackupJson
+  } = useSyncState(showToast);
 
   // Google Authentication State
   const [googleUser, setGoogleUser] = useState<any>(null);
@@ -102,261 +117,120 @@ export default function App() {
     const timer = setTimeout(async () => {
       setGoogleSyncing(true);
       try {
-        await syncToGoogleSheets(googleToken, state, state.config.spreadsheetId, () => {});
+        await syncToGoogleSheets(googleToken, state, state.config.spreadsheetId);
         setGoogleDirty(false);
-        console.log("Auto-backup sincronizado no Google Sheets com sucesso.");
       } catch (err) {
-        console.warn("Erro no auto-backup em segundo plano para Google Sheets:", err);
+        console.warn("Background auto-sync failed:", err);
       } finally {
         setGoogleSyncing(false);
       }
-    }, 8000); // Debounce de 8 segundos sem alterações para não sobrecarregar a API
+    }, 4000);
 
     return () => clearTimeout(timer);
-  }, [googleDirty, googleToken, state.config.spreadsheetId, state, googleSyncing]);
+  }, [googleDirty, googleToken, state, googleSyncing]);
 
-  // Alerta ao usuário antes de fechar a página se houver sincronização pendente
+  // Listen to Firebase Auth state
   useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (googleDirty) {
-        e.preventDefault();
-        e.returnValue = "Existem dados pendentes que estão sendo salvos no Google Sheets. Tem certeza de que deseja sair?";
-        return e.returnValue;
-      }
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [googleDirty]);
-
-  useEffect(() => {
-    const unsubscribe = initAuth(
-      (user, token) => {
-        setGoogleUser(user);
-        setGoogleToken(token);
-      },
-      () => {
-        setGoogleUser(null);
+    const unsub = onAuthChange((user) => {
+      setGoogleUser(user);
+      if (!user) {
         setGoogleToken(null);
       }
-    );
-    return () => unsubscribe();
+    });
+    return () => unsub();
   }, []);
 
-  const handleGoogleLogin = async (): Promise<string | null> => {
+  const handleGoogleLogin = async () => {
+    if (isLoggingIn) return null;
     setIsLoggingIn(true);
     try {
-      const result = await googleSignIn();
-      if (result) {
-        setGoogleUser(result.user);
-        setGoogleToken(result.accessToken);
-        showToast(`Conectado como ${result.user.email}!`, "ok");
-
-        const targetSheetId = state.config.spreadsheetId || DEFAULT_SPREADSHEET_ID;
-        try {
-          showToast("Sincronizando dados com a planilha de backup do Google Drive...", "info");
-          const fullData = await loadFullStateFromBackup(result.accessToken, targetSheetId, () => {});
-
-          updateState(prev => {
-            const safePrevServidores = prev?.servidores || [];
-            const safePrevHistorico = prev?.historico || [];
-            const safePrevRespostas = prev?.respostas || [];
-            const safePrevAfastamentos = prev?.afastamentos || [];
-            const safePrevFaq = prev?.faq || [];
-            const safePrevCodigos = prev?.codigos || [];
-            const safePrevSei = prev?.sei || [];
-
-            const existingMap = new Map();
-            safePrevServidores.forEach(s => {
-              const norm = normalizeMatricula(s?.matricula);
-              if (norm) existingMap.set(norm, s);
-            });
-
-            (fullData?.servidores || []).forEach(srv => {
-              const norm = normalizeMatricula(srv?.matricula);
-              if (norm) {
-                if (existingMap.has(norm)) {
-                  const existingSrv = existingMap.get(norm);
-                  existingMap.set(norm, { ...existingSrv, ...srv, matricula: existingSrv.matricula });
-                } else {
-                  existingMap.set(norm, srv);
-                }
-              }
-            });
-
-            const histSet = new Set(safePrevHistorico.map(h => `${h?.mat}_${h?.ts}`));
-            const newHist = [...safePrevHistorico];
-            (fullData?.historico || []).forEach(h => {
-              if (h && h.mat && h.ts) {
-                const key = `${h.mat}_${h.ts}`;
-                if (!histSet.has(key)) {
-                  histSet.add(key);
-                  newHist.push(h);
-                }
-              }
-            });
-
-            const respMap = new Map(safePrevRespostas.map(r => [r?.nome, r?.texto]));
-            (fullData?.respostas || []).forEach(r => { if (r && r.nome) respMap.set(r.nome, r.texto); });
-
-            const afastSet = new Set(safePrevAfastamentos.map(a => `${a?.dia}_${a?.mes}_${a?.tipo}_${a?.sisref}`));
-            const newAfast = [...safePrevAfastamentos];
-            (fullData?.afastamentos || []).forEach(a => {
-              if (a) {
-                const key = `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`;
-                if (!afastSet.has(key)) { afastSet.add(key); newAfast.push(a); }
-              }
-            });
-
-            const faqMap = new Map(safePrevFaq.map(f => [f?.titulo, f?.resposta]));
-            (fullData?.faq || []).forEach(f => { if (f && f.titulo) faqMap.set(f.titulo, f.resposta); });
-
-            const codMap = new Map(safePrevCodigos.map(c => [c?.num, c]));
-            (fullData?.codigos || []).forEach(c => { if (c && c.num) codMap.set(c.num, c); });
-
-            const seiMap = new Map(safePrevSei.map(s => [s?.num, s]));
-            (fullData?.sei || []).forEach(s => { if (s && s.num) seiMap.set(s.num, s); });
-
-            const importedMatriculas = (fullData?.servidores || []).map(s => normalizeMatricula(s?.matricula)).filter(Boolean);
-            const importedCount = (fullData?.servidores || []).length;
-            const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-
-            const prevConfig: GlobalConfig = prev?.config || { gmov_data: "" };
-
-            return {
-              servidores: Array.from(existingMap.values()),
-              historico: newHist,
-              respostas: Array.from(respMap.entries()).map(([nome, texto]) => ({ nome, texto })),
-              afastamentos: newAfast,
-              faq: Array.from(faqMap.entries()).map(([titulo, resposta]) => ({ titulo, resposta })),
-              produtividade: mergeProdutividade(prev?.produtividade || {}, fullData?.produtividade || {}),
-              filaAvulsa: (fullData?.filaAvulsa && fullData.filaAvulsa.listas && typeof fullData.filaAvulsa.listas === 'object' && Object.keys(fullData.filaAvulsa.listas).length) ? fullData.filaAvulsa : (prev?.filaAvulsa || { listas: { "Padrão": { fila: [], idx: 0 } }, ativa: "Padrão", natal: [], configProd: { tipos: [], sistemas: [] }, pendencias: [] }),
-              codigos: Array.from(codMap.values()),
-              sei: Array.from(seiMap.values()),
-              ferias: (fullData?.ferias && typeof fullData.ferias === 'object' && Object.keys(fullData.ferias).length) ? fullData.ferias : (prev?.ferias || {}),
-              abonos: (fullData?.abonos && typeof fullData.abonos === 'object' && Object.keys(fullData.abonos).length) ? fullData.abonos : (prev?.abonos || {}),
-              balcaoAtendimentos: (fullData?.balcaoAtendimentos && typeof fullData.balcaoAtendimentos === 'object' && Object.keys(fullData.balcaoAtendimentos).length) ? fullData.balcaoAtendimentos : (prev?.balcaoAtendimentos || {}),
-              config: {
-                ...prevConfig,
-                ...(fullData?.config || {}),
-                spreadsheetId: targetSheetId,
-                backupEnabled: true,
-                ultimoUpdateServidores: importedCount ? `${dateStr} (${importedCount} servidores)` : (prevConfig.ultimoUpdateServidores || ""),
-                lastImportedMatriculas: importedMatriculas.length ? importedMatriculas : (prevConfig.lastImportedMatriculas || []),
-                lastImportCount: importedCount || (prevConfig.lastImportCount || 0)
-              }
-            };
-          });
-
-          showToast(`Dados da planilha vinculada restaurados com sucesso!`, "ok");
-        } catch (autoErr) {
-          console.warn("Auto-restore warning:", autoErr);
-        }
-
-        return result.accessToken;
-      }
+      const { user, token } = await loginWithGoogle();
+      setGoogleUser(user);
+      setGoogleToken(token);
+      showToast(`Conectado como ${user.displayName || user.email}!`, "ok");
+      return token;
     } catch (err: any) {
-      console.error(err);
-      showToast("Erro ao conectar com Google", "err");
+      console.error("Login error:", err);
+      showToast("Falha no login com Google. Tente novamente.", "err");
+      return null;
     } finally {
       setIsLoggingIn(false);
     }
-    return null;
   };
 
   const handleGoogleLogout = async () => {
     try {
-      if (googleToken && state.config.spreadsheetId) {
-        showToast("Sincronizando dados finais no Google Sheets...", "info");
-        try {
-          await syncToGoogleSheets(googleToken, state, state.config.spreadsheetId, () => {});
-          showToast("Dados finais sincronizados!", "ok");
-        } catch (err: any) {
-          console.error("Erro ao sincronizar dados finais:", err);
-          showToast(`Erro na sincronização: ${err.message || err}`, "err");
-          if (!confirm("Não foi possível realizar o backup final. Deseja desconectar mesmo assim?")) {
-            return;
-          }
-        }
-      }
-      await logout();
+      await logoutFirebase();
       setGoogleUser(null);
       setGoogleToken(null);
-      setGoogleDirty(false);
-      showToast("Conexão Google encerrada", "info");
+      showToast("Desconectado do Google.", "info");
     } catch (err) {
-      showToast("Falha ao desconectar", "err");
+      console.error("Logout error:", err);
     }
   };
 
-  // Apply theme to document documentElement element
+  // Password-lock verification state
+  const [authenticated, setAuthenticated] = useState<boolean>(() => {
+    return sessionStorage.getItem("ngpesp_auth") === "true";
+  });
+  const [enteredPass, setEnteredPass] = useState("");
+  const [passError, setPassError] = useState(false);
+
+  // Apply theme to document
   useEffect(() => {
-    document.documentElement.setAttribute("data-tema", theme);
-    document.documentElement.setAttribute("data-theme", theme);
+    const root = document.documentElement;
+    root.classList.remove("theme-claro", "theme-escuro", "theme-petroleo", "dark");
+    
+    if (theme === "escuro") {
+      root.classList.add("theme-escuro", "dark");
+    } else if (theme === "petroleo") {
+      root.classList.add("theme-petroleo", "dark");
+    } else {
+      root.classList.add("theme-claro");
+    }
     localStorage.setItem("ss_tema", theme);
   }, [theme]);
 
-  // System Passcode Authorization State
-  const [isAuthorized, setIsAuthorized] = useState(() => {
-    return sessionStorage.getItem("ngpesp_authorized") === "true";
-  });
-  const [passwordInput, setPasswordInput] = useState("");
-  const [passwordVisible, setPasswordVisible] = useState(false);
-  const [loginError, setLoginError] = useState("");
-
-  const handleLogin = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const systemPassword = state.config.appPassword || "456321";
-    if (passwordInput === systemPassword) {
-      sessionStorage.setItem("ngpesp_authorized", "true");
-      setIsAuthorized(true);
-      setLoginError("");
-      showToast("Acesso autorizado com sucesso!", "ok");
+  // Password verification logic
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const correctPassword = state.config.appPassword || "456321";
+    if (enteredPass.trim() === correctPassword) {
+      setAuthenticated(true);
+      sessionStorage.setItem("ngpesp_auth", "true");
+      setPassError(false);
+      showToast("Acesso concedido ao sistema!", "ok");
     } else {
-      setLoginError("Senha incorreta. Tente novamente.");
-      showToast("Senha incorreta!", "err");
+      setPassError(true);
+      showToast("Senha incorreta. Tente novamente.", "err");
     }
   };
 
-  const handleLockSystem = async () => {
-    if (googleToken && state.config.spreadsheetId && googleDirty) {
-      showToast("Sincronizando dados no Google Sheets antes de bloquear...", "info");
-      try {
-        await syncToGoogleSheets(googleToken, state, state.config.spreadsheetId, () => {});
-        setGoogleDirty(false);
-      } catch (err: any) {
-        console.error("Erro ao sincronizar antes de bloquear:", err);
-      }
-    }
-    sessionStorage.removeItem("ngpesp_authorized");
-    setIsAuthorized(false);
-    setPasswordInput("");
-    showToast("Sistema bloqueado com sucesso.", "info");
+  const handleLockSystem = () => {
+    setAuthenticated(false);
+    sessionStorage.removeItem("ngpesp_auth");
+    setEnteredPass("");
+    showToast("Sistema bloqueado por segurança.", "info");
   };
 
-  const handleDownloadBackupDirectly = () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const dt = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `sisref_backup_${dt}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast("Backup baixado para a máquina local!", "ok");
+  // Modal confirm helper
+  const handleModalConfirm = () => {
+    if (!launchModal) return;
+    const qtd = parseInt(inputVal, 10);
+    launchModal.onConfirm(isNaN(qtd) ? 0 : qtd);
+    setLaunchModal(null);
+    setInputVal("");
   };
 
-  const toggleTheme = () => {
-    setTheme(prev => {
-      if (prev === "claro") return "escuro";
-      if (prev === "escuro") return "petroleo";
-      return "claro";
-    });
+  const handleModalSkip = () => {
+    if (!launchModal) return;
+    launchModal.onConfirm(0);
+    setLaunchModal(null);
+    setInputVal("");
   };
 
   const triggerModalOpen = (nome: string, mat: string, setor: string, onConfirm: (qtd: number) => void, defaultQtd: number = 0) => {
-    setInputVal(defaultQtd > 0 ? String(defaultQtd) : "");
+    setInputVal(String(defaultQtd || 0));
     setLaunchModal({
       show: true,
       nome,
@@ -367,238 +241,106 @@ export default function App() {
     });
   };
 
-  const handleModalConfirm = () => {
-    if (!launchModal) return;
-    const finalVal = parseInt(inputVal) || 0;
-    launchModal.onConfirm(finalVal);
-    setLaunchModal(null);
-  };
-
-  const handleModalSkip = () => {
-    if (!launchModal) return;
-    launchModal.onConfirm(0);
-    setLaunchModal(null);
+  const toggleTheme = () => {
+    if (theme === "claro") setTheme("escuro");
+    else if (theme === "escuro") setTheme("petroleo");
+    else setTheme("claro");
   };
 
   const getSheetIdDisplay = () => {
-    if (!state.gasUrl) return "NÃO CONFIGURADO";
-    const match = state.gasUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    if (match && match[1]) {
-      const fullId = match[1];
-      return `ID: ${fullId.substring(0, 8)}...${fullId.substring(fullId.length - 6)}`;
-    }
-    return "CONECTADO";
+    if (!state.config.spreadsheetId) return "Sem Planilha Vinculada";
+    return `Planilha: ${state.config.spreadsheetId.substring(0, 8)}...`;
   };
 
-  // If not authorized, show a secure, beautiful passcode login screen
-  if (!isAuthorized) {
+  // Dedicated Launch App Mode
+  if (appMode === 'lancamento') {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--bg)] p-4 font-sans select-none transition-colors duration-300">
-        
-        {/* Ambient background glows */}
-        <div className="absolute top-10 left-10 w-72 h-72 bg-blue-500/10 dark:bg-blue-600/5 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute bottom-10 right-10 w-72 h-72 bg-emerald-500/10 dark:bg-emerald-600/5 rounded-full blur-3xl pointer-events-none"></div>
+      <LancamentoApp 
+        state={state} 
+        updateState={updateState} 
+        onToast={showToast}
+        openModal={triggerModalOpen}
+        onSwitchToFullApp={() => {
+          setAppMode('full');
+          const url = new URL(window.location.href);
+          url.searchParams.delete('app');
+          url.searchParams.delete('mode');
+          window.history.pushState({}, '', url.toString());
+        }}
+        theme={theme}
+        setTheme={setTheme}
+        forceSync={forceSync}
+        forcePushThisDeviceToCloud={forcePushThisDeviceToCloud}
+        forcePullFromCloud={forcePullFromCloud}
+        syncing={syncing}
+        cloudSynced={cloudSynced}
+      />
+    );
+  }
 
-        <div className="w-full max-w-md bg-[var(--surface)] border-2 border-[var(--border2)] rounded-3xl p-8 shadow-2xl relative z-10 animate-in fade-in slide-in-from-bottom-6 duration-300">
-          
-          <div className="flex flex-col items-center text-center mb-6">
-            <div className="w-14 h-14 bg-[var(--blue-mid)] rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-md mb-4">
+  // 0. LOCK SCREEN COMPONENT
+  if (!authenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--bg)] p-4 font-sans transition-colors duration-300">
+        <div className="bg-[var(--surface)] border border-[var(--border)] w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex flex-col items-center text-center">
+            <div className="w-16 h-16 bg-[var(--blue-mid)] rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-lg shadow-[var(--blue-mid)]/20 mb-4">
               NG
             </div>
-            <h1 className="text-xl font-black text-[var(--text)] uppercase tracking-tight">
-              NGPESP Rotina
+            <h1 className="text-xl font-black text-[var(--text)] tracking-tight">
+              NGPESP Rotina & Fila
             </h1>
-            <p className="text-[10px] font-black text-[var(--text2)] uppercase tracking-widest mt-1 opacity-80">
-              Painel de Gestão Operacional
+            <p className="text-xs text-[var(--text2)] font-semibold mt-1 max-w-xs">
+              Módulo de Gestão Funcional, SISREF, Balcão e Produtividade
             </p>
           </div>
 
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} className="mt-8 space-y-4">
             <div>
-              <label className="block text-[10px] font-black text-[var(--text2)] uppercase tracking-wider mb-2 text-center">
-                Digite a senha de acesso ao sistema
+              <label className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider block mb-2">
+                Senha de Acesso ao Sistema
               </label>
               <div className="relative">
-                <input
-                  type={passwordVisible ? "text" : "password"}
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="******"
-                  className="w-full text-center text-xl font-black tracking-widest p-3 bg-[var(--bg)] border-2 border-[var(--border2)] rounded-xl outline-none focus:border-[var(--blue-mid)] transition-colors duration-200 text-[var(--text)]"
+                <input 
+                  type="password" 
+                  value={enteredPass}
+                  onChange={(e) => {
+                    setEnteredPass(e.target.value);
+                    setPassError(false);
+                  }}
+                  placeholder="Digite a senha numérica (padrão: 456321)"
                   autoFocus
+                  className={`w-full px-4 py-3.5 bg-[var(--bg)] border-2 rounded-xl text-center font-mono text-base font-bold outline-none transition-all text-[var(--text)]
+                    ${passError ? 'border-red-500 bg-red-500/5 focus:border-red-600' : 'border-[var(--border2)] focus:border-[var(--blue-mid)]'}`}
                 />
-                <button
-                  type="button"
-                  onClick={() => setPasswordVisible(!passwordVisible)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black uppercase text-[var(--text2)] hover:text-[var(--text)] cursor-pointer"
-                >
-                  {passwordVisible ? "Ocultar" : "Mostrar"}
-                </button>
               </div>
-              {loginError && (
-                <p className="text-xs text-red-500 font-extrabold mt-2 text-center">
-                  {loginError}
-                </p>
+              {passError && (
+                <div className="flex items-center gap-1.5 text-xs text-red-500 font-bold mt-2 animate-shake">
+                  <AlertTriangle size={14} /> Senha incorreta.
+                </div>
               )}
             </div>
 
-            {/* Quick tactile keypad for tablet and mouse ease */}
-            <div className="bg-[var(--bg)] p-3 rounded-2xl border border-[var(--border2)]">
-              <div className="text-[9px] text-[var(--text2)] font-black text-center uppercase tracking-wider mb-2">
-                Teclado Numérico de Acesso
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                  <button
-                    key={num}
-                    type="button"
-                    onClick={() => setPasswordInput(prev => prev + num)}
-                    className="py-2.5 text-xs font-black bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] rounded-xl text-[var(--text)] transition-colors active:scale-95 duration-100 cursor-pointer"
-                  >
-                    {num}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setPasswordInput("")}
-                  className="py-2.5 text-[9px] font-black bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl text-red-500 transition-colors cursor-pointer"
-                >
-                  LIMPAR
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPasswordInput(prev => prev + "0")}
-                  className="py-2.5 text-xs font-black bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] rounded-xl text-[var(--text)] transition-colors cursor-pointer"
-                >
-                  0
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPasswordInput(prev => prev.slice(0, -1))}
-                  className="py-2.5 text-[9px] font-black bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-xl text-amber-500 transition-colors cursor-pointer"
-                >
-                  APAGAR
-                </button>
-              </div>
-            </div>
-
-            <button
+            <button 
               type="submit"
-              className="w-full py-3.5 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white font-extrabold text-xs uppercase tracking-widest rounded-xl shadow-md transition-all duration-200 cursor-pointer"
+              className="w-full py-3.5 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white font-bold text-sm rounded-xl shadow-lg shadow-[var(--blue-mid)]/25 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
             >
-              Entrar no Sistema
+              <ShieldCheck size={18} /> Entrar no Sistema
             </button>
           </form>
 
-          <div className="mt-5 flex items-center justify-center gap-1.5 text-[9px] text-[var(--text2)] uppercase tracking-wider font-extrabold">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            Acesso Restrito · Criptografado Localmente
+          <div className="mt-8 pt-6 border-t border-[var(--border2)] flex items-center justify-between text-[11px] text-[var(--text2)] font-semibold">
+            <span>Segurança NGPESP</span>
+            <span className="font-mono text-[var(--blue-mid)]">v4.0.2</span>
           </div>
-
         </div>
 
-        {/* Footer info */}
-        <p className="mt-6 text-[9px] text-[var(--text2)] font-black uppercase tracking-widest opacity-60">
-          NGPESP ROTINA · SISTEMA DE GESTÃO v4.0.2
-        </p>
-
-        {/* Toast alerts for wrong password, etc. */}
         {toast && (
           <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-6 py-3.5 bg-[var(--surface)] border border-[var(--border2)] rounded-full shadow-lg font-bold text-xs select-none transition-all duration-300 animate-bounce
             ${toast.type === 'ok' ? 'border-[var(--green-mid)] text-[var(--green-mid)]' : 
               toast.type === 'err' ? 'border-[var(--red)] text-[var(--red)]' : 
               'border-[var(--blue-mid)] text-[var(--blue-mid)]'}`}>
             {toast.msg}
-          </div>
-        )}
-
-      </div>
-    );
-  }
-
-  // DEDICATED LAUNCH APP MODE (Lançador Rápido SISREF)
-  if (appMode === 'lancamento') {
-    return (
-      <div className={`theme-${theme} min-h-screen`}>
-        <LancamentoApp
-          state={state}
-          updateState={updateState}
-          onToast={showToast}
-          openModal={triggerModalOpen}
-          onSwitchToFullApp={() => {
-            setAppMode('full');
-            try {
-              const url = new URL(window.location.href);
-              url.searchParams.delete("app");
-              url.searchParams.delete("mode");
-              window.history.replaceState({}, "", url.toString());
-            } catch (_) {}
-          }}
-          theme={theme}
-          setTheme={(t) => {
-            setTheme(t);
-            localStorage.setItem("ss_tema", t);
-          }}
-          forceSync={forceSync}
-          syncing={syncing}
-          cloudSynced={cloudSynced}
-        />
-
-        {/* Global Toast */}
-        {toast && (
-          <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-6 py-3 bg-[var(--surface)] border border-[var(--border2)] rounded-full shadow-lg font-bold text-xs select-none transition-all duration-300
-            ${toast.type === 'ok' ? 'border-[var(--green-mid)] text-[var(--green-mid)]' : 
-              toast.type === 'err' ? 'border-[var(--red)] text-[var(--red)]' : 
-              'border-[var(--blue-mid)] text-[var(--blue-mid)]'}`}>
-            {toast.msg}
-          </div>
-        )}
-
-        {/* Launch Quantity Modal */}
-        {launchModal?.show && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-150">
-              <h3 className="text-sm font-black text-[var(--text)] uppercase tracking-wider mb-2">
-                Confirmar Lançamento
-              </h3>
-              <p className="text-xs text-[var(--text2)] mb-4">
-                Servidor: <strong className="text-[var(--text)]">{launchModal.nome}</strong> ({launchModal.mat})
-              </p>
-              <div className="mb-4">
-                <label className="text-xs font-bold text-[var(--text2)] block mb-1.5">
-                  Quantidade de Atestados / Ocorrências:
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={99}
-                  value={inputVal}
-                  onChange={(e) => setInputVal(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-[var(--border2)] bg-[var(--bg)] font-mono font-bold text-center text-lg text-[var(--text)] outline-none"
-                  autoFocus
-                />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setLaunchModal(null)}
-                  className="flex-1 py-2.5 rounded-xl border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text2)] font-bold text-xs cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const val = parseInt(inputVal, 10) || 1;
-                    launchModal.onConfirm(val);
-                    setLaunchModal(null);
-                  }}
-                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs cursor-pointer"
-                >
-                  Confirmar
-                </button>
-              </div>
-            </div>
           </div>
         )}
       </div>
@@ -620,21 +362,35 @@ export default function App() {
                 NGPESP Rotina
               </h1>
               <div className="flex items-center gap-1.5 mt-1">
-                <span className={`w-2 h-2 rounded-full animate-pulse ${isStaticMode ? 'bg-blue-500' : 'bg-green-500'}`}></span>
+                <span className={`w-2 h-2 rounded-full animate-pulse ${cloudSynced ? 'bg-emerald-500' : 'bg-blue-500'}`}></span>
                 <p className="text-[10px] text-[var(--text2)] uppercase tracking-wider font-bold opacity-80">
-                  {isStaticMode ? "Modo Local (GitHub Pages)" : "Sincronizado via Nuvem"}
+                  {cloudSynced ? "Nuvem Firestore Ativa (Multi-Dispositivo)" : "Sincronizando Nuvem..."}
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            {/* Direct Cloud Sync Center Button */}
+            <button
+              onClick={() => setShowCloudModal(true)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-xs ${
+                cloudSynced
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+                  : "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 animate-pulse"
+              }`}
+              title="Central de Sincronização em Nuvem Multi-Dispositivo"
+            >
+              <Cloud size={15} />
+              <span className="hidden sm:inline">Nuvem</span>
+              {syncing && <RefreshCw size={12} className="animate-spin" />}
+            </button>
+
             {/* Google Authentication Pill */}
             {googleUser ? (
               <button
                 onClick={() => {
-                  setActiveTab('rotina');
-                  // Since we are moving to Rotina, we'll let them view the Backup section
+                  setActiveTab('importar');
                 }}
                 className={`hidden sm:flex items-center gap-2 p-1.5 pr-3 rounded-xl transition-all text-xs font-bold cursor-pointer border ${
                   googleSyncing
@@ -643,7 +399,7 @@ export default function App() {
                     ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
                     : "bg-green-500/10 border-green-500/30 text-green-600 dark:text-green-400"
                 }`}
-                title={`Conectado como ${googleUser.email}. Clique para gerenciar backup.`}
+                title={`Conectado como ${googleUser.email}.`}
               >
                 {googleUser.photoURL ? (
                   <img src={googleUser.photoURL} alt={googleUser.displayName} referrerPolicy="no-referrer" className="w-5 h-5 rounded-full" />
@@ -653,24 +409,10 @@ export default function App() {
                   </div>
                 )}
                 <span className="hidden md:inline">
-                  {googleSyncing ? "Salvando Backup..." : googleDirty ? "Alterado (Pendente)" : "Backup em Dia"}
+                  {googleSyncing ? "Salvando..." : googleDirty ? "Pendente" : "Planilha OK"}
                 </span>
               </button>
-            ) : (
-              <button
-                onClick={handleGoogleLogin}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-xl text-gray-700 font-bold text-[11px] transition-all duration-200 cursor-pointer shadow-xs"
-                title="Conectar com o Google para backup em tempo real"
-              >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 48 48">
-                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                </svg>
-                Conectar Google
-              </button>
-            )}
+            ) : null}
 
             {/* Theme trigger button cycle */}
             <button 
@@ -690,27 +432,6 @@ export default function App() {
             >
               <LogOut size={18} />
             </button>
-
-            {/* Manual syncing cloud indicator / static backup download */}
-            {isStaticMode ? (
-              <button 
-                onClick={handleDownloadBackupDirectly}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-                title="Fazer download do backup de segurança de todos os dados"
-              >
-                <DownloadCloud className="w-3.5 h-3.5" />
-                Baixar Backup
-              </button>
-            ) : (
-              <button 
-                onClick={forceSync}
-                disabled={syncing}
-                className="px-4 py-2 bg-[var(--blue)] hover:bg-[var(--blue-mid)] text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-                Sincronizar
-              </button>
-            )}
           </div>
         </div>
       </header>
@@ -718,7 +439,7 @@ export default function App() {
       {/* 2. MAIN GRID LAYOUT CONTROLLER */}
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 flex-1 flex flex-col lg:flex-row gap-6">
         
-        {/* SIDEBAR TABS (sticky on desktop, smooth horizontal scroll with visible scrollbar & mouse wheel on mobile/split view) */}
+        {/* SIDEBAR TABS */}
         <nav 
           onWheel={(e) => {
             if (e.deltaY !== 0 && window.innerWidth < 1024) {
@@ -822,6 +543,10 @@ export default function App() {
               onGoogleLogout={handleGoogleLogout}
               subTab={activeTab}
               setSubTab={(t) => setActiveTab(t as any)}
+              forcePushThisDeviceToCloud={forcePushThisDeviceToCloud}
+              forcePullFromCloud={forcePullFromCloud}
+              exportBackupJson={exportBackupJson}
+              importBackupJson={importBackupJson}
             />
           )}
           {activeTab === 'balcao' && (
@@ -849,10 +574,160 @@ export default function App() {
           <span>SISTEMA NGPESP v4.0.2 • Criado por Thiago Vinícius</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping"></div>
-          <span>ESTADO: OPERACIONAL</span>
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></div>
+          <span>ESTADO: OPERACIONAL (NUVEM ATIVA)</span>
         </div>
       </footer>
+
+      {/* CLOUD MULTI-DEVICE SYNC MODAL */}
+      {showCloudModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-[var(--surface)] w-full max-w-lg rounded-3xl p-6 sm:p-7 shadow-2xl border border-[var(--border)] animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <Cloud size={24} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[var(--text)] tracking-tight">
+                    Central de Sincronização em Nuvem
+                  </h3>
+                  <p className="text-xs text-[var(--text2)] font-semibold">
+                    Multi-Dispositivo em Tempo Real (Computadores & Celulares)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCloudModal(false)}
+                className="p-1.5 rounded-xl text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Current Device Stats */}
+            <div className="p-4 rounded-2xl bg-[var(--bg)] border border-[var(--border2)] grid grid-cols-3 gap-2 text-center mb-5">
+              <div>
+                <div className="text-lg font-black text-[var(--blue-mid)]">
+                  {state.servidores?.length || 0}
+                </div>
+                <div className="text-[10px] uppercase tracking-wider font-bold text-[var(--text2)]">
+                  Servidores
+                </div>
+              </div>
+              <div>
+                <div className="text-lg font-black text-amber-500">
+                  {state.filaAvulsa?.listas?.[state.filaAvulsa?.ativa || "Padrão"]?.fila?.length || 0}
+                </div>
+                <div className="text-[10px] uppercase tracking-wider font-bold text-[var(--text2)]">
+                  Fila SISREF
+                </div>
+              </div>
+              <div>
+                <div className="text-lg font-black text-emerald-500">
+                  {state.historico?.length || 0}
+                </div>
+                <div className="text-[10px] uppercase tracking-wider font-bold text-[var(--text2)]">
+                  Histórico
+                </div>
+              </div>
+            </div>
+
+            {/* Main Action 1: Upload from this machine */}
+            <div className="space-y-3">
+              <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black uppercase text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                    <UploadCloud size={16} /> 1. Enviar Dados deste Computador para a Nuvem
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    Recomendado
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--text2)] leading-relaxed font-semibold">
+                  Clique aqui no computador onde você tem todos os dados reais (servidores, pendências e histórico) para torná-los imediatamente disponíveis em qualquer outro aparelho ou celular.
+                </p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await forcePushThisDeviceToCloud();
+                  }}
+                  disabled={syncing}
+                  className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                >
+                  <UploadCloud size={16} />
+                  <span>{syncing ? "Gravando na Nuvem..." : "Salvar Este Computador na Nuvem Agora"}</span>
+                </button>
+              </div>
+
+              {/* Main Action 2: Download on secondary machine */}
+              <div className="p-4 rounded-2xl bg-blue-500/5 border border-blue-500/20 flex flex-col gap-2.5">
+                <span className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                  <RefreshCw size={15} /> 2. Baixar Dados Mais Recentes da Nuvem
+                </span>
+                <p className="text-xs text-[var(--text2)] leading-relaxed font-semibold">
+                  Use esta opção no seu celular ou em outro computador secundário para carregar instantaneamente o estado completo salvo na nuvem.
+                </p>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await forcePullFromCloud();
+                  }}
+                  disabled={syncing}
+                  className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                >
+                  <RefreshCw size={15} className={syncing ? "animate-spin" : ""} />
+                  <span>{syncing ? "Buscando na Nuvem..." : "Baixar Dados da Nuvem para Este Dispositivo"}</span>
+                </button>
+              </div>
+
+              {/* Direct JSON Backup Options */}
+              <div className="pt-2 border-t border-[var(--border2)] flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={exportBackupJson}
+                  className="flex-1 py-2 px-3 bg-[var(--bg)] hover:bg-[var(--border2)] border border-[var(--border2)] text-[var(--text)] rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <FileDown size={14} />
+                  <span>Baixar Arquivo JSON</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 py-2 px-3 bg-[var(--bg)] hover:bg-[var(--border2)] border border-[var(--border2)] text-[var(--text)] rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <FileUp size={14} />
+                  <span>Restaurar Arquivo JSON</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      importBackupJson(file);
+                      e.target.value = "";
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowCloudModal(false)}
+                className="px-5 py-2.5 bg-[var(--border2)] hover:bg-[var(--border)] text-[var(--text)] font-bold text-xs rounded-xl cursor-pointer transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3. MODAL FOR PROCESSED LAUNCH QUANTITY INPUTS */}
       {launchModal?.show && (
@@ -879,14 +754,14 @@ export default function App() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleModalConfirm();
                 }}
-                className="w-full text-center text-3xl font-black p-3 bg-[var(--bg)] border-2 border-[var(--border2)] rounded-xl outline-none"
+                className="w-full text-center text-3xl font-black p-3 bg-[var(--bg)] border-2 border-[var(--border2)] rounded-xl outline-none text-[var(--text)]"
               />
             </div>
 
             <div className="flex gap-3 mt-6">
               <button 
                 onClick={handleModalSkip}
-                className="flex-1 py-3 text-xs font-bold border border-[var(--border2)] hover:bg-[var(--bg)] rounded-xl"
+                className="flex-1 py-3 text-xs font-bold border border-[var(--border2)] hover:bg-[var(--bg)] rounded-xl text-[var(--text)]"
               >
                 Pular
               </button>

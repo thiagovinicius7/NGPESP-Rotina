@@ -6,7 +6,8 @@ import {
   Palmtree, CalendarCheck, Stethoscope, Save, Settings2, Plus, 
   X, Check, Sunrise, Sunset, History, Calendar, FileText, 
   ArrowRight, Edit, AlertTriangle, AlertCircle, CheckCircle,
-  Database, RefreshCw, Key, Search, Link as LinkIcon, ExternalLink, Unlink, UserX
+  Database, RefreshCw, Key, Search, Link as LinkIcon, ExternalLink, Unlink, UserX,
+  Cloud, FileDown, FileUp
 } from "lucide-react";
 import { 
   syncToGoogleSheets, 
@@ -48,6 +49,10 @@ interface RotinaPanelProps {
   onGoogleLogout: () => Promise<void>;
   subTab?: 'importar' | 'vida' | 'produtividade';
   setSubTab?: (t: 'importar' | 'vida' | 'produtividade') => void;
+  forcePushThisDeviceToCloud?: () => Promise<void>;
+  forcePullFromCloud?: () => Promise<void>;
+  exportBackupJson?: () => void;
+  importBackupJson?: (file: File) => void;
 }
 
 export default function RotinaPanel({ 
@@ -61,7 +66,11 @@ export default function RotinaPanel({
   onGoogleLogin,
   onGoogleLogout,
   subTab: controlledSubTab,
-  setSubTab: setControlledSubTab
+  setSubTab: setControlledSubTab,
+  forcePushThisDeviceToCloud,
+  forcePullFromCloud,
+  exportBackupJson,
+  importBackupJson
 }: RotinaPanelProps) {
   const [localSubTab, setLocalSubTab] = useState<'importar' | 'vida' | 'produtividade'>('importar');
 
@@ -1159,6 +1168,104 @@ export default function RotinaPanel({
       {/* IMPORT TAB CONTENT */}
       {subTab === 'importar' && (
         <div className="flex flex-col gap-6">
+
+          {/* 0. CLOUD MULTI-DEVICE FIRESTORE SYNCHRONIZATION (PRIMARY ENGINE) */}
+          <div className="bg-gradient-to-br from-emerald-500/10 via-[var(--surface)] to-emerald-500/5 border-2 border-emerald-500/40 rounded-2xl p-6 shadow-sm overflow-hidden relative">
+            <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-2xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                  <Cloud size={24} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-[var(--text)] uppercase tracking-wider">
+                    Sincronização em Nuvem em Tempo Real (Multi-Dispositivo)
+                  </h3>
+                  <p className="text-xs text-[var(--text2)] font-semibold mt-0.5">
+                    Seus dados sincronizados automaticamente entre todos os seus computadores e celulares via Firestore.
+                  </p>
+                </div>
+              </div>
+              <span className="px-3 py-1 bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold text-xs rounded-full flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Nuvem Ativa
+              </span>
+            </div>
+
+            {/* Quick Metrics of this device */}
+            <div className="p-3.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] grid grid-cols-3 gap-2 text-center mb-4">
+              <div>
+                <span className="text-base font-black text-[var(--blue-mid)]">{state.servidores?.length || 0}</span>
+                <div className="text-[9px] uppercase font-bold text-[var(--text2)]">Servidores</div>
+              </div>
+              <div>
+                <span className="text-base font-black text-amber-500">{state.filaAvulsa?.listas?.[state.filaAvulsa?.ativa || "Padrão"]?.fila?.length || 0}</span>
+                <div className="text-[9px] uppercase font-bold text-[var(--text2)]">Fila SISREF</div>
+              </div>
+              <div>
+                <span className="text-base font-black text-emerald-500">{state.historico?.length || 0}</span>
+                <div className="text-[9px] uppercase font-bold text-[var(--text2)]">Lançamentos</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-4 rounded-xl bg-[var(--surface)] border border-emerald-500/30 flex flex-col justify-between gap-3">
+                <div>
+                  <div className="text-xs font-black uppercase text-emerald-600 dark:text-emerald-400 mb-1 flex items-center gap-1.5">
+                    <UploadCloud size={15} /> Computador com Dados Reais
+                  </div>
+                  <p className="text-xs text-[var(--text2)] font-semibold leading-relaxed">
+                    Clique aqui no computador onde você tem todos os dados salvos para enviá-los e disponibilizá-los imediatamente na nuvem.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={forcePushThisDeviceToCloud || forceSync}
+                  disabled={syncing}
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs cursor-pointer transition-all"
+                >
+                  <UploadCloud size={16} />
+                  <span>{syncing ? "Gravando na Nuvem..." : "Salvar Este Computador na Nuvem Agora"}</span>
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl bg-[var(--surface)] border border-blue-500/30 flex flex-col justify-between gap-3">
+                <div>
+                  <div className="text-xs font-black uppercase text-blue-600 dark:text-blue-400 mb-1 flex items-center gap-1.5">
+                    <RefreshCw size={14} /> Outro Computador / Celular
+                  </div>
+                  <p className="text-xs text-[var(--text2)] font-semibold leading-relaxed">
+                    Se você abriu o aplicativo em outro computador ou celular e a tela está em branco, baixe os dados da nuvem.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={forcePullFromCloud || forceSync}
+                  disabled={syncing}
+                  className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs cursor-pointer transition-all"
+                >
+                  <RefreshCw size={15} className={syncing ? "animate-spin" : ""} />
+                  <span>{syncing ? "Buscando na Nuvem..." : "Baixar Dados da Nuvem para Este Dispositivo"}</span>
+                </button>
+              </div>
+            </div>
+
+            {exportBackupJson && (
+              <div className="mt-4 pt-3 border-t border-emerald-500/20 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[11px] font-semibold text-[var(--text2)]">
+                  Quer uma cópia em arquivo no seu computador?
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={exportBackupJson}
+                    className="py-1.5 px-3 bg-[var(--surface)] hover:bg-[var(--bg)] border border-[var(--border2)] text-[var(--text)] rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <FileDown size={13} /> Baixar Backup .JSON
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* GOOGLE SHEETS DIRECT API SYNCHRONIZER (SECURE BACKUP) */}
           <div className="bg-[var(--surface)] border-2 border-[var(--blue-mid)] rounded-2xl p-6 shadow-sm overflow-hidden relative">

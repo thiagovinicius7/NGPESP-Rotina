@@ -19,6 +19,8 @@ interface LancamentoAppProps {
   theme: 'claro' | 'escuro' | 'petroleo';
   setTheme: (t: 'claro' | 'escuro' | 'petroleo') => void;
   forceSync?: () => void;
+  forcePushThisDeviceToCloud?: () => Promise<void>;
+  forcePullFromCloud?: () => Promise<void>;
   syncing?: boolean;
   cloudSynced?: boolean;
 }
@@ -72,6 +74,8 @@ export default function LancamentoApp({
   theme,
   setTheme,
   forceSync,
+  forcePushThisDeviceToCloud,
+  forcePullFromCloud,
   syncing,
   cloudSynced
 }: LancamentoAppProps) {
@@ -1774,33 +1778,46 @@ export default function LancamentoApp({
                     </div>
                     <div>
                       <div className="text-xs font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                        Sincronização Automática
+                        Sincronização em Nuvem (Multi-Dispositivo)
                       </div>
                       <div className="text-sm font-bold text-[var(--text)]">
-                        Multi-Dispositivo em Tempo Real
+                        Tempo Real Firestore
                       </div>
                     </div>
                   </div>
-                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-600 text-white uppercase tracking-wider">
-                    Automático
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-600 text-white uppercase tracking-wider">
+                    Nuvem Ativa
                   </span>
                 </div>
                 <p className="text-xs text-[var(--text2)] leading-relaxed">
-                  Todas as suas listas de fila avulsa, servidores e progresso são sincronizados automaticamente na nuvem Firestore. Ao abrir o aplicativo em qualquer computador, celular ou aba, a fila é carregada imediatamente.
+                  Todas as suas listas de fila avulsa, servidores e progresso são sincronizados automaticamente na nuvem Firestore.
                 </p>
-                {forceSync && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      forceSync();
+                    onClick={async () => {
+                      if (forcePushThisDeviceToCloud) await forcePushThisDeviceToCloud();
+                      else if (forceSync) forceSync();
                     }}
                     disabled={syncing}
-                    className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
+                    className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
                   >
-                    <UploadCloud size={15} />
-                    <span>{syncing ? "Sincronizando com a Nuvem..." : "Sincronizar Filas com a Nuvem Agora"}</span>
+                    <UploadCloud size={14} />
+                    <span>{syncing ? "Gravando..." : "Salvar Este PC na Nuvem"}</span>
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (forcePullFromCloud) await forcePullFromCloud();
+                      else if (forceSync) forceSync();
+                    }}
+                    disabled={syncing}
+                    className="py-2.5 px-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                  >
+                    <RefreshCw size={14} className={syncing ? "animate-spin" : ""} />
+                    <span>{syncing ? "Buscando..." : "Baixar Dados da Nuvem"}</span>
+                  </button>
+                </div>
               </div>
             </div>
 

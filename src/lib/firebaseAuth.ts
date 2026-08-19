@@ -64,9 +64,21 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
+export const loginWithGoogle = async (): Promise<{ user: User; token: string }> => {
+  const res = await googleSignIn();
+  if (!res) throw new Error("Falha ao autenticar");
+  return { user: res.user, token: res.accessToken };
+};
+
 export const logout = async () => {
   await auth.signOut();
   cachedAccessToken = null;
   sessionStorage.removeItem("ngpesp_google_token");
   localStorage.removeItem("ngpesp_google_token");
+};
+
+export const logoutFirebase = logout;
+
+export const onAuthChange = (callback: (user: User | null) => void) => {
+  return onAuthStateChanged(auth, callback);
 };
