@@ -138,16 +138,17 @@ export async function syncToGoogleSheets(
   accessToken: string,
   state: AppState,
   spreadsheetId: string | null,
-  onProgress: (prog: SyncProgress) => void
+  onProgress?: (prog: SyncProgress) => void
 ): Promise<string> {
   let targetSpreadsheetId = extractSpreadsheetId(spreadsheetId || "") || DEFAULT_SPREADSHEET_ID;
+  const notify = onProgress || (() => {});
 
   try {
     if (!accessToken) {
       throw new Error("Sessão do Google expirada. Clique em 'Conectar com o Google' novamente.");
     }
 
-    onProgress({ message: "Verificando estrutura da planilha...", type: "info" });
+    notify({ message: "Verificando estrutura da planilha...", type: "info" });
 
     // 1. Ensure all required sheet tabs exist
     const requiredTitles = [

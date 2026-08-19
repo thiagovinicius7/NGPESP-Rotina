@@ -81,6 +81,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   
   // Track if we have local mutations that have not been successfully pushed/saved to the cloud yet
   const isDirtyRef = useRef<boolean>(false);
+  const hasLoadedFromCloudRef = useRef<boolean>(false);
 
   useEffect(() => {
     stateRef.current = state;
@@ -128,6 +129,15 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   const pushStateToCloud = async (currentState: AppState) => {
     const now = Date.now();
     try {
+      // Don't push empty state from a blank device if it hasn't loaded cloud data
+      const hasMeaningfulData = (currentState.servidores?.length || 0) > 0 || 
+        Object.values(currentState.filaAvulsa?.listas || {}).some(l => (l.fila?.length || 0) > 0);
+
+      if (!hasMeaningfulData && !hasLoadedFromCloudRef.current) {
+        console.log("Skipping push: device is blank and hasn't loaded cloud data yet.");
+        return;
+      }
+
       // Push to Firestore (works universally on all devices and GitHub Pages)
       const firestoreOk = await pushStateToFirestore(currentState);
       if (firestoreOk) {
@@ -152,14 +162,38 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     }
   };
 
-  // Force sync from/to cloud
-  const forceSync = async () => {
+  // Force Push THIS device's data to cloud immediately
+  const forcePushThisDeviceToCloud = async () => {
     setSyncing(true);
-    if (pushTimeoutRef.current) {
-      clearTimeout(pushTimeoutRef.current);
-    }
     try {
-      // 1. Try pulling from Firestore first
+      const currentState = stateRef.current;
+      const ok = await pushStateToFirestore(currentState);
+      if (ok) {
+        const now = Date.now();
+        setLastUpdated(now);
+        localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(now));
+        setCloudSynced(true);
+        isDirtyRef.current = false;
+        hasLoadedFromCloudRef.current = true;
+        const totalServ = currentState.servidores?.length || 0;
+        const activeList = currentState.filaAvulsa?.listas?.[currentState.filaAvulsa?.ativa || "Padrão"];
+        const totalFila = activeList?.fila?.length || 0;
+        onToast(`Nuvem atualizada com sucesso! (${totalServ} servidores, ${totalFila} itens na fila)`, "ok");
+      } else {
+        onToast("Erro ao gravar dados na nuvem Firestore", "err");
+      }
+    } catch (e) {
+      console.error(e);
+      onToast("Falha ao salvar dados na nuvem", "err");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Force Pull latest data from cloud
+  const forcePullFromCloud = async () => {
+    setSyncing(true);
+    try {
       const cloudResult = await fetchFirestoreState();
       if (cloudResult && cloudResult.state) {
         const serverState = cloudResult.state;
@@ -173,7 +207,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (stateRef.current.respostas || []),
           faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (stateRef.current.faq || []),
           produtividade: mergeProdutividade(stateRef.current.produtividade || {}, serverState.produtividade || {}),
-          filaAvulsa: mergeFilaAvulsa(stateRef.current.filaAvulsa, serverState.filaAvulsa),
+          filaAvulsa: serverState.filaAvulsa || stateRef.current.filaAvulsa,
           balcaoAtendimentos: { ...(stateRef.current.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
           config: { ...(stateRef.current.config || {}), ...(serverState.config || {}) }
         };
@@ -184,51 +218,30 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         setLastUpdated(serverTime || Date.now());
         localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime || Date.now()));
         isDirtyRef.current = false;
+        hasLoadedFromCloudRef.current = true;
         setCloudSynced(true);
-        await pushStateToFirestore(mergedState);
-        onToast("Dados sincronizados com a nuvem em todos os dispositivos!", "ok");
-        return;
-      }
-
-      // 2. Fallback to /api/state
-      if (!isStaticMode) {
-        const res = await fetch("/api/state");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === "ok") {
-            const serverTime = Number(data.updatedAt);
-            const serverState = data.state || {};
-            
-            const mergedState: AppState = {
-              ...defaultState,
-              ...serverState,
-              servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (stateRef.current.servidores || []),
-              historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (stateRef.current.historico || []),
-              respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (stateRef.current.respostas || []),
-              faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (stateRef.current.faq || []),
-              produtividade: mergeProdutividade(stateRef.current.produtividade || {}, serverState.produtividade || {}),
-              filaAvulsa: mergeFilaAvulsa(stateRef.current.filaAvulsa, serverState.filaAvulsa),
-              balcaoAtendimentos: { ...(stateRef.current.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
-              config: { ...(stateRef.current.config || {}), ...(serverState.config || {}) }
-            };
-
-            setStateState(mergedState);
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
-            saveLocalSnapshot(mergedState);
-            setLastUpdated(serverTime);
-            localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime));
-            isDirtyRef.current = false;
-            setCloudSynced(true);
-            await pushStateToCloud(mergedState);
-            onToast("Dados sincronizados com sucesso!", "ok");
-          }
-        }
+        onToast("Dados baixados da nuvem com sucesso!", "ok");
+      } else {
+        onToast("Nenhum dado encontrado na nuvem ainda. Clique em 'Salvar Este Dispositivo na Nuvem'.", "info");
       }
     } catch (e) {
-      console.warn("Sync error:", e);
+      console.error(e);
       onToast("Erro ao conectar com a nuvem", "err");
     } finally {
       setSyncing(false);
+    }
+  };
+
+  // General force sync (auto-detects direction)
+  const forceSync = async () => {
+    // If local has servers and cloud is empty, push. Otherwise, pull and merge.
+    const localHasData = (stateRef.current.servidores?.length || 0) > 0 || 
+      Object.values(stateRef.current.filaAvulsa?.listas || {}).some((l: any) => (l?.fila?.length || 0) > 0);
+
+    if (localHasData && !hasLoadedFromCloudRef.current) {
+      await forcePushThisDeviceToCloud();
+    } else {
+      await forcePullFromCloud();
     }
   };
 
@@ -244,6 +257,11 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           if (raw) cachedState = JSON.parse(raw);
         } catch (_) {}
 
+        const localHasData = cachedState && (
+          (cachedState.servidores?.length || 0) > 0 ||
+          Object.values(cachedState.filaAvulsa?.listas || {}).some(l => (l.fila?.length || 0) > 0)
+        );
+
         // Fetch from Firestore
         const cloudData = await fetchFirestoreState();
 
@@ -251,26 +269,29 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           const serverTime = Number(cloudData.updatedAt || 0);
           const serverState: Partial<AppState> = cloudData.state;
 
+          const cloudHasData = (serverState.servidores?.length || 0) > 0 || 
+            Boolean(serverState.filaAvulsa?.listas && Object.keys(serverState.filaAvulsa.listas).length > 0);
+
           let mergedState: AppState;
-          if (!cachedState || (!cachedState.servidores?.length && !cachedState.filaAvulsa?.listas?.["Padrão"]?.fila?.length)) {
+          if (!localHasData) {
             // Brand new device / browser: adopt Firestore cloud state directly
             mergedState = {
               ...defaultState,
               ...serverState
             };
           } else {
-            // Existing device: merge safely
+            // Existing device with data: merge safely
             mergedState = {
               ...defaultState,
               ...serverState,
-              servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (cachedState.servidores || []),
-              historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (cachedState.historico || []),
-              respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState.respostas || []),
-              faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState.faq || []),
-              produtividade: mergeProdutividade(cachedState.produtividade || {}, serverState.produtividade || {}),
-              filaAvulsa: mergeFilaAvulsa(cachedState.filaAvulsa, serverState.filaAvulsa),
-              balcaoAtendimentos: { ...(cachedState.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
-              config: { gmov_data: "", ...(cachedState.config || {}), ...(serverState.config || {}) }
+              servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (cachedState?.servidores || []),
+              historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (cachedState?.historico || []),
+              respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState?.respostas || []),
+              faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState?.faq || []),
+              produtividade: mergeProdutividade(cachedState?.produtividade || {}, serverState.produtividade || {}),
+              filaAvulsa: serverState.filaAvulsa || cachedState?.filaAvulsa || defaultState.filaAvulsa,
+              balcaoAtendimentos: { ...(cachedState?.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
+              config: { gmov_data: "", ...(cachedState?.config || {}), ...(serverState.config || {}) }
             };
           }
 
@@ -280,12 +301,27 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           setLastUpdated(serverTime || Date.now());
           localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime || Date.now()));
           setCloudSynced(true);
+          hasLoadedFromCloudRef.current = true;
           isDirtyRef.current = false;
           console.log("Successfully initialized state from Firestore across devices");
+
+          // If local has data that was missing in cloud, push merged back to cloud
+          if (localHasData && !cloudHasData) {
+            console.log("Pushing local data to initialize Firestore cloud");
+            await pushStateToFirestore(mergedState);
+          }
           return;
         }
 
-        // Fallback: Node server /api/state if Firestore was empty and we're not static
+        // If Firestore is empty but this device HAS data:
+        if (!cloudData && localHasData && cachedState) {
+          console.log("Firestore empty: Auto-seeding cloud with this computer's data!");
+          await pushStateToFirestore(cachedState);
+          setCloudSynced(true);
+          hasLoadedFromCloudRef.current = true;
+        }
+
+        // Fallback: Node server /api/state if not static
         if (!isStaticMode) {
           const res = await fetch("/api/state");
           if (res.ok) {
@@ -304,6 +340,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
               localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
               setLastUpdated(serverTime);
               setCloudSynced(true);
+              hasLoadedFromCloudRef.current = true;
             }
           }
         }
@@ -330,8 +367,11 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           ...prev,
           ...incomingPartial,
           filaAvulsa: incomingPartial.filaAvulsa 
-            ? mergeFilaAvulsa(prev.filaAvulsa, incomingPartial.filaAvulsa)
+            ? incomingPartial.filaAvulsa
             : prev.filaAvulsa,
+          servidores: incomingPartial.servidores
+            ? incomingPartial.servidores
+            : prev.servidores,
           produtividade: incomingPartial.produtividade
             ? mergeProdutividade(prev.produtividade, incomingPartial.produtividade)
             : prev.produtividade
@@ -349,6 +389,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(updatedAt));
       }
       setCloudSynced(true);
+      hasLoadedFromCloudRef.current = true;
     });
 
     return () => {
@@ -401,12 +442,51 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     };
   }, []);
 
+  // Export state to JSON file
+  const exportBackupJson = () => {
+    try {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(stateRef.current, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `NGPESP_Backup_${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      onToast("Backup baixado com sucesso!", "ok");
+    } catch (e) {
+      onToast("Erro ao exportar arquivo de backup", "err");
+    }
+  };
+
+  // Import state from JSON file
+  const importBackupJson = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const content = e.target?.result as string;
+        const parsed = JSON.parse(content);
+        if (parsed) {
+          updateState(parsed);
+          await pushStateToFirestore(parsed);
+          onToast("Backup restaurado e sincronizado com a nuvem!", "ok");
+        }
+      } catch (err) {
+        onToast("Arquivo de backup inválido", "err");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return {
     state,
     updateState,
     syncing,
     forceSync,
+    forcePushThisDeviceToCloud,
+    forcePullFromCloud,
     isStaticMode,
-    cloudSynced
+    cloudSynced,
+    exportBackupJson,
+    importBackupJson
   };
 }
