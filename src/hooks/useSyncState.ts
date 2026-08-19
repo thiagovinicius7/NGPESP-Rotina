@@ -7,6 +7,9 @@ const LOCAL_TIMESTAMP_KEY = "ngpesp_local_updated_at";
 
 const DEFAULT_SPREADSHEET_ID = "1gk5MZYPDb3g5XM5y52OLMHMU0B0R2qbbZD79ryBizek";
 
+// Broadcast channel for instant multi-window / multi-tab synchronization
+const SYNC_CHANNEL_NAME = "ngpesp_intertab_sync";
+
 const defaultState: AppState = {
   servidores: [],
   historico: [],
@@ -97,6 +100,15 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       latestStateRef.current = updated;
       stateRef.current = updated;
       
+      // Instantly broadcast update to any other open windows/tabs or dedicated launcher app
+      try {
+        if (typeof window !== "undefined" && "BroadcastChannel" in window) {
+          const bc = new BroadcastChannel(SYNC_CHANNEL_NAME);
+          bc.postMessage({ type: "INTERTAB_STATE_UPDATE", state: updated, timestamp: Date.now() });
+          bc.close();
+        }
+      } catch (_) {}
+
       return updated;
     });
 
@@ -261,6 +273,51 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     };
 
     initialFetch();
+  }, []);
+
+  // 1.5 Setup instantaneous zero-latency Inter-Window / Inter-App state synchronization
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let bc: BroadcastChannel | null = null;
+
+    const handleBroadcast = (event: MessageEvent) => {
+      if (event.data && event.data.type === "INTERTAB_STATE_UPDATE" && event.data.state) {
+        const incomingState = event.data.state;
+        setStateState(incomingState);
+        latestStateRef.current = incomingState;
+        stateRef.current = incomingState;
+      }
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === LOCAL_STORAGE_KEY && event.newValue) {
+        try {
+          const parsed = JSON.parse(event.newValue);
+          setStateState(parsed);
+          latestStateRef.current = parsed;
+          stateRef.current = parsed;
+        } catch (_) {}
+      }
+    };
+
+    if ("BroadcastChannel" in window) {
+      try {
+        bc = new BroadcastChannel(SYNC_CHANNEL_NAME);
+        bc.onmessage = handleBroadcast;
+      } catch (_) {}
+    }
+
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      if (bc) {
+        try {
+          bc.close();
+        } catch (_) {}
+      }
+      window.removeEventListener("storage", handleStorage);
+    };
   }, []);
 
   // 2. Setup periodic background polling for cloud real-time sync (Runs only ONCE on mount)

@@ -5,7 +5,7 @@ import {
   Building2, ListTodo, MessageSquareQuote, Search, UserCheck, 
   Copy, Check, X, ClipboardList, Trash2, Network, ChevronRight, 
   ArrowLeft, CheckCheck, Users, CopyPlus, CheckSquare, Plus, Save,
-  AlertOctagon, CornerUpLeft
+  AlertOctagon, CornerUpLeft, Zap
 } from "lucide-react";
 
 interface SisrefPanelProps {
@@ -1179,7 +1179,23 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                 ))}
               </select>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap items-center">
+              <button 
+                type="button"
+                onClick={() => {
+                  try {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("app", "lancamento");
+                    window.open(url.toString(), "LancadorSisrefApp", "width=1180,height=840,menubar=no,toolbar=no");
+                  } catch (_) {}
+                }}
+                className="text-xs font-black bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-xs transition-all hover:scale-[1.02] cursor-pointer"
+                title="Abrir a tela de lançamento como um App dedicado limpo e rápido"
+              >
+                <Zap size={14} className="fill-current text-amber-300" />
+                <span>Abrir App Dedicado</span>
+              </button>
+
               <button 
                 onClick={() => setShowPendencias(prev => !prev)}
                 className={`text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1 transition-all border ${state.filaAvulsa.pendencias.length > 0 ? 'bg-[var(--red-light)] text-[var(--red)] border-[var(--red)]' : 'bg-[var(--bg)] text-[var(--text2)] border-[var(--border)]'}`}

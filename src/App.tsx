@@ -6,10 +6,12 @@ import SigrhPanel from "./components/SigrhPanel.js";
 import RotinaPanel from "./components/RotinaPanel.js";
 import BalcaoPanel from "./components/BalcaoPanel.js";
 import RelatorioPanel from "./components/RelatorioPanel.js";
+import LancamentoApp from "./components/LancamentoApp.js";
 import { 
   ClipboardCheck, CalendarDays, Briefcase, BarChart3, HelpCircle, 
   Layers, Moon, Sun, Droplet, RefreshCw, Check, X, LogIn, LogOut, Key,
-  DownloadCloud, LayoutDashboard, UploadCloud, Contact, TrendingUp, Wrench
+  DownloadCloud, LayoutDashboard, UploadCloud, Contact, TrendingUp, Wrench,
+  Zap, ExternalLink
 } from "lucide-react";
 import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth.js";
 import { syncToGoogleSheets, searchGoogleDriveForBackup, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
@@ -26,6 +28,17 @@ const normalizeMatricula = (m: any): string => {
 };
 
 export default function App() {
+  // App Mode: 'full' (main dashboard) or 'lancamento' (dedicated fast launcher app)
+  const [appMode, setAppMode] = useState<'full' | 'lancamento'>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("app") === "lancamento" || params.get("mode") === "lancador") {
+        return "lancamento";
+      }
+    }
+    return "full";
+  });
+
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'importar' | 'vida' | 'produtividade' | 'balcao' | 'relatorio'>('dashboard');
   const [sisrefSubTab, setSisrefSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
   const [rotinaSubTab, setRotinaSubTab] = useState<'importar' | 'vida' | 'produtividade'>('importar');
@@ -503,6 +516,92 @@ export default function App() {
     );
   }
 
+  // DEDICATED LAUNCH APP MODE (Lançador Rápido SISREF)
+  if (appMode === 'lancamento') {
+    return (
+      <div className={`theme-${theme} min-h-screen`}>
+        <LancamentoApp
+          state={state}
+          updateState={updateState}
+          onToast={showToast}
+          openModal={triggerModalOpen}
+          onSwitchToFullApp={() => {
+            setAppMode('full');
+            try {
+              const url = new URL(window.location.href);
+              url.searchParams.delete("app");
+              url.searchParams.delete("mode");
+              window.history.replaceState({}, "", url.toString());
+            } catch (_) {}
+          }}
+          theme={theme}
+          setTheme={(t) => {
+            setTheme(t);
+            localStorage.setItem("ss_tema", t);
+          }}
+        />
+
+        {/* Global Toast */}
+        {toast && (
+          <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-6 py-3 bg-[var(--surface)] border border-[var(--border2)] rounded-full shadow-lg font-bold text-xs select-none transition-all duration-300
+            ${toast.type === 'ok' ? 'border-[var(--green-mid)] text-[var(--green-mid)]' : 
+              toast.type === 'err' ? 'border-[var(--red)] text-[var(--red)]' : 
+              'border-[var(--blue-mid)] text-[var(--blue-mid)]'}`}>
+            {toast.msg}
+          </div>
+        )}
+
+        {/* Launch Quantity Modal */}
+        {launchModal?.show && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-150">
+              <h3 className="text-sm font-black text-[var(--text)] uppercase tracking-wider mb-2">
+                Confirmar Lançamento
+              </h3>
+              <p className="text-xs text-[var(--text2)] mb-4">
+                Servidor: <strong className="text-[var(--text)]">{launchModal.nome}</strong> ({launchModal.mat})
+              </p>
+              <div className="mb-4">
+                <label className="text-xs font-bold text-[var(--text2)] block mb-1.5">
+                  Quantidade de Atestados / Ocorrências:
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={inputVal}
+                  onChange={(e) => setInputVal(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-[var(--border2)] bg-[var(--bg)] font-mono font-bold text-center text-lg text-[var(--text)] outline-none"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLaunchModal(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text2)] font-bold text-xs cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const val = parseInt(inputVal, 10) || 1;
+                    launchModal.onConfirm(val);
+                    setLaunchModal(null);
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs cursor-pointer"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col font-sans bg-[var(--bg)] transition-colors duration-300">
       
@@ -527,6 +626,24 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* DEDICATED LAUNCH APP BUTTON */}
+            <button
+              onClick={() => {
+                setAppMode('lancamento');
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("app", "lancamento");
+                  window.history.replaceState({}, "", url.toString());
+                } catch (_) {}
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer hover:scale-[1.02]"
+              title="Abrir App Dedicado de Lançamento de Fila Avulsa"
+            >
+              <Zap size={14} className="fill-current text-amber-300" />
+              <span className="hidden sm:inline">App de Lançamento</span>
+              <span className="sm:hidden">Lançar</span>
+            </button>
+
             {/* Google Authentication Pill */}
             {googleUser ? (
               <button
