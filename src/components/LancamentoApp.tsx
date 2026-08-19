@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
 import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
 import { 
@@ -119,6 +119,24 @@ export default function LancamentoApp({
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, [onToast]);
+
+  // Scroll detection to show sticky progress bar only when the main "Progresso da Fila" leaves view
+  const statsSectionRef = useRef<HTMLElement | null>(null);
+  const [showStickyProgressBar, setShowStickyProgressBar] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (statsSectionRef.current) {
+        const rect = statsSectionRef.current.getBoundingClientRect();
+        // Shows the sticky progress bar when the top of the stats section scrolls past the top header
+        setShowStickyProgressBar(rect.top < 10);
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // Import State
   const [importTxt, setImportTxt] = useState("");
@@ -812,36 +830,32 @@ export default function LancamentoApp({
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex flex-col font-sans transition-colors duration-200">
-      {/* APP TOP BAR */}
-      <header className="bg-[var(--surface)] border-b border-[var(--border)] sticky top-0 z-30 px-4 py-2.5 shadow-2xs backdrop-blur-md">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 flex-wrap">
-          {/* Logo & Queue Switcher */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-xs">
-                <Zap size={18} className="fill-current" />
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <h1 className="font-black text-sm tracking-tight text-[var(--text)]">Lançador SISREF</h1>
-                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 uppercase tracking-wide">
-                    Modo Focado
-                  </span>
-                </div>
-                <div className="text-[10px] text-[var(--text2)] font-semibold flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-                  Sincronização Ativa em Tempo Real
-                </div>
+      {/* APP TOP BAR - ULTRA RESPONSIVE FOR SPLIT SCREEN */}
+      <header className="bg-[var(--surface)]/95 border-b border-[var(--border)] sticky top-0 z-40 shadow-xs backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex items-center justify-between gap-2">
+          {/* Logo & Queue Switcher Compact */}
+          <div className="flex items-center gap-2 min-w-0 flex-shrink-1">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-xs flex-shrink-0">
+              <Zap size={16} className="fill-current" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-black text-xs sm:text-sm tracking-tight text-[var(--text)] truncate">
+                  SISREF Fila
+                </h1>
+                <span className="hidden xs:inline-block text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 uppercase">
+                  Foco
+                </span>
               </div>
             </div>
 
-            {/* Queue Selector */}
-            <div className="hidden sm:flex items-center gap-1.5 ml-2 pl-3 border-l border-[var(--border2)]">
-              <span className="text-[11px] font-bold text-[var(--text2)] uppercase">Fila:</span>
+            {/* Queue Selector compact */}
+            <div className="flex items-center gap-1 ml-1 pl-2 border-l border-[var(--border2)]">
               <select
                 value={activeQueueName}
                 onChange={(e) => updateState(prev => ({ filaAvulsa: { ...prev.filaAvulsa, ativa: e.target.value } }))}
-                className="text-xs font-bold px-2.5 py-1 rounded-lg bg-[var(--bg)] border border-[var(--border2)] text-[var(--text)] outline-none cursor-pointer"
+                className="text-xs font-bold px-2 py-1 rounded-lg bg-[var(--bg)] border border-[var(--border2)] text-[var(--text)] outline-none cursor-pointer max-w-[110px] sm:max-w-[150px] truncate"
+                title="Selecione a Fila Ativa"
               >
                 {Object.keys(state.filaAvulsa?.listas || { "Padrão": true }).map(k => (
                   <option key={k} value={k}>{k}</option>
@@ -850,74 +864,78 @@ export default function LancamentoApp({
               <button
                 type="button"
                 onClick={criarNovaFila}
-                className="p-1 text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] rounded-md transition-colors"
-                title="Nova Fila"
+                className="w-7 h-7 rounded-lg text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+                title="Criar Nova Fila de Lançamento"
               >
-                <Plus size={14} />
+                <Plus size={13} />
               </button>
             </div>
           </div>
 
-          {/* Quick Action Buttons */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Quick Action Buttons - Square, Compact and Single-Row */}
+          <div className="flex items-center gap-1 flex-nowrap overflow-x-auto no-scrollbar flex-shrink-0">
             {/* Queue list inspector toggle */}
             <button
               type="button"
               onClick={() => setShowQueueListDrawer(true)}
-              className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Ver lista de servidores na fila"
+              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center relative transition-colors cursor-pointer flex-shrink-0"
+              title={`Lista de Servidores (${totalServers})`}
             >
-              <ListTodo size={14} className="text-blue-500" />
-              <span>Lista ({totalServers})</span>
+              <ListTodo size={15} className="text-blue-500" />
+              {totalServers > 0 && (
+                <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-blue-600 text-white font-mono text-[8px] font-black flex items-center justify-center shadow-2xs">
+                  {totalServers > 99 ? '99+' : totalServers}
+                </span>
+              )}
             </button>
 
             {/* Pendências Button */}
             <button
               type="button"
               onClick={() => setShowPendenciasDrawer(true)}
-              className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`w-8 h-8 rounded-lg border flex items-center justify-center relative transition-colors cursor-pointer flex-shrink-0 ${
                 (state.filaAvulsa?.pendencias || []).length > 0
-                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
-                  : 'border-[var(--border2)] bg-[var(--bg)] text-[var(--text2)]'
+                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/40'
+                  : 'border-[var(--border2)] bg-[var(--bg)] text-[var(--text2)] hover:text-[var(--text)]'
               }`}
-              title="Gerenciar servidores pendentes"
+              title={`Gerenciar Pendências (${(state.filaAvulsa?.pendencias || []).length})`}
             >
-              <AlertOctagon size={14} />
-              <span>Pendências ({(state.filaAvulsa?.pendencias || []).length})</span>
+              <AlertOctagon size={15} />
+              {(state.filaAvulsa?.pendencias || []).length > 0 && (
+                <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-amber-500 text-black font-mono text-[8px] font-black flex items-center justify-center shadow-2xs">
+                  {(state.filaAvulsa?.pendencias || []).length}
+                </span>
+              )}
             </button>
 
             {/* Quick Answers Button */}
             <button
               type="button"
               onClick={() => setShowRespostasDrawer(true)}
-              className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Respostas Rápidas"
+              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+              title="Respostas Rápidas de Atendimento"
             >
-              <MessageSquareQuote size={14} className="text-indigo-500" />
-              <span className="hidden md:inline">Respostas</span>
+              <MessageSquareQuote size={15} className="text-indigo-500" />
             </button>
 
             {/* Import / Paste Button */}
             <button
               type="button"
               onClick={() => setShowImportModal(true)}
-              className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-              title="Colar texto de novas pendências do SISREF"
+              className="w-8 h-8 rounded-lg bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-xs transition-colors cursor-pointer flex-shrink-0"
+              title="Importar / Colar Pendências do SISREF"
             >
-              <Plus size={14} />
-              <span>Importar</span>
+              <Plus size={16} />
             </button>
 
             {/* Salvar Atalho na Área de Trabalho Button */}
             <button
               type="button"
               onClick={() => setShowSaveShortcutModal(true)}
-              className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white flex items-center gap-1.5 shadow-xs transition-all cursor-pointer hover:scale-[1.02]"
-              title="Salvar atalho com ícone na Área de Trabalho"
+              className="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shadow-xs transition-colors cursor-pointer flex-shrink-0"
+              title="Salvar Atalho do App / Compartilhar"
             >
-              <Download size={14} className="text-emerald-200" />
-              <span className="hidden sm:inline">Salvar Atalho</span>
-              <span className="sm:hidden">Salvar</span>
+              <Download size={15} />
             </button>
 
             {/* Cloud Sync Status / Button */}
@@ -926,16 +944,16 @@ export default function LancamentoApp({
                 type="button"
                 onClick={forceSync}
                 disabled={syncing}
-                className={`p-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1 text-xs font-bold ${
+                className={`w-8 h-8 rounded-lg border transition-colors cursor-pointer flex items-center justify-center flex-shrink-0 ${
                   syncing 
-                    ? "text-blue-500 bg-blue-500/10 animate-spin" 
+                    ? "text-blue-500 bg-blue-500/10 border-blue-500/30" 
                     : cloudSynced 
-                    ? "text-emerald-500 hover:bg-emerald-500/10" 
-                    : "text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)]"
+                    ? "text-emerald-500 border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10" 
+                    : "border-[var(--border2)] bg-[var(--bg)] text-[var(--text2)] hover:text-[var(--text)]"
                 }`}
-                title={syncing ? "Sincronizando com a Nuvem..." : "Sincronizado com todos os dispositivos na Nuvem (Clique para forçar atualização)"}
+                title={syncing ? "Sincronizando com a Nuvem..." : "Sincronizado na Nuvem (Clique para sincronizar)"}
               >
-                <Cloud size={16} />
+                <Cloud size={15} className={syncing ? "animate-spin" : ""} />
               </button>
             )}
 
@@ -943,63 +961,73 @@ export default function LancamentoApp({
             <button
               type="button"
               onClick={() => setShowShortcutsModal(true)}
-              className="p-1.5 text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] rounded-lg transition-colors cursor-pointer"
+              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text2)] hover:text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
               title="Atalhos de Teclado (?)"
             >
-              <HelpCircle size={16} />
-            </button>
-
-            {/* Open in Popup / Share */}
-            <button
-              type="button"
-              onClick={() => setShowSaveShortcutModal(true)}
-              className="p-1.5 text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] rounded-lg transition-colors cursor-pointer"
-              title="Opções de Atalho e Compartilhamento"
-            >
-              <BookmarkPlus size={16} />
-            </button>
-
-            <button
-              type="button"
-              onClick={abrirEmJanelaDedicada}
-              className="p-1.5 text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] rounded-lg transition-colors cursor-pointer hidden sm:inline-flex"
-              title="Abrir em Janela Pop-up Dedicada"
-            >
-              <ExternalLink size={16} />
+              <HelpCircle size={15} />
             </button>
 
             {/* Theme Toggle */}
-            <div className="flex items-center border-l border-[var(--border2)] pl-1.5 ml-1">
-              <button
-                type="button"
-                onClick={() => setTheme(theme === 'claro' ? 'escuro' : theme === 'escuro' ? 'petroleo' : 'claro')}
-                className="p-1.5 text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] rounded-lg transition-colors cursor-pointer"
-                title={`Tema: ${theme}`}
-              >
-                {theme === 'claro' && <Sun size={16} />}
-                {theme === 'escuro' && <Moon size={16} />}
-                {theme === 'petroleo' && <Droplet size={16} />}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setTheme(theme === 'claro' ? 'escuro' : theme === 'escuro' ? 'petroleo' : 'claro')}
+              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text2)] hover:text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+              title={`Tema: ${theme}`}
+            >
+              {theme === 'claro' && <Sun size={15} />}
+              {theme === 'escuro' && <Moon size={15} />}
+              {theme === 'petroleo' && <Droplet size={15} />}
+            </button>
 
             {/* Switch to Full Main App */}
             {onSwitchToFullApp && (
               <button
                 type="button"
                 onClick={onSwitchToFullApp}
-                className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-[var(--border2)] bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] flex items-center gap-1 transition-colors cursor-pointer ml-1"
-                title="Voltar ao Painel Completo"
+                className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+                title="Voltar ao Painel Geral Completo"
               >
-                <Layers size={13} />
-                <span className="hidden lg:inline">Painel Completo</span>
+                <Layers size={14} />
               </button>
             )}
           </div>
         </div>
+
+        {/* COMPACT STICKY PROGRESS BAR WITH PERCENTAGE & SPACING */}
+        {showStickyProgressBar && (
+          <div className="border-t border-[var(--border2)]/70 bg-[var(--bg)]/95 px-3 sm:px-4 py-1.5 flex items-center justify-between gap-2.5 sm:gap-4 text-xs shadow-xs animate-in fade-in slide-in-from-top-1 duration-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[10px] sm:text-[11px] font-black uppercase text-[var(--text2)] flex-shrink-0">
+                Progresso:
+              </span>
+              <span className="font-mono font-black text-blue-600 dark:text-blue-400 text-xs sm:text-sm flex-shrink-0">
+                {progressoPct}%
+              </span>
+              <span className="text-[var(--border2)] hidden sm:inline">|</span>
+              <span className="text-[11px] font-semibold text-[var(--text2)] truncate hidden sm:inline">
+                {serversDone} de {totalServers} servidores
+              </span>
+            </div>
+
+            {/* Visual Bar Indicator */}
+            <div className="flex items-center gap-2 flex-1 max-w-[120px] sm:max-w-[220px]">
+              <div className="w-full bg-[var(--border2)] h-2 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-blue-600 to-emerald-500 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${progressoPct}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="text-[11px] font-bold text-[var(--text2)] flex-shrink-0">
+              <span className="text-[var(--text)]">{lancamentosConcluidos}</span>/{totalLancamentos} lanç.
+            </div>
+          </div>
+        )}
       </header>
 
       {/* REAL-TIME LIVE STATISTICS DASHBOARD */}
-      <section className="bg-[var(--surface)] border-b border-[var(--border)] px-4 py-3 shadow-2xs">
+      <section ref={statsSectionRef} className="bg-[var(--surface)] border-b border-[var(--border)] px-4 py-3 shadow-2xs">
         <div className="max-w-7xl mx-auto">
           {/* Progress Bar with Live Stats Header */}
           <div className="flex items-center justify-between gap-4 mb-2 flex-wrap text-xs">
@@ -1078,7 +1106,7 @@ export default function LancamentoApp({
       </section>
 
       {/* MAIN LAUNCH CANVAS */}
-      <main className="flex-1 max-w-5xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-center">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 flex flex-col justify-start">
         {totalServers === 0 ? (
           /* EMPTY QUEUE STATE -> PROMPT TO PASTE SISREF */
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-8 shadow-sm text-center max-w-2xl mx-auto w-full my-auto">
@@ -1133,25 +1161,26 @@ export default function LancamentoApp({
           </div>
         ) : (
           /* ACTIVE SERVER LAUNCH CARD (HERO FOCUS WORKSPACE) */
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden flex flex-col my-auto transition-all">
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden flex flex-col my-2 transition-all">
             {/* Card Header & Position */}
-            <div className="p-4 sm:p-5 border-b border-[var(--border2)] bg-[var(--bg)]/50 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono font-black text-xs">
-                  {currentQueue.idx + 1} / {totalServers}
+            <div className="px-4 py-3 sm:px-6 sm:py-3.5 border-b border-[var(--border2)] bg-[var(--bg)]/70 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap min-w-0">
+                <span className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-mono font-black text-xs shadow-2xs flex-shrink-0">
+                  {currentQueue.idx + 1} de {totalServers}
                 </span>
-                <span className="text-xs font-bold text-[var(--text2)]">
-                  Fila: <strong>{activeQueueName}</strong>
+                <span className="text-xs font-bold text-[var(--text2)] flex items-center gap-1.5 truncate">
+                  <span className="text-[var(--border2)] hidden xs:inline">•</span>
+                  Fila: <strong className="text-[var(--text)] truncate">{activeQueueName}</strong>
                 </span>
               </div>
 
               {/* Navigation Arrows */}
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
                 <button
                   type="button"
                   disabled={currentQueue.idx === 0}
                   onClick={() => navigateQueue(-1)}
-                  className="p-1.5 rounded-lg border border-[var(--border2)] bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] disabled:opacity-20 disabled:cursor-not-allowed transition-colors cursor-pointer flex items-center justify-center"
                   title="Servidor Anterior (Seta Esquerda ou K)"
                 >
                   <ChevronLeft size={16} />
@@ -1160,7 +1189,7 @@ export default function LancamentoApp({
                   type="button"
                   disabled={currentQueue.idx >= totalServers - 1}
                   onClick={() => navigateQueue(1)}
-                  className="p-1.5 rounded-lg border border-[var(--border2)] bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] disabled:opacity-20 disabled:cursor-not-allowed transition-colors cursor-pointer flex items-center justify-center"
                   title="Próximo Servidor (Seta Direita ou J)"
                 >
                   <ChevronRight size={16} />
@@ -1270,38 +1299,64 @@ export default function LancamentoApp({
               </div>
             </div>
 
-            {/* Action Buttons Bar */}
-            <div className="p-4 sm:p-5 bg-[var(--surface)] border-t border-[var(--border2)] flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={marcarPendente}
-                  className="flex-1 sm:flex-initial px-4 py-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                  title="Marcar Servidor com Pendência (P)"
-                >
-                  <AlertOctagon size={16} />
-                  <span>Pendente (P)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigateQueue(1)}
-                  className="px-3 py-3 rounded-xl border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text2)] font-bold text-xs transition-colors cursor-pointer"
-                  title="Pular para próximo servidor sem registrar"
-                >
-                  Pular
-                </button>
-              </div>
+            {/* Action Buttons Bar - Optimized for Split Screen and Safe Clicking */}
+            <div className="p-3 sm:p-5 bg-[var(--surface)] border-t border-[var(--border2)] flex flex-col gap-3">
+              {/* Primary Confirm Button with Full Width and High Visual Priority */}
+              <button
+                type="button"
+                onClick={confirmarLancamento}
+                className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.99] text-white font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer"
+                title="Confirmar Lançamento (Enter ou Espaço)"
+              >
+                <CheckCheck size={20} />
+                <span>Confirmar Lançamento (Enter)</span>
+              </button>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={confirmarLancamento}
-                  className="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-sm flex items-center justify-center gap-2 shadow-sm transition-all hover:scale-[1.02] cursor-pointer"
-                  title="Confirmar Lançamento (Enter ou Espaço)"
-                >
-                  <CheckCheck size={18} />
-                  <span>Confirmar Lançamento (Enter)</span>
-                </button>
+              {/* Secondary Actions Row: Pendente, Pular and Queue Navigation */}
+              <div className="flex items-center justify-between gap-2 pt-1 border-t border-[var(--border2)]/50 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={marcarPendente}
+                    className="px-3.5 py-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="Marcar Servidor com Pendência (P)"
+                  >
+                    <AlertOctagon size={15} />
+                    <span>Pendente (P)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigateQueue(1)}
+                    className="px-3 py-2 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text2)] hover:text-[var(--text)] font-bold text-xs transition-colors cursor-pointer"
+                    title="Pular para próximo servidor sem registrar"
+                  >
+                    Pular
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => navigateQueue(-1)}
+                    disabled={currentQueue.idx === 0}
+                    className="p-2 rounded-lg border border-[var(--border2)] bg-[var(--bg)] text-[var(--text2)] hover:text-[var(--text)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    title="Servidor Anterior (← ou K)"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="text-xs font-mono font-bold px-2.5 py-1 bg-[var(--bg)] rounded-lg text-[var(--text2)] border border-[var(--border2)]/50">
+                    {currentQueue.idx + 1} / {totalServers}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => navigateQueue(1)}
+                    disabled={currentQueue.idx >= totalServers - 1}
+                    className="p-2 rounded-lg border border-[var(--border2)] bg-[var(--bg)] text-[var(--text2)] hover:text-[var(--text)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    title="Próximo Servidor (→ ou J)"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
