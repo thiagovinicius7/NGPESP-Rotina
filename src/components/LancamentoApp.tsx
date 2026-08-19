@@ -273,14 +273,9 @@ export default function LancamentoApp({
       onToast(`Lançamento de ${official.nome} confirmado!`, "ok");
     };
 
-    if (openModal) {
-      openModal(official.nome, official.matricula, "SISREF Avulsa", (qtd) => {
-        applyConfirm(qtd);
-      }, qtdCalculada);
-    } else {
-      applyConfirm(qtdCalculada);
-    }
-  }, [currentQueueServer, state.servidores, openModal, updateState, onToast]);
+    // Immediately confirm launch
+    applyConfirm(qtdCalculada);
+  }, [currentQueueServer, state.servidores, updateState, onToast]);
 
   // Mark as Pending
   const marcarPendente = useCallback(() => {
