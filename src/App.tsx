@@ -179,14 +179,20 @@ export default function App() {
   // Apply theme to document
   useEffect(() => {
     const root = document.documentElement;
+    root.setAttribute("data-theme", theme);
+    document.body.setAttribute("data-theme", theme);
     root.classList.remove("theme-claro", "theme-escuro", "theme-petroleo", "dark");
+    document.body.classList.remove("theme-claro", "theme-escuro", "theme-petroleo", "dark");
     
     if (theme === "escuro") {
       root.classList.add("theme-escuro", "dark");
+      document.body.classList.add("theme-escuro", "dark");
     } else if (theme === "petroleo") {
       root.classList.add("theme-petroleo", "dark");
+      document.body.classList.add("theme-petroleo", "dark");
     } else {
       root.classList.add("theme-claro");
+      document.body.classList.add("theme-claro");
     }
     localStorage.setItem("ss_tema", theme);
   }, [theme]);

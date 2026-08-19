@@ -167,24 +167,29 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     setSyncing(true);
     try {
       const currentState = stateRef.current;
-      const ok = await pushStateToFirestore(currentState);
-      if (ok) {
-        const now = Date.now();
-        setLastUpdated(now);
-        localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(now));
-        setCloudSynced(true);
-        isDirtyRef.current = false;
-        hasLoadedFromCloudRef.current = true;
-        const totalServ = currentState.servidores?.length || 0;
-        const activeList = currentState.filaAvulsa?.listas?.[currentState.filaAvulsa?.ativa || "Padrão"];
-        const totalFila = activeList?.fila?.length || 0;
-        onToast(`Nuvem atualizada com sucesso! (${totalServ} servidores, ${totalFila} itens na fila)`, "ok");
-      } else {
-        onToast("Erro ao gravar dados na nuvem Firestore", "err");
-      }
-    } catch (e) {
-      console.error(e);
-      onToast("Falha ao salvar dados na nuvem", "err");
+      
+      const fsPromise = pushStateToFirestore(currentState);
+      const apiPromise = !isStaticMode ? fetch("/api/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: currentState, updatedAt: Date.now() })
+      }).catch(() => null) : Promise.resolve(null);
+
+      await Promise.all([fsPromise, apiPromise]);
+
+      const now = Date.now();
+      setLastUpdated(now);
+      localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(now));
+      setCloudSynced(true);
+      isDirtyRef.current = false;
+      hasLoadedFromCloudRef.current = true;
+      const totalServ = currentState.servidores?.length || 0;
+      const activeList = currentState.filaAvulsa?.listas?.[currentState.filaAvulsa?.ativa || "Padrão"];
+      const totalFila = activeList?.fila?.length || 0;
+      onToast(`Nuvem atualizada com sucesso! (${totalServ} servidores, ${totalFila} itens na fila)`, "ok");
+    } catch (e: any) {
+      console.error("Erro ao enviar dados para a nuvem:", e);
+      onToast(e?.message || "Falha ao salvar dados na nuvem", "err");
     } finally {
       setSyncing(false);
     }
@@ -194,11 +199,34 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   const forcePullFromCloud = async () => {
     setSyncing(true);
     try {
-      const cloudResult = await fetchFirestoreState();
-      if (cloudResult && cloudResult.state) {
-        const serverState = cloudResult.state;
-        const serverTime = cloudResult.updatedAt;
+      let serverState: Partial<AppState> | null = null;
+      let serverTime = 0;
 
+      try {
+        const cloudResult = await fetchFirestoreState();
+        if (cloudResult && cloudResult.state) {
+          serverState = cloudResult.state;
+          serverTime = cloudResult.updatedAt;
+        }
+      } catch (fsErr) {
+        console.warn("Firestore fetch error, trying backend fallback:", fsErr);
+      }
+
+      // Backend fallback if Firestore was empty or failed
+      if (!serverState && !isStaticMode) {
+        try {
+          const res = await fetch("/api/state");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.state && (data.state.servidores?.length > 0 || Object.keys(data.state.filaAvulsa?.listas || {}).length > 0)) {
+              serverState = data.state;
+              serverTime = data.updatedAt || Date.now();
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (serverState) {
         const mergedState: AppState = {
           ...defaultState,
           ...serverState,
@@ -220,13 +248,15 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         isDirtyRef.current = false;
         hasLoadedFromCloudRef.current = true;
         setCloudSynced(true);
-        onToast("Dados baixados da nuvem com sucesso!", "ok");
+        const totalServ = mergedState.servidores?.length || 0;
+        const totalFila = mergedState.filaAvulsa?.listas?.[mergedState.filaAvulsa?.ativa || "Padrão"]?.fila?.length || 0;
+        onToast(`Dados baixados da nuvem com sucesso! (${totalServ} servidores, ${totalFila} na fila)`, "ok");
       } else {
-        onToast("Nenhum dado encontrado na nuvem ainda. Clique em 'Salvar Este Dispositivo na Nuvem'.", "info");
+        onToast("Nenhum dado encontrado na nuvem ainda. Clique em 'Salvar Este Computador na Nuvem Agora'.", "info");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      onToast("Erro ao conectar com a nuvem", "err");
+      onToast(e?.message || "Erro ao conectar com a nuvem", "err");
     } finally {
       setSyncing(false);
     }
