@@ -327,3 +327,101 @@ export function getLocalSnapshots(): StateSnapshot[] {
   }
 }
 
+/**
+ * Normalizes launch / occurrence types, stripping any appended matriculas,
+ * server names, trailing zeroes/numbers, dates or status tags, grouping occurrences cleanly into standard categories.
+ */
+export function cleanTipoName(rawStr: string): string {
+  if (!rawStr) return "";
+  let s = String(rawStr).trim();
+
+  // If literally "Lançamento Avulso" or generic placeholder, return empty string so it does not pollute type statistics
+  if (/^lan[çc]amento\s+avulso$/i.test(s) || /^confer[êe]ncia$/i.test(s)) {
+    return "";
+  }
+
+  // 1. Remove anything after a separator " - ", " – ", " — ", " : "
+  // e.g. " - Daniella Carolina Evangelista da Silva", " - De Carvalho", " - 01796682"
+  s = s.replace(/\s*[\-–—:]\s+.*$/g, "");
+
+  // 2. Remove trailing digits/zeroes at the end (e.g. " 0", " 1", " 00")
+  s = s.replace(/\s+\d+\s*$/g, "");
+
+  // 3. Remove matricula patterns (6-8 digits with optional X) anywhere at the end or after type,
+  // making sure NOT to match decree numbers like "(Dec. 34023)"
+  s = s.replace(/(?<!(?:Dec\.?|Decreto|Lei|Portaria)\s*)\b\d{6,8}[Xx]?\b.*$/gi, "");
+
+  // 4. Repeat removing trailing digits at the end in case a matricula was stripped
+  s = s.replace(/\s+\d+\s*$/g, "");
+
+  // 5. Remove trailing dates in parentheses e.g. (15/05/2025)
+  s = s.replace(/\s*\(\s*\d{1,2}\/\d{1,2}.*?\)\s*/gi, " ");
+  s = s.replace(/\s*\(\s*\d{1,2}\/\d{2,4}.*?\)\s*/gi, " ");
+
+  // 6. Remove standalone dates
+  s = s.replace(/\s*\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b\s*/g, " ");
+  s = s.replace(/\s*\b\d{1,2}\/\d{2,4}\b\s*/g, " ");
+
+  // 7. Remove status tags
+  s = s.replace(/\s*\((Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\)\s*/gi, " ");
+  s = s.replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\b/gi, "");
+
+  // 8. Clean whitespace and leading/trailing punctuation or stray trailing zeroes
+  s = s.replace(/\s+/g, " ").replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "").trim();
+  s = s.replace(/\s+\d+\s*$/g, "");
+
+  // 9. Canonical standardizations
+  const lower = s.toLowerCase();
+  if (lower.includes("reunião escolar") || lower.includes("reuniao escolar")) {
+    return "Reunião Escolar (Bimestral)";
+  }
+  if (lower.includes("atest") && lower.includes("34023")) {
+    return "Atest. Comparec. (Dec. 34023)";
+  }
+  if (lower.includes("atest") && (lower.includes("c/ comp") || lower.includes("c/comp") || lower.includes("com comp"))) {
+    return "Atest. Comparec. (c/ comp)";
+  }
+  if (lower.includes("folga anual") || lower.includes("exames prev") || lower.includes("periód") || lower.includes("period")) {
+    return "Folga Anual Exames Prev/Periód";
+  }
+  if (lower.includes("doação de sangue") || lower.includes("doacao de sangue")) {
+    return "Doação de Sangue";
+  }
+  if (lower.includes("licença doença") || lower.includes("licenca doenca") || lower.includes("pessoa família") || lower.includes("pessoa familia")) {
+    return "Licença Doença Pessoa Família";
+  }
+  if (lower.includes("atestado") && lower.includes("médico") && (lower.includes("até 3") || lower.includes("ate 3"))) {
+    return "Atestado Médico (Até 3 Dias)";
+  }
+  if (lower.includes("atestado") && lower.includes("médico") && (lower.includes("mais de 3") || lower.includes("> 3"))) {
+    return "Atestado Médico (Mais de 3 Dias)";
+  }
+  if (lower.includes("licença médica") || lower.includes("licenca medica") || lower.includes("odontológica") || lower.includes("odontologica")) {
+    return "Licença Médica / Odontológica";
+  }
+  if (lower.includes("congresso") || lower.includes("conferência") || lower.includes("conferencia") || lower.includes("cursos")) {
+    return "Congresso/Conferência/Cursos";
+  }
+  if (lower.includes("declaração de comparecimento") || lower.includes("declaracao de comparecimento")) {
+    return "Declaração de Comparecimento";
+  }
+  if (lower.includes("folga eleitoral") || lower.includes("convocação tre") || lower.includes("convocacao tre") || lower.includes("folga tre")) {
+    return "Folga Eleitoral (TRE)";
+  }
+  if (lower.includes("abono") || lower.includes("abono pecuniário") || lower.includes("abono pecuniario")) {
+    return "Abono Pecuniário";
+  }
+  if (lower.includes("férias") || lower.includes("ferias")) {
+    return "Férias";
+  }
+  if (lower.includes("greve") || lower.includes("paralisação") || lower.includes("paralisacao")) {
+    return "Greve";
+  }
+  if (lower.includes("serviço externo") || lower.includes("servico externo")) {
+    return "Serviço Externo";
+  }
+
+  return s || "";
+}
+
+

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName } from "../lib/utils.js";
 import { 
   Zap, CheckCheck, Copy, AlertOctagon, CornerUpLeft, Plus, Trash2, 
   ChevronLeft, ChevronRight, CheckSquare, ListTodo, MessageSquareQuote, 
@@ -302,7 +302,9 @@ export default function LancamentoApp({
         ts: nowIso,
         ocorrencias: confirmModal.checkedOcs.length > 0 
           ? confirmModal.checkedOcs.map((o: any) => o.data ? `${o.tipo} (${o.data})` : o.tipo) 
-          : ["Lançamento Avulso"]
+          : (currentQueueServer?.ocorrencias?.length 
+              ? currentQueueServer.ocorrencias.map(o => o.data ? `${o.tipo} (${o.data})` : o.tipo)
+              : (currentQueueServer?.tipos || []))
       };
 
       return {
@@ -607,7 +609,7 @@ export default function LancamentoApp({
                  .replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "")
                  .trim();
       
-      const tipoLimpo = tipo || "Atestado";
+      const tipoLimpo = cleanTipoName(tipo) || "Atestado";
 
       if (!map[finalMatricula]) {
         map[finalMatricula] = { matricula: finalMatricula, nome: finalNome || `Servidor (${finalMatricula})`, tipos: [], ocorrencias: [] };
