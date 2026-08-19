@@ -90,6 +90,17 @@ export default function LancamentoApp({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
 
+  // Launch Quantity Confirmation Modal
+  const [confirmModal, setConfirmModal] = useState<{
+    show: boolean;
+    nome: string;
+    mat: string;
+    setor: string;
+    qtd: number;
+    checkedOcs: any[];
+  } | null>(null);
+  const [confirmInputVal, setConfirmInputVal] = useState<string>("1");
+
   // Listen for PWA beforeinstallprompt event
   useEffect(() => {
     const handleBeforeInstall = (e: any) => {
@@ -223,7 +234,7 @@ export default function LancamentoApp({
     });
   }, [currentQueueServer, updateState]);
 
-  // Confirm Server Launch
+  // Confirm Server Launch -> Opens Quantity Confirmation Modal
   const confirmarLancamento = useCallback(() => {
     if (!currentQueueServer) return;
 
@@ -231,51 +242,92 @@ export default function LancamentoApp({
     const checkedOcs = currentQueueServer.ocorrencias.filter(o => o.checked);
     const qtdCalculada = checkedOcs.length > 0 ? checkedOcs.length : 1;
 
-    const applyConfirm = (qtd: number) => {
-      updateState(prev => {
-        const qName = prev.filaAvulsa?.ativa || "Padrão";
-        const q = prev.filaAvulsa?.listas?.[qName];
-        if (!q) return {};
+    setConfirmInputVal(String(qtdCalculada));
+    setConfirmModal({
+      show: true,
+      nome: official.nome,
+      mat: official.matricula,
+      setor: currentQueueServer.ocorrencias?.[0]?.tipo || "SISREF Avulsa",
+      qtd: qtdCalculada,
+      checkedOcs
+    });
+  }, [currentQueueServer, state.servidores]);
 
-        const nowIso = new Date().toISOString();
+  // Handle Save from Quantity Confirmation Modal
+  const handleModalSave = useCallback(() => {
+    if (!confirmModal) return;
+    const qtdNum = parseInt(confirmInputVal, 10);
+    const qtdFinal = isNaN(qtdNum) || qtdNum < 0 ? confirmModal.qtd : qtdNum;
 
-        const nextFila = [...q.fila];
-        const serverIdx = q.idx;
-        if (nextFila[serverIdx]) {
-          const srv = { ...nextFila[serverIdx] };
-          srv.nome = official.nome;
-          srv.matricula = official.matricula;
-          srv.ocorrencias = srv.ocorrencias.map(oc => oc.checked ? { ...oc, dataLancamento: oc.dataLancamento || nowIso } : oc);
-          nextFila[serverIdx] = srv;
-        }
+    updateState(prev => {
+      const qName = prev.filaAvulsa?.ativa || "Padrão";
+      const q = prev.filaAvulsa?.listas?.[qName];
+      if (!q) return {};
 
-        const newLog: HistoryEntry = {
-          mat: official.matricula,
-          nome: official.nome,
-          setor: "Avulsa Fila",
-          qtd: qtd,
-          ts: nowIso,
-          ocorrencias: checkedOcs.length > 0 ? checkedOcs.map(o => o.data ? `${o.tipo} (${o.data})` : o.tipo) : ["Lançamento Avulso"]
-        };
+      const nowIso = new Date().toISOString();
 
-        return {
-          historico: [newLog, ...(prev.historico || [])].slice(0, 5000),
-          filaAvulsa: {
-            ...prev.filaAvulsa,
-            listas: {
-              ...prev.filaAvulsa.listas,
-              [qName]: { ...q, fila: nextFila, idx: q.idx + 1 }
-            }
+      const nextFila = [...q.fila];
+      const serverIdx = q.idx;
+      if (nextFila[serverIdx]) {
+        const srv = { ...nextFila[serverIdx] };
+        srv.nome = confirmModal.nome;
+        srv.matricula = confirmModal.mat;
+        srv.ocorrencias = srv.ocorrencias.map(oc => oc.checked ? { ...oc, dataLancamento: oc.dataLancamento || nowIso } : oc);
+        nextFila[serverIdx] = srv;
+      }
+
+      const newLog: HistoryEntry = {
+        mat: confirmModal.mat,
+        nome: confirmModal.nome,
+        setor: "Avulsa Fila",
+        qtd: qtdFinal,
+        ts: nowIso,
+        ocorrencias: confirmModal.checkedOcs.length > 0 
+          ? confirmModal.checkedOcs.map((o: any) => o.data ? `${o.tipo} (${o.data})` : o.tipo) 
+          : ["Lançamento Avulso"]
+      };
+
+      return {
+        historico: [newLog, ...(prev.historico || [])].slice(0, 5000),
+        filaAvulsa: {
+          ...prev.filaAvulsa,
+          listas: {
+            ...prev.filaAvulsa.listas,
+            [qName]: { ...q, fila: nextFila, idx: q.idx + 1 }
           }
-        };
-      });
+        }
+      };
+    });
 
-      onToast(`Lançamento de ${official.nome} confirmado!`, "ok");
-    };
+    onToast(`Lançamento de ${confirmModal.nome} (${qtdFinal}x) confirmado!`, "ok");
+    setConfirmModal(null);
+  }, [confirmModal, confirmInputVal, updateState, onToast]);
 
-    // Immediately confirm launch
-    applyConfirm(qtdCalculada);
-  }, [currentQueueServer, state.servidores, updateState, onToast]);
+  // Navigate back / forward in queue
+  const navigateQueue = useCallback((delta: number) => {
+    updateState(prev => {
+      const qName = prev.filaAvulsa?.ativa || "Padrão";
+      const q = prev.filaAvulsa?.listas?.[qName];
+      if (!q) return {};
+
+      const nextIdx = Math.max(0, Math.min(q.fila.length, q.idx + delta));
+      return {
+        filaAvulsa: {
+          ...prev.filaAvulsa,
+          listas: {
+            ...prev.filaAvulsa.listas,
+            [qName]: { ...q, idx: nextIdx }
+          }
+        }
+      };
+    });
+  }, [updateState]);
+
+  // Handle Skip from Quantity Confirmation Modal
+  const handleModalSkip = useCallback(() => {
+    setConfirmModal(null);
+    navigateQueue(1);
+  }, [navigateQueue]);
 
   // Mark as Pending
   const marcarPendente = useCallback(() => {
@@ -313,26 +365,6 @@ export default function LancamentoApp({
 
     onToast(`Servidor ${official.nome} movido para pendências.`, "info");
   }, [currentQueueServer, state.servidores, updateState, onToast]);
-
-  // Navigate back / forward in queue
-  const navigateQueue = useCallback((delta: number) => {
-    updateState(prev => {
-      const qName = prev.filaAvulsa?.ativa || "Padrão";
-      const q = prev.filaAvulsa?.listas?.[qName];
-      if (!q) return {};
-
-      const nextIdx = Math.max(0, Math.min(q.fila.length, q.idx + delta));
-      return {
-        filaAvulsa: {
-          ...prev.filaAvulsa,
-          listas: {
-            ...prev.filaAvulsa.listas,
-            [qName]: { ...q, idx: nextIdx }
-          }
-        }
-      };
-    });
-  }, [updateState]);
 
   // Jump to specific index in queue
   const jumpToQueueIndex = useCallback((targetIdx: number) => {
@@ -1824,6 +1856,62 @@ export default function LancamentoApp({
                 className="px-5 py-2.5 bg-[var(--border2)] hover:bg-[var(--border)] text-[var(--text)] font-bold text-xs rounded-xl cursor-pointer transition-colors"
               >
                 Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. MODAL DE CONFIRMAÇÃO DE QUANTIDADE DE LANÇAMENTOS */}
+      {confirmModal?.show && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-[var(--surface)] w-full max-w-sm rounded-2xl p-6 shadow-2xl border border-[var(--border)] animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-base font-black text-[var(--text)] tracking-tight">
+              {confirmModal.nome}
+            </h3>
+            <span className="text-xs font-semibold text-[var(--blue-mid)] font-mono block mt-1">
+              Matrícula: {confirmModal.mat} {confirmModal.setor ? `· ${confirmModal.setor}` : ""}
+            </span>
+            
+            <div className="mt-5">
+              <label className="text-xs font-bold text-[var(--text2)] block mb-1.5">
+                Quantidade de lançamentos efetuados
+              </label>
+              <input 
+                type="number" 
+                min={0}
+                value={confirmInputVal}
+                onChange={(e) => setConfirmInputVal(e.target.value)}
+                placeholder="1"
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleModalSave();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setConfirmModal(null);
+                  }
+                }}
+                className="w-full text-center text-3xl font-black p-3 bg-[var(--bg)] border-2 border-[var(--border2)] focus:border-[var(--blue-mid)] rounded-xl outline-none text-[var(--text)]"
+              />
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button 
+                type="button"
+                onClick={handleModalSkip}
+                className="flex-1 py-3 text-xs font-bold border border-[var(--border2)] hover:bg-[var(--bg)] rounded-xl text-[var(--text)] cursor-pointer"
+              >
+                Pular
+              </button>
+              <button 
+                type="button"
+                onClick={handleModalSave}
+                className="flex-2 py-3 text-xs font-bold bg-[var(--blue-mid)] text-white hover:bg-[var(--blue)] rounded-xl shadow-md cursor-pointer"
+              >
+                Salvar (Enter)
               </button>
             </div>
           </div>
