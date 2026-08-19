@@ -1,0 +1,17 @@
+{
+  "name": "Lançador SISREF - NGPESP",
+  "short_name": "Lançador SISREF",
+  "description": "App de Alta Performance e Lançamento Rápido de Fila Avulsa SISREF",
+  "start_url": "./?app=lancamento",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

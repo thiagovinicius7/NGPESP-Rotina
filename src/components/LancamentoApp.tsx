@@ -6,7 +6,8 @@ import {
   ChevronLeft, ChevronRight, CheckSquare, ListTodo, MessageSquareQuote, 
   Search, ExternalLink, Moon, Sun, Droplet, Maximize2, Minimize2, 
   HelpCircle, RefreshCw, X, ArrowLeft, ArrowRight, Check, Sparkles,
-  Layers, Bookmark, Share2
+  Layers, Bookmark, Share2, Download, Monitor, Laptop, BookmarkPlus,
+  CheckCircle2
 } from "lucide-react";
 
 interface LancamentoAppProps {
@@ -73,9 +74,30 @@ export default function LancamentoApp({
   const [showRespostasDrawer, setShowRespostasDrawer] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [showSaveShortcutModal, setShowSaveShortcutModal] = useState(false);
   const [showQueueListDrawer, setShowQueueListDrawer] = useState(false);
   const [copiedRecently, setCopiedRecently] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
+
+  // Listen for PWA beforeinstallprompt event
+  useEffect(() => {
+    const handleBeforeInstall = (e: any) => {
+      e.preventDefault();
+      setDeferredInstallPrompt(e);
+    };
+    const handleAppInstalled = () => {
+      setDeferredInstallPrompt(null);
+      onToast("Lançador SISREF instalado como aplicativo!", "ok");
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('appinstalled', handleAppInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, [onToast]);
 
   // Import State
   const [importTxt, setImportTxt] = useState("");
@@ -684,7 +706,60 @@ export default function LancamentoApp({
     const origin = window.location.origin + window.location.pathname;
     const url = `${origin}?app=lancamento`;
     navigator.clipboard.writeText(url);
-    onToast("Link do App de Lançamento copiado! Você pode salvá-lo como favorito ou atalho.", "ok");
+    onToast("Link do App de Lançamento copiado com sucesso!", "ok");
+  };
+
+  // Download Windows / Desktop .URL Internet Shortcut
+  const baixarAtalhoAreaDeTrabalho = () => {
+    try {
+      const origin = window.location.origin + window.location.pathname;
+      const fullUrl = `${origin}?app=lancamento`;
+      
+      // Standard Windows .URL Internet Shortcut format
+      const shortcutContent = [
+        "[InternetShortcut]",
+        `URL=${fullUrl}`,
+        "IconIndex=0",
+        "HotKey=0",
+        "IDList=",
+        "[{000214A0-0000-0000-C000-000000000046}]",
+        "Prop3=19,11",
+        ""
+      ].join("\r\n");
+      
+      const blob = new Blob([shortcutContent], { type: "application/internet-shortcut;charset=utf-8" });
+      const downloadLink = document.createElement("a");
+      downloadLink.href = URL.createObjectURL(blob);
+      downloadLink.download = "Lançador SISREF - NGPESP.url";
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(downloadLink.href);
+
+      onToast("Arquivo de atalho baixado! Arraste-o para sua Área de Trabalho.", "ok");
+    } catch (err) {
+      console.error("Erro ao gerar atalho:", err);
+      onToast("Não foi possível gerar o download direto. Use a opção de copiar o link.", "err");
+    }
+  };
+
+  // Trigger PWA native prompt or guide
+  const acionarInstalacaoPwa = async () => {
+    if (deferredInstallPrompt) {
+      try {
+        deferredInstallPrompt.prompt();
+        const choiceResult = await deferredInstallPrompt.userChoice;
+        if (choiceResult.outcome === "accepted") {
+          onToast("Aplicativo instalado com sucesso!", "ok");
+          setDeferredInstallPrompt(null);
+          setShowSaveShortcutModal(false);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    } else {
+      onToast("No Google Chrome ou Edge, clique no ícone de instalar na barra de endereços ou no menu ⋮ > Criar atalho.", "info");
+    }
   };
 
   // Open in popup window
@@ -796,6 +871,18 @@ export default function LancamentoApp({
               <span>Importar</span>
             </button>
 
+            {/* Salvar Atalho na Área de Trabalho Button */}
+            <button
+              type="button"
+              onClick={() => setShowSaveShortcutModal(true)}
+              className="px-2.5 py-1.5 text-xs font-bold rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white flex items-center gap-1.5 shadow-xs transition-all cursor-pointer hover:scale-[1.02]"
+              title="Salvar atalho com ícone na Área de Trabalho"
+            >
+              <Download size={14} className="text-emerald-200" />
+              <span className="hidden sm:inline">Salvar Atalho</span>
+              <span className="sm:hidden">Salvar</span>
+            </button>
+
             {/* Shortcuts Help */}
             <button
               type="button"
@@ -809,11 +896,11 @@ export default function LancamentoApp({
             {/* Open in Popup / Share */}
             <button
               type="button"
-              onClick={copiarLinkAtalho}
+              onClick={() => setShowSaveShortcutModal(true)}
               className="p-1.5 text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] rounded-lg transition-colors cursor-pointer"
-              title="Copiar Link de Atalho do App"
+              title="Opções de Atalho e Compartilhamento"
             >
-              <Bookmark size={16} />
+              <BookmarkPlus size={16} />
             </button>
 
             <button
@@ -1520,6 +1607,148 @@ export default function LancamentoApp({
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer"
               >
                 Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. MODAL DE SALVAR ATALHO NA ÁREA DE TRABALHO / INSTALAR APP */}
+      {showSaveShortcutModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 sm:p-7 max-w-lg w-full shadow-2xl animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--border)]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md">
+                  <Zap size={22} className="fill-current text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[var(--text)] tracking-tight">
+                    Salvar Atalho na Área de Trabalho
+                  </h3>
+                  <p className="text-xs text-[var(--text2)] font-medium">
+                    Acesso direto ao Lançador SISREF com 1 clique
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSaveShortcutModal(false)}
+                className="p-1.5 text-[var(--text2)] hover:text-[var(--text)] hover:bg-[var(--bg)] rounded-xl transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Methods Cards */}
+            <div className="mt-5 space-y-4">
+              {/* Option 1: Direct .URL File Download */}
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-teal-500/5 to-transparent border border-emerald-500/30 flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                      <Download size={18} />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                        Opção 1 (Recomendada para Windows)
+                      </div>
+                      <div className="text-sm font-bold text-[var(--text)]">
+                        Baixar Atalho para a Área de Trabalho (.url)
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-600 text-white uppercase tracking-wider">
+                    1 Clique
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--text2)] leading-relaxed">
+                  Baixa um arquivo de atalho da web com o nome <strong>"Lançador SISREF - NGPESP"</strong>. Basta salvá-lo ou arrastá-lo diretamente para a sua Área de Trabalho!
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    baixarAtalhoAreaDeTrabalho();
+                  }}
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer hover:scale-[1.01]"
+                >
+                  <Download size={16} />
+                  <span>Baixar Atalho .url Agora</span>
+                </button>
+              </div>
+
+              {/* Option 2: Browser PWA App Install */}
+              <div className="p-4 rounded-2xl bg-[var(--bg)]/40 border border-[var(--border2)] flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                      <Monitor size={18} />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                        Opção 2 (Instalação como Aplicativo)
+                      </div>
+                      <div className="text-sm font-bold text-[var(--text)]">
+                        Instalar no Navegador (Chrome / Edge)
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-[var(--text2)] leading-relaxed">
+                  Cria um aplicativo dedicado sem barras de navegador, com ícone azul e amarelo personalizado na barra de tarefas e no menu Iniciar.
+                </p>
+                {deferredInstallPrompt ? (
+                  <button
+                    type="button"
+                    onClick={acionarInstalacaoPwa}
+                    className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                  >
+                    <Zap size={16} className="fill-current text-amber-300" />
+                    <span>Instalar Aplicativo Agora</span>
+                  </button>
+                ) : (
+                  <div className="p-3 rounded-xl bg-[var(--surface)] border border-[var(--border)] text-[11px] text-[var(--text2)] space-y-1.5">
+                    <div className="font-bold text-[var(--text)] flex items-center gap-1.5">
+                      <CheckCircle2 size={13} className="text-blue-500" />
+                      Como instalar manualmente pelo Chrome ou Edge:
+                    </div>
+                    <ol className="list-decimal list-inside space-y-1 pl-1 text-[11px]">
+                      <li>No menu superior do navegador, clique em <strong>⋮ (três pontinhos)</strong>.</li>
+                      <li>Vá em <strong>Salvar e Compartilhar</strong> &gt; <strong>Criar atalho...</strong> (ou <em>Instalar Lançador</em>).</li>
+                      <li>Marque a opção <strong>"Abrir como janela"</strong> e clique em <strong>Criar</strong>.</li>
+                    </ol>
+                  </div>
+                )}
+              </div>
+
+              {/* Option 3: Copy direct link */}
+              <div className="p-4 rounded-2xl bg-[var(--surface)] border border-[var(--border)] flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-bold text-[var(--text)]">Link Direto do Lançador</div>
+                  <div className="text-[11px] font-mono text-[var(--text2)] truncate mt-0.5">
+                    {window.location.origin + window.location.pathname}?app=lancamento
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={copiarLinkAtalho}
+                  className="py-2 px-3 bg-[var(--bg)] hover:bg-[var(--border2)] border border-[var(--border2)] text-[var(--text)] rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer flex-shrink-0"
+                >
+                  <Copy size={14} />
+                  <span>Copiar Link</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowSaveShortcutModal(false)}
+                className="px-5 py-2.5 bg-[var(--border2)] hover:bg-[var(--border)] text-[var(--text)] font-bold text-xs rounded-xl cursor-pointer transition-colors"
+              >
+                Fechar
               </button>
             </div>
           </div>

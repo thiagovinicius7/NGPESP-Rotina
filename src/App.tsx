@@ -626,24 +626,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* DEDICATED LAUNCH APP BUTTON */}
-            <button
-              onClick={() => {
-                setAppMode('lancamento');
-                try {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("app", "lancamento");
-                  window.history.replaceState({}, "", url.toString());
-                } catch (_) {}
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer hover:scale-[1.02]"
-              title="Abrir App Dedicado de Lançamento de Fila Avulsa"
-            >
-              <Zap size={14} className="fill-current text-amber-300" />
-              <span className="hidden sm:inline">App de Lançamento</span>
-              <span className="sm:hidden">Lançar</span>
-            </button>
-
             {/* Google Authentication Pill */}
             {googleUser ? (
               <button
