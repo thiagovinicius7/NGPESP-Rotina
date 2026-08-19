@@ -271,51 +271,27 @@ export async function pushStateToFirestore(state: AppState): Promise<boolean> {
     updatedAt: now
   };
 
-  // Dual-Transport execution:
-  // 1. Direct REST writes in parallel (guaranteed fast HTTP POST/PATCH)
-  const restWrites = Promise.all([
-    writeDocViaRest(DOC_FILA, filaPayload, now),
-    writeDocViaRest(DOC_SERVIDORES, servPayload, now),
-    writeDocViaRest(DOC_HISTORICO, histPayload, now),
-    writeDocViaRest(DOC_PRODUTIVIDADE, prodPayload, now),
-    writeDocViaRest(DOC_STATE, globalPayload, now)
-  ]);
-
-  // 2. SDK setDoc in background (notifies onSnapshot listeners)
-  const sdkWrites = Promise.all([
-    setDoc(doc(db, FIRESTORE_COLL, DOC_FILA), { json: JSON.stringify(filaPayload), updatedAt: now }, { merge: true }),
-    setDoc(doc(db, FIRESTORE_COLL, DOC_SERVIDORES), { json: JSON.stringify(servPayload), updatedAt: now }, { merge: true }),
-    setDoc(doc(db, FIRESTORE_COLL, DOC_HISTORICO), { json: JSON.stringify(histPayload), updatedAt: now }, { merge: true }),
-    setDoc(doc(db, FIRESTORE_COLL, DOC_PRODUTIVIDADE), { json: JSON.stringify(prodPayload), updatedAt: now }, { merge: true }),
-    setDoc(doc(db, FIRESTORE_COLL, DOC_STATE), { json: JSON.stringify(globalPayload), updatedAt: now }, { merge: true })
-  ]).catch(err => {
-    console.warn("Background SDK write note:", err);
-  });
-
+  // Use single clean REST write channel (avoids burning 2x quota with concurrent SDK duplicates)
   try {
-    // Wait for REST writes with a short 8-second timeout
-    const results = await withTimeout(restWrites, 8000, "REST write timeout");
-    const allOk = results.every(r => r === true);
-
-    setTimeout(() => {
-      isWritingToCloud = false;
-    }, 1000);
-
-    if (allOk || results.some(r => r === true)) {
-      console.log("Successfully pushed state to cloud at", new Date(now).toISOString());
-      return true;
+    const results = await Promise.all([
+      writeDocViaRest(DOC_FILA, filaPayload, now),
+      writeDocViaRest(DOC_SERVIDORES, servPayload, now),
+      writeDocViaRest(DOC_HISTORICO, histPayload, now),
+      writeDocViaRest(DOC_PRODUTIVIDADE, prodPayload, now),
+      writeDocViaRest(DOC_STATE, globalPayload, now)
+    ]);
+    
+    isWritingToCloud = false;
+    const anyOk = results.some(r => r === true);
+    if (anyOk) {
+      console.log("Successfully updated cloud state at", new Date(now).toISOString());
     }
-  } catch (restTimeoutErr) {
-    console.warn("REST write timeout, checking SDK writes...", restTimeoutErr);
-    try {
-      await withTimeout(sdkWrites, 5000, "SDK write timeout");
-      isWritingToCloud = false;
-      return true;
-    } catch (_) {}
+    return anyOk;
+  } catch (e) {
+    console.warn("Cloud push error:", e);
+    isWritingToCloud = false;
+    return false;
   }
-
-  isWritingToCloud = false;
-  return true;
 }
 
 /**
