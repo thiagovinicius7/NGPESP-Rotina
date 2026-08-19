@@ -93,37 +93,50 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   }, [lastUpdated]);
 
   const updateState = (newState: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => {
+    const now = Date.now();
     setStateState(prev => {
       const partial = typeof newState === "function" ? newState(prev) : newState;
       const updated = { ...prev, ...partial };
       
       // 1. Save locally immediately for instant offline resilience
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(now));
       saveLocalSnapshot(updated);
       latestStateRef.current = updated;
       stateRef.current = updated;
+      lastUpdatedRef.current = now;
+      setLastUpdated(now);
       
       // 2. Instantly broadcast update to any other open windows/tabs on this machine
       try {
         if (typeof window !== "undefined" && "BroadcastChannel" in window) {
           const bc = new BroadcastChannel(SYNC_CHANNEL_NAME);
-          bc.postMessage({ type: "INTERTAB_STATE_UPDATE", state: updated, timestamp: Date.now() });
+          bc.postMessage({ type: "INTERTAB_STATE_UPDATE", state: updated, timestamp: now });
           bc.close();
         }
       } catch (_) {}
+
+      // 3. Immediately persist to container backend (/api/state) with zero delay
+      if (!isStaticMode) {
+        fetch("/api/state", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state: updated, updatedAt: now })
+        }).catch(() => {});
+      }
 
       return updated;
     });
 
     isDirtyRef.current = true;
 
-    // 3. Debounce pushing to Firestore (and Node server if active)
+    // 4. Debounce pushing to Firestore cloud
     if (pushTimeoutRef.current) {
       clearTimeout(pushTimeoutRef.current);
     }
     pushTimeoutRef.current = setTimeout(() => {
       pushStateToCloud(latestStateRef.current);
-    }, 1000);
+    }, 600);
   };
 
   const pushStateToCloud = async (currentState: AppState) => {
@@ -227,6 +240,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       }
 
       if (serverState) {
+        const mergedFila = mergeFilaAvulsa(stateRef.current.filaAvulsa, serverState.filaAvulsa);
         const mergedState: AppState = {
           ...defaultState,
           ...serverState,
@@ -235,7 +249,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (stateRef.current.respostas || []),
           faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (stateRef.current.faq || []),
           produtividade: mergeProdutividade(stateRef.current.produtividade || {}, serverState.produtividade || {}),
-          filaAvulsa: serverState.filaAvulsa || stateRef.current.filaAvulsa,
+          filaAvulsa: mergedFila,
           balcaoAtendimentos: { ...(stateRef.current.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
           config: { ...(stateRef.current.config || {}), ...(serverState.config || {}) }
         };
@@ -243,14 +257,15 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         setStateState(mergedState);
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
         saveLocalSnapshot(mergedState);
-        setLastUpdated(serverTime || Date.now());
-        localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime || Date.now()));
+        const nextTime = Math.max(serverTime || 0, Date.now());
+        setLastUpdated(nextTime);
+        localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(nextTime));
         isDirtyRef.current = false;
         hasLoadedFromCloudRef.current = true;
         setCloudSynced(true);
         const totalServ = mergedState.servidores?.length || 0;
         const totalFila = mergedState.filaAvulsa?.listas?.[mergedState.filaAvulsa?.ativa || "Padrão"]?.fila?.length || 0;
-        onToast(`Dados baixados da nuvem com sucesso! (${totalServ} servidores, ${totalFila} na fila)`, "ok");
+        onToast(`Sincronização concluída! (${totalServ} servidores, ${totalFila} na fila)`, "ok");
       } else {
         onToast("Nenhum dado encontrado na nuvem ainda. Clique em 'Salvar Este Computador na Nuvem Agora'.", "info");
       }
@@ -262,17 +277,9 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     }
   };
 
-  // General force sync (auto-detects direction)
+  // General force sync (saves current computer state to cloud and server)
   const forceSync = async () => {
-    // If local has servers and cloud is empty, push. Otherwise, pull and merge.
-    const localHasData = (stateRef.current.servidores?.length || 0) > 0 || 
-      Object.values(stateRef.current.filaAvulsa?.listas || {}).some((l: any) => (l?.fila?.length || 0) > 0);
-
-    if (localHasData && !hasLoadedFromCloudRef.current) {
-      await forcePushThisDeviceToCloud();
-    } else {
-      await forcePullFromCloud();
-    }
+    await forcePushThisDeviceToCloud();
   };
 
   // 1. Initial pull on startup to load cloud state on ANY device / browser
@@ -310,7 +317,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
               ...serverState
             };
           } else {
-            // Existing device with data: merge safely
+            // Existing device with data: merge safely without regressing queue progress
+            const mergedFila = mergeFilaAvulsa(cachedState?.filaAvulsa, serverState.filaAvulsa);
             mergedState = {
               ...defaultState,
               ...serverState,
@@ -319,7 +327,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
               respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState?.respostas || []),
               faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState?.faq || []),
               produtividade: mergeProdutividade(cachedState?.produtividade || {}, serverState.produtividade || {}),
-              filaAvulsa: serverState.filaAvulsa || cachedState?.filaAvulsa || defaultState.filaAvulsa,
+              filaAvulsa: mergedFila,
               balcaoAtendimentos: { ...(cachedState?.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
               config: { gmov_data: "", ...(cachedState?.config || {}), ...(serverState.config || {}) }
             };
@@ -328,12 +336,22 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           setStateState(mergedState);
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
           saveLocalSnapshot(mergedState);
-          setLastUpdated(serverTime || Date.now());
-          localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(serverTime || Date.now()));
+          const effectiveTime = Math.max(serverTime || 0, Number(localStorage.getItem(LOCAL_TIMESTAMP_KEY) || 0), Date.now());
+          setLastUpdated(effectiveTime);
+          localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(effectiveTime));
           setCloudSynced(true);
           hasLoadedFromCloudRef.current = true;
           isDirtyRef.current = false;
           console.log("Successfully initialized state from Firestore across devices");
+
+          // Sync back to container backend (/api/state) immediately
+          if (!isStaticMode) {
+            fetch("/api/state", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ state: mergedState, updatedAt: effectiveTime })
+            }).catch(() => {});
+          }
 
           // If local has data that was missing in cloud, push merged back to cloud
           if (localHasData && !cloudHasData) {
@@ -397,7 +415,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           ...prev,
           ...incomingPartial,
           filaAvulsa: incomingPartial.filaAvulsa 
-            ? incomingPartial.filaAvulsa
+            ? mergeFilaAvulsa(prev.filaAvulsa, incomingPartial.filaAvulsa)
             : prev.filaAvulsa,
           servidores: incomingPartial.servidores
             ? incomingPartial.servidores

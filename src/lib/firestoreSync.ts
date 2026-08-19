@@ -49,6 +49,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Pr
   });
 }
 
+export let firestoreQuotaExceeded = false;
+
 /**
  * REST API Write: Ultra-fast, bypasses gRPC/WebChannel connection stalls
  */
@@ -67,7 +69,16 @@ async function writeDocViaRest(docId: string, data: any, timestamp: number): Pro
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     });
-    return res.ok;
+    if (res.status === 429) {
+      firestoreQuotaExceeded = true;
+      console.warn("Firestore daily write quota reached on free tier. Using container backend persistence.");
+      return false;
+    }
+    if (res.ok) {
+      firestoreQuotaExceeded = false;
+      return true;
+    }
+    return false;
   } catch (e) {
     console.warn(`REST write error for ${docId}:`, e);
     return false;
