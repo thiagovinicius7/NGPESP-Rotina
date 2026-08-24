@@ -48,28 +48,19 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     if (!dateVal) return false;
     const hojeYMD = getLocalDateIso();
     const strYmd = toYmdDate(dateVal);
-    if (strYmd === hojeYMD) return true;
-
-    const now = new Date();
-    const hojeDMY = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
-    const hojeDMShort = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-
-    const str = String(dateVal).trim();
-    if (str.includes(hojeDMY) || str.startsWith(hojeDMShort)) return true;
-
-    return false;
+    return strYmd === hojeYMD;
   };
 
   // Daily Turn stats (M vs T)
-  const hojeISO = getLocalDateIso();
   const confHoje = (state.historico || []).filter(h => h && h.ts && isToday(h.ts));
+  const confHojeMatriculas = new Set(confHoje.map(h => h.mat));
   
   let totalSrvManha = 0;
   let totalLancManha = 0;
   let totalSrvTarde = 0;
   let totalLancTarde = 0;
 
-  // 1. Count from state.historico (using precise São Paulo timezone hour)
+  // Count strictly from state.historico for launches actually made today (using precise São Paulo timezone hour)
   confHoje.forEach(h => {
     const hour = getSaoPauloHour(h.ts);
     const lances = Math.max(1, typeof h.qtd === "number" && h.qtd > 0 ? h.qtd : (h.ocorrencias?.length || 1));
@@ -81,56 +72,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       totalLancTarde += lances;
     }
   });
-
-  // 2. Count from state.produtividade entries for today
-  if (state.produtividade && typeof state.produtividade === "object") {
-    Object.entries(state.produtividade).forEach(([dateKey, dayData]) => {
-      if (isToday(dateKey) && dayData && typeof dayData === "object") {
-        if (Array.isArray(dayData.manha)) {
-          dayData.manha.forEach((item: any) => {
-            const num = parseInt(String(item.qtd), 10);
-            const lances = !isNaN(num) && num > 0 ? num : 1;
-            totalSrvManha++;
-            totalLancManha += lances;
-          });
-        }
-        if (Array.isArray(dayData.tarde)) {
-          dayData.tarde.forEach((item: any) => {
-            const num = parseInt(String(item.qtd), 10);
-            const lances = !isNaN(num) && num > 0 ? num : 1;
-            totalSrvTarde++;
-            totalLancTarde += lances;
-          });
-        }
-      }
-    });
-  }
-
-  // 3. Count from any active/completed queue servers launched today
-  const confHojeMatriculas = new Set(confHoje.map(h => h.mat));
-  if (state.filaAvulsa && state.filaAvulsa.listas) {
-    Object.values(state.filaAvulsa.listas).forEach((q: any) => {
-      (q.fila || []).forEach((server: any, sIdx: number) => {
-        if (server && server.matricula && !confHojeMatriculas.has(server.matricula)) {
-          const isProcessed = sIdx < (q.idx || 0);
-          const hasTodayLaunch = (server.ocorrencias || []).some((o: any) => o.checked || isToday(o.dataLancamento));
-          if (isProcessed || hasTodayLaunch) {
-            const ocsCount = (server.ocorrencias || []).filter((o: any) => o.checked || isToday(o.dataLancamento)).length;
-            const lances = ocsCount > 0 ? ocsCount : (server.ocorrencias?.length || 1);
-            const nowHour = getSaoPauloHour();
-            if (nowHour < 13) {
-              totalSrvManha++;
-              totalLancManha += lances;
-            } else {
-              totalSrvTarde++;
-              totalLancTarde += lances;
-            }
-            confHojeMatriculas.add(server.matricula);
-          }
-        }
-      });
-    });
-  }
 
   // Group history by Sector
   const getSectoredConferences = () => {

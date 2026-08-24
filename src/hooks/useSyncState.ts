@@ -420,6 +420,9 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           servidores: incomingPartial.servidores
             ? incomingPartial.servidores
             : prev.servidores,
+          historico: incomingPartial.historico
+            ? incomingPartial.historico
+            : prev.historico,
           produtividade: incomingPartial.produtividade
             ? mergeProdutividade(prev.produtividade, incomingPartial.produtividade)
             : prev.produtividade
