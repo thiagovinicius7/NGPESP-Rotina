@@ -369,7 +369,29 @@ export function subscribeToFirestore(
     );
     unsubs.push(unsubProd);
 
-    // 4. Listen to Global State in real time
+    // 4. Listen to Historico in real time
+    const unsubHist = onSnapshot(
+      doc(db, FIRESTORE_COLL, DOC_HISTORICO),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const raw = snapshot.data();
+          const data = parseDocData(raw);
+          if (data && data.historico) {
+            const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
+            if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
+              return;
+            }
+            onUpdate({ historico: data.historico }, updatedAt);
+          }
+        }
+      },
+      (error) => {
+        console.warn("Firestore Historico subscription notice:", error);
+      }
+    );
+    unsubs.push(unsubHist);
+
+    // 5. Listen to Global State in real time
     const unsubState = onSnapshot(
       doc(db, FIRESTORE_COLL, DOC_STATE),
       (snapshot) => {
