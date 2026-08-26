@@ -1,4 +1,5 @@
 import { AppState, ProdutividadeDia } from "../types";
+import { saveSnapshotToIDB, safeLocalStorageSet } from "./idbStorage.js";
 
 /**
  * Returns YYYY-MM-DD in Brazilian local timezone (America/Sao_Paulo).
@@ -302,17 +303,19 @@ export function mergeFilaAvulsa(f1: any, f2: any): any {
 const SNAPSHOTS_KEY = "ngpesp_local_snapshots";
 
 export interface StateSnapshot {
+  id?: number;
   timestamp: number;
   dateFormatted: string;
   summary: string;
   state: AppState;
 }
 
+// In-memory snapshot cache for instantaneous UI lookups
+let inMemorySnapshots: StateSnapshot[] = [];
+
 export function saveLocalSnapshot(state: AppState) {
   try {
     if (!state || !state.servidores) return;
-    const raw = localStorage.getItem(SNAPSHOTS_KEY);
-    let snapshots: StateSnapshot[] = raw ? JSON.parse(raw) : [];
 
     const now = Date.now();
     const dateFormatted = new Date(now).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
@@ -330,28 +333,48 @@ export function saveLocalSnapshot(state: AppState) {
 
     const summary = `${numServ} servidores, ${numHist} histórico, ${numProdDays} dias prod., ${totalFilaItems} itens Fila (${numFilaListas} listas)`;
 
-    if (snapshots.length > 0) {
-      const last = snapshots[0];
+    if (inMemorySnapshots.length > 0) {
+      const last = inMemorySnapshots[0];
       if (last.summary === summary && (now - last.timestamp) < 300000) {
         return;
       }
     }
 
-    snapshots.unshift({ timestamp: now, dateFormatted, summary, state });
-    snapshots = snapshots.slice(0, 15);
-    localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots));
+    const newSnapshot: StateSnapshot = { timestamp: now, dateFormatted, summary, state };
+    inMemorySnapshots.unshift(newSnapshot);
+    inMemorySnapshots = inMemorySnapshots.slice(0, 15);
+
+    // Save full snapshot asynchronously to IndexedDB (safe from quota limits)
+    saveSnapshotToIDB(newSnapshot).catch(() => {});
+
+    // For localStorage, only store lightweight metadata (no full redundant states)
+    try {
+      const lightweightSnaps = inMemorySnapshots.slice(0, 5).map(s => ({
+        timestamp: s.timestamp,
+        dateFormatted: s.dateFormatted,
+        summary: s.summary
+      }));
+      safeLocalStorageSet(SNAPSHOTS_KEY, JSON.stringify(lightweightSnaps));
+    } catch (_) {}
   } catch (err) {
     console.warn("Could not save local snapshot", err);
   }
 }
 
 export function getLocalSnapshots(): StateSnapshot[] {
+  if (inMemorySnapshots.length > 0) {
+    return inMemorySnapshots;
+  }
   try {
     const raw = localStorage.getItem(SNAPSHOTS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (_) {
-    return [];
-  }
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (_) {}
+  return [];
 }
 
 /**

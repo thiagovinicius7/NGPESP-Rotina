@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { AppState, LaunchCode, NatalAnalysis } from "../types.js";
 import { getLocalDateIso } from "../lib/utils.js";
+import { safeLocalStorageSet } from "../lib/idbStorage.js";
 import { 
   Calculator, FileCode, Image as ImageIcon, Gift, Plus, Search, 
   Trash2, FileUp, X, Save, Edit2, ExternalLink, FilePlus2, 
@@ -134,10 +135,10 @@ export default function SigrhPanel({ state, updateState, onToast }: SigrhPanelPr
       const b64 = evt.target?.result as string;
       if (slot === 1) {
         setImgRef1(b64);
-        localStorage.setItem("ss_dep_img1", b64);
+        safeLocalStorageSet("ss_dep_img1", b64);
       } else {
         setImgRef2(b64);
-        localStorage.setItem("ss_dep_img2", b64);
+        safeLocalStorageSet("ss_dep_img2", b64);
       }
       onToast(`Documento ${slot} carrgado com sucesso!`, "ok");
     };

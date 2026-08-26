@@ -4,6 +4,7 @@ import { mergeProdutividade, mergeFilaAvulsa, saveLocalSnapshot } from "../lib/u
 import { 
   fetchFirestoreState, pushStateToFirestore, subscribeToFirestore 
 } from "../lib/firestoreSync";
+import { safeLocalStorageSet, saveStateToIndexedDB, loadStateFromIndexedDB } from "../lib/idbStorage";
 
 const LOCAL_STORAGE_KEY = "ngpesp_local_state";
 const LOCAL_TIMESTAMP_KEY = "ngpesp_local_updated_at";
@@ -54,8 +55,12 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   });
 
   const [lastUpdated, setLastUpdated] = useState<number>(() => {
-    const cached = localStorage.getItem(LOCAL_TIMESTAMP_KEY);
-    return cached ? Number(cached) : 0;
+    try {
+      const cached = localStorage.getItem(LOCAL_TIMESTAMP_KEY);
+      return cached ? Number(cached) : 0;
+    } catch (_) {
+      return 0;
+    }
   });
 
   const onToastRef = useRef(onToast);
@@ -92,15 +97,37 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     lastUpdatedRef.current = lastUpdated;
   }, [lastUpdated]);
 
+  // Clean up any legacy oversized snapshots in localStorage to permanently prevent quota crashes
+  useEffect(() => {
+    try {
+      const snapRaw = localStorage.getItem("ngpesp_local_snapshots");
+      if (snapRaw && snapRaw.length > 300000) {
+        localStorage.removeItem("ngpesp_local_snapshots");
+      }
+    } catch (_) {}
+
+    // Also check IndexedDB on startup if local state is blank
+    loadStateFromIndexedDB().then(idbState => {
+      if (idbState && (!stateRef.current.servidores || stateRef.current.servidores.length === 0)) {
+        if ((idbState.servidores?.length || 0) > 0 || Object.keys(idbState.filaAvulsa?.listas || {}).length > 0) {
+          setStateState(idbState);
+          latestStateRef.current = idbState;
+          stateRef.current = idbState;
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
   const updateState = (newState: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => {
     const now = Date.now();
     setStateState(prev => {
       const partial = typeof newState === "function" ? newState(prev) : newState;
       const updated = { ...prev, ...partial };
       
-      // 1. Save locally immediately for instant offline resilience
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
-      localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(now));
+      // 1. Save locally with safe storage (never throws QuotaExceededError)
+      safeLocalStorageSet(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+      safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(now));
+      saveStateToIndexedDB(updated).catch(() => {});
       saveLocalSnapshot(updated);
       latestStateRef.current = updated;
       stateRef.current = updated;
@@ -154,7 +181,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       // Push to Firestore (works universally on all devices and GitHub Pages)
       const firestoreOk = await pushStateToFirestore(currentState);
       if (firestoreOk) {
-        localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(now));
+        safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(now));
         setLastUpdated(now);
         isDirtyRef.current = false;
         setCloudSynced(true);
@@ -192,7 +219,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
 
       const now = Date.now();
       setLastUpdated(now);
-      localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(now));
+      safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(now));
       setCloudSynced(true);
       isDirtyRef.current = false;
       hasLoadedFromCloudRef.current = true;
@@ -255,11 +282,12 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         };
 
         setStateState(mergedState);
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
+        safeLocalStorageSet(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
+        saveStateToIndexedDB(mergedState).catch(() => {});
         saveLocalSnapshot(mergedState);
         const nextTime = Math.max(serverTime || 0, Date.now());
         setLastUpdated(nextTime);
-        localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(nextTime));
+        safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(nextTime));
         isDirtyRef.current = false;
         hasLoadedFromCloudRef.current = true;
         setCloudSynced(true);
@@ -293,6 +321,10 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
           if (raw) cachedState = JSON.parse(raw);
         } catch (_) {}
+
+        if (!cachedState) {
+          cachedState = await loadStateFromIndexedDB();
+        }
 
         const localHasData = cachedState && (
           (cachedState.servidores?.length || 0) > 0 ||
@@ -334,11 +366,12 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           }
 
           setStateState(mergedState);
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
+          safeLocalStorageSet(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
+          saveStateToIndexedDB(mergedState).catch(() => {});
           saveLocalSnapshot(mergedState);
           const effectiveTime = Math.max(serverTime || 0, Number(localStorage.getItem(LOCAL_TIMESTAMP_KEY) || 0), Date.now());
           setLastUpdated(effectiveTime);
-          localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(effectiveTime));
+          safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(effectiveTime));
           setCloudSynced(true);
           hasLoadedFromCloudRef.current = true;
           isDirtyRef.current = false;
@@ -385,7 +418,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
               };
 
               setStateState(mergedState);
-              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
+              safeLocalStorageSet(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
+              saveStateToIndexedDB(mergedState).catch(() => {});
               setLastUpdated(serverTime);
               setCloudSynced(true);
               hasLoadedFromCloudRef.current = true;
@@ -428,7 +462,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             : prev.produtividade
         };
 
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(merged));
+        safeLocalStorageSet(LOCAL_STORAGE_KEY, JSON.stringify(merged));
+        saveStateToIndexedDB(merged).catch(() => {});
         saveLocalSnapshot(merged);
         latestStateRef.current = merged;
         stateRef.current = merged;
@@ -437,7 +472,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
 
       if (updatedAt) {
         setLastUpdated(updatedAt);
-        localStorage.setItem(LOCAL_TIMESTAMP_KEY, String(updatedAt));
+        safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(updatedAt));
       }
       setCloudSynced(true);
       hasLoadedFromCloudRef.current = true;
