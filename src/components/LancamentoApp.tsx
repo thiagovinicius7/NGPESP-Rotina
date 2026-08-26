@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert } from "../lib/utils.js";
 import { 
   Zap, CheckCheck, Copy, AlertOctagon, CornerUpLeft, Plus, Trash2, 
   ChevronLeft, ChevronRight, CheckSquare, ListTodo, MessageSquareQuote, 
   Search, ExternalLink, Moon, Sun, Droplet, Maximize2, Minimize2, 
   HelpCircle, RefreshCw, X, ArrowLeft, ArrowRight, Check, Sparkles,
   Layers, Bookmark, Share2, Download, Monitor, Laptop, BookmarkPlus,
-  CheckCircle2, Cloud, UploadCloud
+  CheckCircle2, Cloud, UploadCloud, AlertTriangle, ShieldAlert, Info
 } from "lucide-react";
 
 interface LancamentoAppProps {
@@ -1242,8 +1242,51 @@ export default function LancamentoApp({
             </div>
 
             {/* Occurrences Checklist Matrix */}
-            <div className="p-5 sm:p-7 bg-[var(--bg)]/30 flex-1">
-              <div className="flex items-center justify-between mb-3">
+            <div className="p-5 sm:p-7 bg-[var(--bg)]/30 flex-1 flex flex-col gap-3">
+              {/* Specialized Occurrence Rule Alerts for active server */}
+              {(() => {
+                const activeAlerts = currentQueueServer.ocorrencias
+                  .map(oc => getOccurrenceRuleAlert(oc.tipo, oc.data))
+                  .filter((a): a is NonNullable<typeof a> => a !== null);
+                
+                if (activeAlerts.length === 0) return null;
+
+                const uniqueAlerts = Array.from(new Map(activeAlerts.map(a => [a.type, a])).values());
+
+                return (
+                  <div className="flex flex-col gap-2 mb-1">
+                    {uniqueAlerts.map((alert, idx) => (
+                      <div 
+                        key={idx} 
+                        className={`p-3.5 rounded-xl border flex items-start gap-3 text-xs animate-in fade-in duration-150 ${
+                          alert.type === 'danger_reject_medical'
+                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200'
+                            : 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
+                        }`}
+                      >
+                        {alert.type === 'danger_reject_medical' ? (
+                          <ShieldAlert size={20} className="text-rose-600 dark:text-rose-400 flex-shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertTriangle size={20} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-black text-xs uppercase tracking-wide flex items-center gap-1.5 flex-wrap">
+                            <span>{alert.title}</span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-black border ${alert.badgeClass}`}>
+                              {alert.badge}
+                            </span>
+                          </div>
+                          <p className="mt-1 font-semibold text-xs leading-relaxed opacity-95">
+                            {alert.message}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center justify-between mb-1">
                 <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1.5">
                   <CheckSquare size={14} className="text-blue-500" />
                   Ocorrências / Atestados ({currentQueueServer.ocorrencias.filter(o => o.checked).length} de {currentQueueServer.ocorrencias.length} marcados)
@@ -1261,13 +1304,16 @@ export default function LancamentoApp({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                 {currentQueueServer.ocorrencias.map((oc, i) => {
                   const isChecked = !!oc.checked;
+                  const ruleAlert = getOccurrenceRuleAlert(oc.tipo, oc.data);
                   return (
                     <label
                       key={i}
                       className={`p-3.5 rounded-xl border flex items-start gap-3 cursor-pointer transition-all select-none ${
-                        isChecked 
-                          ? 'bg-blue-500/10 border-blue-500/40 text-[var(--text)] shadow-2xs' 
-                          : 'bg-[var(--surface)] border-[var(--border2)] hover:border-[var(--border)] text-[var(--text2)]'
+                        ruleAlert 
+                          ? `${ruleAlert.cardBorderClass} ${isChecked ? 'shadow-xs' : ''}`
+                          : isChecked 
+                            ? 'bg-blue-500/10 border-blue-500/40 text-[var(--text)] shadow-2xs' 
+                            : 'bg-[var(--surface)] border-[var(--border2)] hover:border-[var(--border)] text-[var(--text2)]'
                       }`}
                     >
                       <input
@@ -1277,13 +1323,20 @@ export default function LancamentoApp({
                         className="w-5 h-5 rounded mt-0.5 cursor-pointer accent-blue-600"
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className={`text-xs font-black truncate ${isChecked ? 'text-[var(--text)]' : 'text-[var(--text2)]'}`}>
                             {oc.tipo}
                           </span>
-                          <span className="text-[10px] font-mono font-bold text-[var(--text2)] opacity-70">
-                            [{i + 1}]
-                          </span>
+                          <div className="flex items-center gap-1">
+                            {ruleAlert && (
+                              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border uppercase tracking-wider ${ruleAlert.badgeClass}`}>
+                                {ruleAlert.type === 'danger_reject_medical' ? 'Rejeitar' : 'Aprovar (Sem SISREF)'}
+                              </span>
+                            )}
+                            <span className="text-[10px] font-mono font-bold text-[var(--text2)] opacity-70">
+                              [{i + 1}]
+                            </span>
+                          </div>
                         </div>
                         {oc.data ? (
                           <div className="text-[11px] font-mono font-bold text-blue-600 dark:text-blue-400 mt-1">
@@ -1292,6 +1345,15 @@ export default function LancamentoApp({
                         ) : (
                           <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1">
                             Sem data especificada
+                          </div>
+                        )}
+                        {ruleAlert && (
+                          <div className={`text-[11px] font-semibold mt-2 p-2 rounded-lg border leading-relaxed ${
+                            ruleAlert.type === 'danger_reject_medical' 
+                              ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/25' 
+                              : 'bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/25'
+                          }`}>
+                            {ruleAlert.message}
                           </div>
                         )}
                       </div>
@@ -1444,24 +1506,43 @@ export default function LancamentoApp({
                 </div>
 
                 <div className="max-h-56 overflow-y-auto divide-y divide-[var(--border2)]">
-                  {importResultados.map((r, i) => (
-                    <label
-                      key={i}
-                      className="p-3 flex items-center gap-3 hover:bg-[var(--bg)]/50 cursor-pointer text-xs"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!!importSelected[i]}
-                        onChange={() => setImportSelected(prev => ({ ...prev, [i]: !prev[i] }))}
-                        className="w-4 h-4 rounded"
-                      />
-                      <span className="font-mono font-bold text-[var(--text2)] min-w-[70px]">{formatMatricula(r.matricula)}</span>
-                      <span className="font-bold text-[var(--text)] flex-1 truncate">{r.nome}</span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-500/10 text-blue-600 rounded">
-                        {r.ocorrencias.length} oc.
-                      </span>
-                    </label>
-                  ))}
+                  {importResultados.map((r, i) => {
+                    const hasRejectRule = r.ocorrencias.some(oc => getOccurrenceRuleAlert(oc.tipo, oc.data)?.type === 'danger_reject_medical');
+                    const hasNoSigrhRule = r.ocorrencias.some(oc => getOccurrenceRuleAlert(oc.tipo, oc.data)?.type === 'info_no_sigrh');
+
+                    return (
+                      <label
+                        key={i}
+                        className={`p-3 flex items-center gap-3 hover:bg-[var(--bg)]/50 cursor-pointer text-xs ${
+                          hasRejectRule ? 'bg-rose-500/5' : hasNoSigrhRule ? 'bg-amber-500/5' : ''
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!importSelected[i]}
+                          onChange={() => setImportSelected(prev => ({ ...prev, [i]: !prev[i] }))}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span className="font-mono font-bold text-[var(--text2)] min-w-[70px]">{formatMatricula(r.matricula)}</span>
+                        <span className="font-bold text-[var(--text)] flex-1 truncate">{r.nome}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {hasRejectRule && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 rounded">
+                              Rejeitar Atest. Médico
+                            </span>
+                          )}
+                          {hasNoSigrhRule && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded">
+                              Atest. c/ comp
+                            </span>
+                          )}
+                          <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-500/10 text-blue-600 rounded">
+                            {r.ocorrencias.length} oc.
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
 
                 <div className="p-3 bg-[var(--bg)] border-t border-[var(--border2)] flex gap-2">

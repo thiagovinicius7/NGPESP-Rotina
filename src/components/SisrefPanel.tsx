@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert } from "../lib/utils.js";
 import { 
   Building2, ListTodo, MessageSquareQuote, Search, UserCheck, 
   Copy, Check, X, ClipboardList, Trash2, Network, ChevronRight, 
   ArrowLeft, CheckCheck, Users, CopyPlus, CheckSquare, Plus, Save,
-  AlertOctagon, CornerUpLeft, Zap
+  AlertOctagon, CornerUpLeft, Zap, AlertTriangle, Info, ShieldAlert, CheckCircle2
 } from "lucide-react";
 
 interface SisrefPanelProps {
@@ -1307,25 +1307,44 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                     </button>
                   </div>
                   <div className="divide-y divide-[var(--border)] max-h-60 overflow-y-auto">
-                    {avulsaResultados.map((r, i) => (
-                      <div 
-                        key={i}
-                        onClick={() => setAvulsaSelected(prev => ({ ...prev, [i]: !prev[i] }))}
-                        className={`p-3.5 flex items-center gap-3 cursor-pointer hover:bg-[var(--bg)]/20 ${avulsaSelected[i] ? 'bg-[var(--blue-light)]/20' : ''}`}
-                      >
-                        <input 
-                          type="checkbox" 
-                          checked={!!avulsaSelected[i]}
-                          onChange={() => {}} // handled by click container
-                          className="w-4.5 h-4.5 rounded"
-                        />
-                        <span className="font-mono text-xs font-bold text-[var(--text2)] min-w-20">{r.matricula}</span>
-                        <span className="font-bold text-sm text-[var(--text)] flex-1 truncate">{r.nome}</span>
-                        <span className="text-xs font-bold bg-[var(--blue-light)] text-[var(--blue-mid)] px-2 py-0.5 rounded truncate">
-                          {r.tipos.join(' · ')}
-                        </span>
-                      </div>
-                    ))}
+                    {avulsaResultados.map((r, i) => {
+                      const hasRejectRule = r.ocorrencias.some(oc => getOccurrenceRuleAlert(oc.tipo, oc.data)?.type === 'danger_reject_medical');
+                      const hasNoSigrhRule = r.ocorrencias.some(oc => getOccurrenceRuleAlert(oc.tipo, oc.data)?.type === 'info_no_sigrh');
+
+                      return (
+                        <div 
+                          key={i}
+                          onClick={() => setAvulsaSelected(prev => ({ ...prev, [i]: !prev[i] }))}
+                          className={`p-3.5 flex items-center gap-3 cursor-pointer hover:bg-[var(--bg)]/20 ${
+                            avulsaSelected[i] ? 'bg-[var(--blue-light)]/20' : ''
+                          } ${hasRejectRule ? 'border-l-4 border-rose-500' : hasNoSigrhRule ? 'border-l-4 border-amber-500' : ''}`}
+                        >
+                          <input 
+                            type="checkbox" 
+                            checked={!!avulsaSelected[i]}
+                            onChange={() => {}} // handled by click container
+                            className="w-4.5 h-4.5 rounded"
+                          />
+                          <span className="font-mono text-xs font-bold text-[var(--text2)] min-w-20">{r.matricula}</span>
+                          <span className="font-bold text-sm text-[var(--text)] flex-1 truncate">{r.nome}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {hasRejectRule && (
+                              <span className="text-[10px] font-black px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 rounded">
+                                Rejeitar Atest. Médico
+                              </span>
+                            )}
+                            {hasNoSigrhRule && (
+                              <span className="text-[10px] font-black px-1.5 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded">
+                                Atest. c/ comp
+                              </span>
+                            )}
+                            <span className="text-xs font-bold bg-[var(--blue-light)] text-[var(--blue-mid)] px-2 py-0.5 rounded truncate">
+                              {r.tipos.join(' · ')}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                   <div className="p-4 bg-[var(--bg)] border-t border-[var(--border)]">
                     <button 
@@ -1404,33 +1423,98 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                       </div>
                     </div>
 
+                    {/* Occurrence Alert Banner for active server */}
+                    {(() => {
+                      const activeAlerts = currentQueueServer.ocorrencias
+                        .map(oc => getOccurrenceRuleAlert(oc.tipo, oc.data))
+                        .filter((a): a is NonNullable<typeof a> => a !== null);
+                      
+                      if (activeAlerts.length === 0) return null;
+
+                      // Unique alerts by type
+                      const uniqueAlerts = Array.from(new Map(activeAlerts.map(a => [a.type, a])).values());
+
+                      return (
+                        <div className="flex flex-col gap-2">
+                          {uniqueAlerts.map((alert, idx) => (
+                            <div 
+                              key={idx} 
+                              className={`p-3 rounded-xl border flex items-start gap-2.5 text-xs ${
+                                alert.type === 'danger_reject_medical'
+                                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200'
+                                  : 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
+                              }`}
+                            >
+                              {alert.type === 'danger_reject_medical' ? (
+                                <ShieldAlert size={18} className="text-rose-600 dark:text-rose-400 flex-shrink-0 mt-0.5" />
+                              ) : (
+                                <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="font-black text-xs uppercase tracking-wide flex items-center gap-1.5 flex-wrap">
+                                  <span>{alert.title}</span>
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-black border ${alert.badgeClass}`}>
+                                    {alert.badge}
+                                  </span>
+                                </div>
+                                <p className="mt-1 font-semibold text-xs leading-relaxed opacity-95">
+                                  {alert.message}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
                     {/* Checkboxes grid for doctor cert list */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4 border-t border-[var(--border)] pt-4">
-                      {currentQueueServer.ocorrencias.map((oc, i) => (
-                        <label 
-                          key={i}
-                          className="flex items-center gap-3 p-2 bg-[var(--surface)] hover:bg-[var(--bg)]/20 border border-[var(--border)] rounded-xl cursor-pointer"
-                        >
-                          <input 
-                            type="checkbox" 
-                            checked={!!oc.checked}
-                            onChange={() => toggleOcorrenciaCheck(i)}
-                            className="w-5 h-5 rounded"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <span className="text-sm font-bold text-[var(--text)] block truncate">{oc.tipo}</span>
-                            {oc.data ? (
-                              <span className="text-xs font-semibold text-[var(--blue-mid)] font-mono block mt-0.5">
-                                Data: {oc.data}
-                              </span>
-                            ) : (
-                              <span className="text-xs font-bold text-[var(--red)] block mt-0.5">
-                                Data não identificada
-                              </span>
-                            )}
-                          </div>
-                        </label>
-                      ))}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 border-t border-[var(--border)] pt-4">
+                      {currentQueueServer.ocorrencias.map((oc, i) => {
+                        const ruleAlert = getOccurrenceRuleAlert(oc.tipo, oc.data);
+                        return (
+                          <label 
+                            key={i}
+                            className={`flex items-start gap-3 p-3 bg-[var(--surface)] hover:bg-[var(--bg)]/30 border rounded-xl cursor-pointer transition-all ${
+                              ruleAlert ? ruleAlert.cardBorderClass : 'border-[var(--border)]'
+                            }`}
+                          >
+                            <input 
+                              type="checkbox" 
+                              checked={!!oc.checked}
+                              onChange={() => toggleOcorrenciaCheck(i)}
+                              className="w-5 h-5 rounded mt-0.5"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1 flex-wrap">
+                                <span className="text-sm font-bold text-[var(--text)] block truncate">{oc.tipo}</span>
+                                {ruleAlert && (
+                                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border uppercase tracking-wider ${ruleAlert.badgeClass}`}>
+                                    {ruleAlert.type === 'danger_reject_medical' ? 'Rejeitar' : 'Aprovar (Sem SISREF)'}
+                                  </span>
+                                )}
+                              </div>
+                              {oc.data ? (
+                                <span className="text-xs font-semibold text-[var(--blue-mid)] font-mono block mt-0.5">
+                                  Data: {oc.data}
+                                </span>
+                              ) : (
+                                <span className="text-xs font-bold text-[var(--red)] block mt-0.5">
+                                  Data não identificada
+                                </span>
+                              )}
+                              {ruleAlert && (
+                                <div className={`text-[11px] font-semibold mt-1.5 p-1.5 rounded-lg border ${
+                                  ruleAlert.type === 'danger_reject_medical' 
+                                    ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20' 
+                                    : 'bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/20'
+                                }`}>
+                                  {ruleAlert.message}
+                                </div>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (

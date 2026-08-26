@@ -474,4 +474,103 @@ export function cleanTipoName(rawStr: string): string {
   return s || "";
 }
 
+export interface OccurrenceRuleAlert {
+  type: 'info_no_sigrh' | 'danger_reject_medical';
+  title: string;
+  message: string;
+  badge: string;
+  badgeClass: string;
+  cardBorderClass: string;
+}
+
+/**
+ * Checks specialized business rules for launch occurrences:
+ * 1. "Atest. Comparec. (c/ comp)" -> Inform to approve/accept, but DO NOT launch in SIGRH/SISREF.
+ * 2. "Atestado Médico (Até 3 Dias)" occurring in/after June 2026 -> Must be homologated, so REJECT in SISREF.
+ */
+export function getOccurrenceRuleAlert(tipo: string, dataOcorrencia?: string): OccurrenceRuleAlert | null {
+  if (!tipo) return null;
+  const lowerTipo = tipo.toLowerCase();
+
+  // Rule 1: Atestado Comparecimento com Compensação
+  // "Atest. Comparec. (c/ comp)" vs "Atest. Comparec. (Dec. 34023)"
+  if (
+    (lowerTipo.includes("atest") || lowerTipo.includes("comparec")) &&
+    (lowerTipo.includes("c/ comp") || lowerTipo.includes("c/comp") || lowerTipo.includes("com comp") || lowerTipo.includes("compens")) &&
+    !lowerTipo.includes("34023")
+  ) {
+    return {
+      type: 'info_no_sigrh',
+      title: 'Atestado de Comparecimento (c/ comp)',
+      message: 'Aprovar o documento, porém NÃO lançar no SISREF / SIGRH (não gera lançamento no sistema, diferentemente do Dec. 34023).',
+      badge: 'APROVAR (NÃO LANÇAR NO SISREF)',
+      badgeClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40',
+      cardBorderClass: 'border-amber-400 dark:border-amber-500/60 bg-amber-50/40 dark:bg-amber-950/20'
+    };
+  }
+
+  // Rule 2: Atestado Médico (Até 3 Dias) from June/2026 onwards (2026-06-01+)
+  // Check if occurrence is Atestado Médico (até 3 dias)
+  const isAtestadoMedicoAte3Dias = (
+    lowerTipo.includes("atestado") &&
+    lowerTipo.includes("médico") &&
+    (lowerTipo.includes("até 3") || lowerTipo.includes("ate 3") || lowerTipo.includes("3 dias"))
+  ) || lowerTipo === "atestado médico (até 3 dias)";
+
+  if (isAtestadoMedicoAte3Dias) {
+    // Check occurrence date or current date
+    let isAfterJune2026 = false;
+
+    if (dataOcorrencia) {
+      // Formats: DD/MM/YYYY or YYYY-MM-DD or MM/YYYY
+      const dmy = dataOcorrencia.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      const my = dataOcorrencia.match(/^(\d{1,2})\/(\d{4})/);
+      const ymd = dataOcorrencia.match(/^(\d{4})-(\d{1,2})/);
+
+      if (dmy) {
+        const year = parseInt(dmy[3], 10);
+        const month = parseInt(dmy[2], 10);
+        if (year > 2026 || (year === 2026 && month >= 6)) {
+          isAfterJune2026 = true;
+        }
+      } else if (my) {
+        const year = parseInt(my[2], 10);
+        const month = parseInt(my[1], 10);
+        if (year > 2026 || (year === 2026 && month >= 6)) {
+          isAfterJune2026 = true;
+        }
+      } else if (ymd) {
+        const year = parseInt(ymd[1], 10);
+        const month = parseInt(ymd[2], 10);
+        if (year > 2026 || (year === 2026 && month >= 6)) {
+          isAfterJune2026 = true;
+        }
+      }
+    }
+
+    // Also fallback to current system date if no date provided or occurrence is in current period
+    if (!isAfterJune2026) {
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1; // 1-indexed
+      if (currentYear > 2026 || (currentYear === 2026 && currentMonth >= 6)) {
+        isAfterJune2026 = true;
+      }
+    }
+
+    if (isAfterJune2026) {
+      return {
+        type: 'danger_reject_medical',
+        title: 'Atestado Médico (Até 3 Dias) - Homologação Obrigatória',
+        message: 'A partir de Junho de 2026, todos os atestados médicos (até 3 dias) devem ser homologados. NÃO aceitar para lançamento via SISREF. REJEITAR o documento.',
+        badge: 'REJEITAR DOCUMENTO (HOMOLOGAÇÃO OBRIGATÓRIA)',
+        badgeClass: 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/50',
+        cardBorderClass: 'border-rose-500 dark:border-rose-500/80 bg-rose-50/50 dark:bg-rose-950/30 ring-1 ring-rose-500/30'
+      };
+    }
+  }
+
+  return null;
+}
+
 
