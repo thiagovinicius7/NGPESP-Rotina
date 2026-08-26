@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { AppState, HistoryEntry } from "../types.js";
 import { getLocalDateIso, toYmdDate, cleanTipoName, getSaoPauloHour } from "../lib/utils.js";
 import { 
   Users, CalendarCheck2, Network, Timer, List, PieChart, 
   Trash2, ChevronRight, Edit2, LineChart, Calendar as CalendarIcon, 
-  Sunrise, Sunset, Clock, CornerUpLeft, ArrowDown
+  Sunrise, Sunset, Clock, CornerUpLeft, ArrowDown, FileText,
+  Download, Copy, Printer, Search, Filter, CheckCircle2,
+  FileSpreadsheet, Check, RefreshCw
 } from "lucide-react";
 
 interface RelatorioPanelProps {
@@ -13,10 +15,34 @@ interface RelatorioPanelProps {
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
 }
 
+export interface AfastamentoReportItem {
+  id: string;
+  matricula: string;
+  nome: string;
+  setor: string;
+  cargo?: string;
+  tipo: string;
+  tipoRaw: string;
+  dataOcorrencia: string;
+  dataLancamentoIso: string;
+  dataLancamentoFormatada: string;
+  mesAnoLancamento: string; // YYYY-MM
+  mesAnoOcorrencia?: string; // YYYY-MM
+  origem: string;
+}
+
 export default function RelatorioPanel({ state, updateState, onToast }: RelatorioPanelProps) {
-  const [subTab, setSubTab] = useState<'conf' | 'setor'>('conf');
+  const [subTab, setSubTab] = useState<'afastamentos' | 'conf' | 'setor'>('afastamentos');
   const [expandedSetores, setExpandedSetores] = useState<Record<string, boolean>>({});
   const [anoFiltro, setAnoFiltro] = useState<string>(() => new Date().getFullYear().toString());
+
+  // Report Filters
+  const currentMonthIso = useMemo(() => getLocalDateIso().slice(0, 7), []);
+  const [filtroMes, setFiltroMes] = useState<string>(currentMonthIso);
+  const [filtroTipo, setFiltroTipo] = useState<string>("todos");
+  const [filtroBusca, setFiltroBusca] = useState<string>("");
+  const [criterioMes, setCriterioMes] = useState<'ambos' | 'lancamento' | 'ocorrencia'>('ambos');
+  const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
 
   // Summary Metrics calculations
   const totalServidores = state.servidores.length;
@@ -99,7 +125,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
   };
 
   // Helper to extract Month and Year from any date string or text
-  const parseMonthYear = (text: any): { month: string; year: string; mesAno: string } | null => {
+  const parseMonthYear = (text: any): { month: string; year: string; mesAno: string; yyyyMm: string } | null => {
     if (!text) return null;
     const str = String(text).trim();
     if (!str) return null;
@@ -111,7 +137,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       const yearNum = parseInt(m[3], 10);
       if (monthNum >= 1 && monthNum <= 12 && yearNum >= 1990 && yearNum <= 2100) {
         const mm = String(monthNum).padStart(2, '0');
-        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}`, yyyyMm: `${yearNum}-${mm}` };
       }
     }
 
@@ -123,7 +149,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       if (monthNum >= 1 && monthNum <= 12) {
         const yearNum = yy < 70 ? 2000 + yy : 1900 + yy;
         const mm = String(monthNum).padStart(2, '0');
-        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}`, yyyyMm: `${yearNum}-${mm}` };
       }
     }
 
@@ -134,7 +160,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       const yearNum = parseInt(m[2], 10);
       if (monthNum >= 1 && monthNum <= 12 && yearNum >= 1990 && yearNum <= 2100) {
         const mm = String(monthNum).padStart(2, '0');
-        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}`, yyyyMm: `${yearNum}-${mm}` };
       }
     }
 
@@ -146,7 +172,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       if (monthNum >= 1 && monthNum <= 12) {
         const yearNum = yy < 70 ? 2000 + yy : 1900 + yy;
         const mm = String(monthNum).padStart(2, '0');
-        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}`, yyyyMm: `${yearNum}-${mm}` };
       }
     }
 
@@ -157,7 +183,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       const monthNum = parseInt(m[2], 10);
       if (monthNum >= 1 && monthNum <= 12 && yearNum >= 1990 && yearNum <= 2100) {
         const mm = String(monthNum).padStart(2, '0');
-        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}`, yyyyMm: `${yearNum}-${mm}` };
       }
     }
 
@@ -184,11 +210,362 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       let yy = parseInt(textMatch[2], 10);
       if (mm) {
         const yearNum = yy < 100 ? (yy < 70 ? 2000 + yy : 1900 + yy) : yy;
-        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}` };
+        return { month: mm, year: String(yearNum), mesAno: `${mm}/${yearNum}`, yyyyMm: `${yearNum}-${mm}` };
       }
     }
 
     return null;
+  };
+
+  const formatDateTime = (isoStr: string) => {
+    if (!isoStr) return "";
+    try {
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return isoStr;
+      return d.toLocaleDateString("pt-BR", { 
+        day: "2-digit", 
+        month: "2-digit", 
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    } catch (_) {
+      return isoStr;
+    }
+  };
+
+  // EXTRACT ALL LAUNCHED LEAVES / ABSENCES FROM STATE
+  const todosAfastamentos = useMemo(() => {
+    const list: AfastamentoReportItem[] = [];
+    const seen = new Set<string>();
+
+    // 1. Primary Source: State Historico
+    (state.historico || []).forEach((h, hIdx) => {
+      if (!h || !h.nome) return;
+      const srv = (state.servidores || []).find(s => s.matricula === h.mat);
+      const setor = h.setor || srv?.lotacao || srv?.codLotacao || "Não especificado";
+      const cargo = srv?.cargo || srv?.denominacao || "";
+      const launchIso = h.ts || new Date().toISOString();
+      const launchYmd = toYmdDate(launchIso);
+      const launchMonth = launchYmd.slice(0, 7); // YYYY-MM
+
+      if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
+        h.ocorrencias.forEach((ocStr, ocIdx) => {
+          if (!ocStr) return;
+          const cleanTipo = cleanTipoName(ocStr) || "Lançamento Avulso";
+          
+          // Extract specific occurrence date if present in text
+          let dataOc = "";
+          const dateMatch = ocStr.match(/\b(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\b/);
+          if (dateMatch) {
+            dataOc = dateMatch[1];
+          } else {
+            dataOc = new Date(launchIso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+          }
+
+          const parsedOcMonth = parseMonthYear(dataOc) || parseMonthYear(ocStr);
+          const mesAnoOc = parsedOcMonth ? parsedOcMonth.yyyyMm : undefined;
+
+          const uniqueKey = `${h.mat}_${cleanTipo}_${dataOc}_${launchYmd}_${ocIdx}`;
+          if (!seen.has(uniqueKey)) {
+            seen.add(uniqueKey);
+            list.push({
+              id: `hist_${h.mat}_${hIdx}_${ocIdx}`,
+              matricula: h.mat,
+              nome: h.nome,
+              setor,
+              cargo,
+              tipo: cleanTipo,
+              tipoRaw: ocStr,
+              dataOcorrencia: dataOc,
+              dataLancamentoIso: launchIso,
+              dataLancamentoFormatada: formatDateTime(launchIso),
+              mesAnoLancamento: launchMonth,
+              mesAnoOcorrencia: mesAnoOc,
+              origem: "Histórico de Conferências"
+            });
+          }
+        });
+      } else {
+        // Entry with qtd count but no individual ocorrencias list
+        const cleanTipo = "Conferência / Lançamento Efetuado";
+        const dataOc = new Date(launchIso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+        const uniqueKey = `${h.mat}_${cleanTipo}_${dataOc}_${launchYmd}`;
+        if (!seen.has(uniqueKey)) {
+          seen.add(uniqueKey);
+          list.push({
+            id: `hist_${h.mat}_${hIdx}_gen`,
+            matricula: h.mat,
+            nome: h.nome,
+            setor,
+            cargo,
+            tipo: cleanTipo,
+            tipoRaw: `Lançamento (${h.qtd || 1} item/itens)`,
+            dataOcorrencia: dataOc,
+            dataLancamentoIso: launchIso,
+            dataLancamentoFormatada: formatDateTime(launchIso),
+            mesAnoLancamento: launchMonth,
+            mesAnoOcorrencia: launchMonth,
+            origem: "Histórico de Conferências"
+          });
+        }
+      }
+    });
+
+    // 2. Secondary Source: Fila Avulsa SISREF
+    if (state.filaAvulsa && state.filaAvulsa.listas) {
+      Object.values(state.filaAvulsa.listas).forEach((q: any) => {
+        (q.fila || []).forEach((server: any, sIdx: number) => {
+          if (!server || !server.matricula) return;
+          const srv = (state.servidores || []).find(s => s.matricula === server.matricula);
+          const setor = srv?.lotacao || srv?.codLotacao || "Não especificado";
+          const cargo = srv?.cargo || srv?.denominacao || "";
+
+          (server.ocorrencias || []).forEach((oc: any, ocIdx: number) => {
+            if (oc && (oc.dataLancamento || oc.checked)) {
+              const lIso = oc.dataLancamento || new Date().toISOString();
+              const lYmd = toYmdDate(lIso);
+              const lMonth = lYmd.slice(0, 7);
+              const cleanTipo = cleanTipoName(oc.tipo) || "Afastamento / Ocorrência";
+              const dataOc = oc.data || new Date(lIso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+              const parsedOcMonth = parseMonthYear(dataOc);
+              const mesAnoOc = parsedOcMonth ? parsedOcMonth.yyyyMm : undefined;
+
+              const uniqueKey = `${server.matricula}_${cleanTipo}_${dataOc}_${lYmd}_${ocIdx}`;
+              if (!seen.has(uniqueKey)) {
+                seen.add(uniqueKey);
+                list.push({
+                  id: `fila_${server.matricula}_${sIdx}_${ocIdx}`,
+                  matricula: server.matricula,
+                  nome: server.nome,
+                  setor,
+                  cargo,
+                  tipo: cleanTipo,
+                  tipoRaw: oc.tipo || "",
+                  dataOcorrencia: dataOc,
+                  dataLancamentoIso: lIso,
+                  dataLancamentoFormatada: formatDateTime(lIso),
+                  mesAnoLancamento: lMonth,
+                  mesAnoOcorrencia: mesAnoOc,
+                  origem: "Fila Avulsa SISREF"
+                });
+              }
+            }
+          });
+        });
+      });
+    }
+
+    return list.sort((a, b) => {
+      // Sort newest launches first, then by name
+      const timeDiff = new Date(b.dataLancamentoIso).getTime() - new Date(a.dataLancamentoIso).getTime();
+      if (!isNaN(timeDiff) && timeDiff !== 0) return timeDiff;
+      return a.nome.localeCompare(b.nome, "pt-BR");
+    });
+  }, [state.historico, state.filaAvulsa, state.servidores]);
+
+  // Extract distinct available months
+  const mesesDisponiveis = useMemo(() => {
+    const map = new Map<string, string>();
+    // Always include current month
+    const nowIso = getLocalDateIso().slice(0, 7);
+    const nowObj = parseMonthYear(nowIso);
+    if (nowObj) {
+      map.set(nowIso, `${nowObj.mesAno}`);
+    }
+
+    todosAfastamentos.forEach(item => {
+      if (item.mesAnoLancamento) {
+        const obj = parseMonthYear(item.mesAnoLancamento);
+        if (obj) map.set(item.mesAnoLancamento, obj.mesAno);
+      }
+      if (item.mesAnoOcorrencia) {
+        const obj = parseMonthYear(item.mesAnoOcorrencia);
+        if (obj) map.set(item.mesAnoOcorrencia, obj.mesAno);
+      }
+    });
+
+    return Array.from(map.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([val, label]) => ({ val, label }));
+  }, [todosAfastamentos]);
+
+  // Extract distinct launch / leave types
+  const tiposDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    todosAfastamentos.forEach(item => {
+      if (item.tipo && item.tipo.trim()) {
+        set.add(item.tipo.trim());
+      }
+    });
+
+    // Suggested standard types
+    const defaults = [
+      "Licença Médica / Odontológica",
+      "Atest. Comparec. (Dec. 34023)",
+      "Atest. Comparec. (c/ comp)",
+      "Atestado Médico (Até 3 Dias)",
+      "Atestado Médico (Mais de 3 Dias)",
+      "Declaração de Comparecimento",
+      "Folga Anual Exames Prev/Periód",
+      "Reunião Escolar (Bimestral)",
+      "Doação de Sangue",
+      "Licença Doença Pessoa Família",
+      "Folga Eleitoral (TRE)",
+      "Férias",
+      "Abono Pecuniário",
+      "Serviço Externo",
+      "Greve"
+    ];
+
+    defaults.forEach(d => set.add(d));
+
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [todosAfastamentos]);
+
+  // Filtered Afastamentos
+  const afastamentosFiltrados = useMemo(() => {
+    return todosAfastamentos.filter(item => {
+      // 1. Month Filter
+      if (filtroMes !== "todos") {
+        let matchesMonth = false;
+        if (criterioMes === 'lancamento') {
+          matchesMonth = item.mesAnoLancamento === filtroMes;
+        } else if (criterioMes === 'ocorrencia') {
+          matchesMonth = item.mesAnoOcorrencia === filtroMes;
+        } else {
+          matchesMonth = item.mesAnoLancamento === filtroMes || item.mesAnoOcorrencia === filtroMes;
+        }
+        if (!matchesMonth) return false;
+      }
+
+      // 2. Type Filter
+      if (filtroTipo !== "todos") {
+        const normFilter = filtroTipo.toLowerCase();
+        const normTipo = item.tipo.toLowerCase();
+        const normRaw = item.tipoRaw.toLowerCase();
+        if (!normTipo.includes(normFilter) && !normRaw.includes(normFilter)) {
+          return false;
+        }
+      }
+
+      // 3. Search text
+      if (filtroBusca.trim()) {
+        const query = filtroBusca.toLowerCase().trim();
+        const matchName = item.nome.toLowerCase().includes(query);
+        const matchMat = item.matricula.toLowerCase().includes(query);
+        const matchSetor = item.setor.toLowerCase().includes(query);
+        const matchTipo = item.tipo.toLowerCase().includes(query);
+        const matchData = item.dataOcorrencia.toLowerCase().includes(query);
+        if (!matchName && !matchMat && !matchSetor && !matchTipo && !matchData) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [todosAfastamentos, filtroMes, filtroTipo, filtroBusca, criterioMes]);
+
+  const servidoresUnicosFiltrados = useMemo(() => {
+    return new Set(afastamentosFiltrados.map(a => a.matricula)).size;
+  }, [afastamentosFiltrados]);
+
+  // Helper label for active month
+  const labelMesAtivo = useMemo(() => {
+    if (filtroMes === "todos") return "Todos os Meses";
+    const parsed = parseMonthYear(filtroMes);
+    return parsed ? parsed.mesAno : filtroMes;
+  }, [filtroMes]);
+
+  // Copy as formatted plain text (ideal for SEI dispatch / email)
+  const copiarListaTexto = () => {
+    if (afastamentosFiltrados.length === 0) {
+      onToast("Nenhum afastamento filtrado para copiar.", "info");
+      return;
+    }
+
+    const header = `RELATÓRIO DE AFASTAMENTOS LANÇADOS - ${labelMesAtivo.toUpperCase()}\n` +
+      `Filtro de Tipo: ${filtroTipo === 'todos' ? 'Todos os Tipos' : filtroTipo}\n` +
+      `Total: ${afastamentosFiltrados.length} afastamento(s) de ${servidoresUnicosFiltrados} servidor(es)\n` +
+      `Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}\n\n` +
+      `--------------------------------------------------------------------------------\n`;
+
+    const lines = afastamentosFiltrados.map((item, idx) => {
+      return `${idx + 1}. ${item.nome.toUpperCase()} (Matrícula: ${item.matricula})\n` +
+             `   • Afastamento: ${item.tipo}\n` +
+             `   • Data do Afastamento: ${item.dataOcorrencia}\n` +
+             `   • Lotação: ${item.setor}\n` +
+             `   • Data de Lançamento: ${item.dataLancamentoFormatada}\n`;
+    });
+
+    const fullText = header + lines.join("\n");
+    navigator.clipboard.writeText(fullText);
+    setCopiedFormat("text");
+    setTimeout(() => setCopiedFormat(null), 2500);
+    onToast(`Relatório copiado para a área de transferência (${afastamentosFiltrados.length} itens)!`, "ok");
+  };
+
+  // Copy as Excel/Word Table (TSV)
+  const copiarTabelaExcel = () => {
+    if (afastamentosFiltrados.length === 0) {
+      onToast("Nenhum afastamento filtrado para copiar.", "info");
+      return;
+    }
+
+    const headers = ["Nº", "Nome do Servidor", "Matrícula", "Lotação / Setor", "Afastamento Lançado", "Data do Afastamento", "Data do Lançamento"];
+    const rows = afastamentosFiltrados.map((item, idx) => [
+      String(idx + 1),
+      item.nome,
+      item.matricula,
+      item.setor,
+      item.tipo,
+      item.dataOcorrencia,
+      item.dataLancamentoFormatada
+    ]);
+
+    const tsvContent = [headers.join("\t"), ...rows.map(r => r.join("\t"))].join("\n");
+    navigator.clipboard.writeText(tsvContent);
+    setCopiedFormat("table");
+    setTimeout(() => setCopiedFormat(null), 2500);
+    onToast("Tabela copiada! Você pode colar diretamente no Excel, Word ou SEI.", "ok");
+  };
+
+  // Export as CSV File
+  const exportarCSV = () => {
+    if (afastamentosFiltrados.length === 0) {
+      onToast("Nenhum afastamento filtrado para exportar.", "info");
+      return;
+    }
+
+    const headers = ["Nº", "Nome", "Matrícula", "Lotação", "Cargo", "Afastamento", "Data da Ocorrência", "Data do Lançamento", "Origem"];
+    const rows = afastamentosFiltrados.map((item, idx) => [
+      `"${idx + 1}"`,
+      `"${item.nome.replace(/"/g, '""')}"`,
+      `"${item.matricula}"`,
+      `"${item.setor.replace(/"/g, '""')}"`,
+      `"${(item.cargo || '').replace(/"/g, '""')}"`,
+      `"${item.tipo.replace(/"/g, '""')}"`,
+      `"${item.dataOcorrencia}"`,
+      `"${item.dataLancamentoFormatada}"`,
+      `"${item.origem}"`
+    ]);
+
+    const csvString = "\uFEFF" + [headers.join(";"), ...rows.map(r => r.join(";"))].join("\r\n");
+    const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const mesSlug = filtroMes.replace("/", "-");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `relatorio_afastamentos_${mesSlug}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    onToast("Arquivo CSV baixado com sucesso!", "ok");
+  };
+
+  // Print Report
+  const imprimirRelatorio = () => {
+    window.print();
   };
 
   // Launch Category Statistics (Diário vs Acumulado)
@@ -243,8 +620,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
           const serverProcessedToday = confHojeMatriculas.has(server.matricula);
           const isProcessedInQueue = sIdx < (queue.idx || 0);
 
-          // If history exists, history already records all processed queue items.
-          // In that case, only include unprocessed items that are explicitly checked or stamped today.
           if (hasHistory && isProcessedInQueue) {
             return;
           }
@@ -279,7 +654,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     const anosDisponiveis = new Set<string>();
     anosDisponiveis.add(new Date().getFullYear().toString());
 
-    // 1. Process history entries (historico) for any occurrences - primary source of truth
     if (state.historico && state.historico.length > 0) {
       state.historico.forEach(h => {
         if (h.ocorrencias && Array.isArray(h.ocorrencias) && h.ocorrencias.length > 0) {
@@ -298,7 +672,6 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       });
     }
 
-    // 2. Process active queue occurrences (filaAvulsa)
     if (state.filaAvulsa && state.filaAvulsa.listas) {
       const hasHistory = state.historico && state.historico.length > 0;
       Object.keys(state.filaAvulsa.listas).forEach(listName => {
@@ -431,6 +804,297 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
         </div>
       </div>
 
+      {/* RELATÓRIOS NAVIGATION TABS */}
+      <div className="flex p-1 bg-[var(--border)] rounded-xl gap-1 select-none">
+        <button 
+          onClick={() => setSubTab('afastamentos')}
+          className={`flex-1 py-3 text-xs md:text-sm font-bold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'afastamentos' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)]'}`}
+        >
+          <FileText size={16} /> Relatório de Afastamentos Lançados
+        </button>
+        <button 
+          onClick={() => setSubTab('conf')}
+          className={`flex-1 py-3 text-xs md:text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'conf' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)]'}`}
+        >
+          <List size={16} /> Conferências Recentes
+        </button>
+        <button 
+          onClick={() => setSubTab('setor')}
+          className={`flex-1 py-3 text-xs md:text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'setor' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)]'}`}
+        >
+          <PieChart size={16} /> Por Setor
+        </button>
+      </div>
+
+      {/* TAB 1: RELATÓRIO DE AFASTAMENTOS LANÇADOS NO MÊS */}
+      {subTab === 'afastamentos' && (
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 md:p-6 shadow-sm flex flex-col gap-5">
+          
+          {/* HEADER & FILTERS */}
+          <div className="flex flex-col gap-4 border-b border-[var(--border)] pb-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-base font-black text-[var(--text)] flex items-center gap-2">
+                  <FileText className="text-[var(--blue-mid)]" size={20} />
+                  Relatório Mensal de Afastamentos Lançados
+                </h3>
+                <p className="text-xs text-[var(--text2)] font-medium mt-0.5">
+                  Consulte os afastamentos lançados (Licença Médica, Atestado de Comparecimento, etc.) por mês, com nome, matrícula e data da ocorrência.
+                </p>
+              </div>
+
+              {/* ACTION BUTTONS */}
+              <div className="flex flex-wrap items-center gap-2 mt-2 md:mt-0">
+                <button
+                  onClick={copiarTabelaExcel}
+                  className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm"
+                  title="Copiar tabela formatada para colar no Excel, Word ou SEI"
+                >
+                  {copiedFormat === "table" ? <Check size={14} className="text-emerald-500" /> : <FileSpreadsheet size={14} className="text-emerald-600" />}
+                  <span>{copiedFormat === "table" ? "Tabela Copiada!" : "Copiar Tabela"}</span>
+                </button>
+
+                <button
+                  onClick={copiarListaTexto}
+                  className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm"
+                  title="Copiar em formato de texto estruturado para despacho SEI"
+                >
+                  {copiedFormat === "text" ? <Check size={14} className="text-blue-500" /> : <Copy size={14} className="text-[var(--blue-mid)]" />}
+                  <span>{copiedFormat === "text" ? "Texto Copiado!" : "Copiar Texto"}</span>
+                </button>
+
+                <button
+                  onClick={exportarCSV}
+                  className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm"
+                  title="Baixar planilha CSV"
+                >
+                  <Download size={14} className="text-indigo-500" />
+                  <span>Exportar CSV</span>
+                </button>
+
+                <button
+                  onClick={imprimirRelatorio}
+                  className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm hidden sm:flex"
+                  title="Imprimir relatório"
+                >
+                  <Printer size={14} />
+                  <span>Imprimir</span>
+                </button>
+              </div>
+            </div>
+
+            {/* FILTER CONTROLS BAR */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+              
+              {/* 1. MÊS */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
+                  <CalendarIcon size={13} className="text-[var(--blue-mid)]" /> Mês de Referência
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="month"
+                    value={filtroMes === "todos" ? "" : filtroMes}
+                    onChange={(e) => setFiltroMes(e.target.value || "todos")}
+                    className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-bold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]"
+                  />
+                  {filtroMes !== "todos" ? (
+                    <button
+                      onClick={() => setFiltroMes("todos")}
+                      className="px-2 py-1 text-[11px] font-bold bg-[var(--border)] hover:bg-[var(--border2)] text-[var(--text)] rounded-xl whitespace-nowrap"
+                      title="Exibir todos os meses"
+                    >
+                      Todos
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setFiltroMes(currentMonthIso)}
+                      className="px-2 py-1 text-[11px] font-bold bg-[var(--blue-mid)] text-white rounded-xl whitespace-nowrap"
+                      title="Voltar ao mês atual"
+                    >
+                      Mês Atual
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* 2. TIPO DE AFASTAMENTO */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
+                  <Filter size={13} className="text-[var(--blue-mid)]" /> Tipo de Afastamento
+                </label>
+                <select
+                  value={filtroTipo}
+                  onChange={(e) => setFiltroTipo(e.target.value)}
+                  className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-bold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]"
+                >
+                  <option value="todos">Todos os Tipos de Afastamento</option>
+                  {tiposDisponiveis.map(tipo => (
+                    <option key={tipo} value={tipo}>{tipo}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 3. BUSCA POR NOME / MATRÍCULA */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
+                  <Search size={13} className="text-[var(--blue-mid)]" /> Buscar Servidor / Matrícula
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={filtroBusca}
+                    onChange={(e) => setFiltroBusca(e.target.value)}
+                    placeholder="Nome, matrícula ou setor..."
+                    className="w-full pl-8 pr-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]"
+                  />
+                  <Search size={13} className="absolute left-2.5 top-2.5 text-[var(--text2)]" />
+                  {filtroBusca && (
+                    <button 
+                      onClick={() => setFiltroBusca("")} 
+                      className="absolute right-2.5 top-2.5 text-xs text-[var(--text2)] hover:text-[var(--text)]"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* 4. CRITÉRIO DE DATA */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
+                  <Clock size={13} className="text-[var(--blue-mid)]" /> Critério do Mês
+                </label>
+                <select
+                  value={criterioMes}
+                  onChange={(e) => setCriterioMes(e.target.value as any)}
+                  className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]"
+                >
+                  <option value="ambos">Lançamento ou Ocorrência (Ambos)</option>
+                  <option value="lancamento">Mês do Lançamento no Sistema</option>
+                  <option value="ocorrencia">Mês do Fato Gerador / Atestado</option>
+                </select>
+              </div>
+
+            </div>
+
+            {/* QUICK STATS CHIPS */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="bg-[var(--blue-mid)]/10 text-[var(--blue-mid)] border border-[var(--blue-mid)]/20 px-2.5 py-1 rounded-lg font-bold">
+                  {afastamentosFiltrados.length} afastamento(s) encontrado(s)
+                </span>
+                <span className="bg-[var(--bg)] text-[var(--text2)] border border-[var(--border)] px-2.5 py-1 rounded-lg font-semibold">
+                  {servidoresUnicosFiltrados} servidor(es) distinto(s)
+                </span>
+                {filtroTipo !== "todos" && (
+                  <span className="bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 px-2.5 py-1 rounded-lg font-bold">
+                    Filtro: {filtroTipo}
+                  </span>
+                )}
+                {filtroMes !== "todos" && (
+                  <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-lg font-bold">
+                    Mês: {labelMesAtivo}
+                  </span>
+                )}
+              </div>
+
+              {(filtroTipo !== "todos" || filtroBusca !== "" || filtroMes !== currentMonthIso) && (
+                <button
+                  onClick={() => {
+                    setFiltroMes(currentMonthIso);
+                    setFiltroTipo("todos");
+                    setFiltroBusca("");
+                  }}
+                  className="text-xs font-bold text-[var(--blue-mid)] hover:underline flex items-center gap-1"
+                >
+                  <RefreshCw size={12} /> Redefinir Filtros
+                </button>
+              )}
+            </div>
+
+          </div>
+
+          {/* TABLE OF AFASTAMENTOS */}
+          <div className="border border-[var(--border)] rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="bg-[var(--bg)]/60 text-[var(--text2)] font-bold border-b border-[var(--border)]">
+                    <th className="p-3 w-12 text-center">Nº</th>
+                    <th className="p-3">Servidor</th>
+                    <th className="p-3 w-28">Matrícula</th>
+                    <th className="p-3">Lotação / Setor</th>
+                    <th className="p-3">Afastamento Lançado</th>
+                    <th className="p-3 w-36">Data do Afastamento</th>
+                    <th className="p-3 w-36">Data do Lançamento</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
+                  {afastamentosFiltrados.map((item, idx) => (
+                    <tr key={item.id || idx} className="hover:bg-[var(--bg)]/30 transition-colors">
+                      <td className="p-3 text-center font-mono font-bold text-[var(--text2)] text-[11px]">
+                        {idx + 1}
+                      </td>
+                      <td className="p-3 font-bold text-[var(--text)]">
+                        <div className="text-sm">{item.nome}</div>
+                        {item.cargo && <div className="text-[10px] text-[var(--text2)] font-normal mt-0.5">{item.cargo}</div>}
+                      </td>
+                      <td className="p-3 font-mono font-bold text-[var(--blue-mid)]">
+                        {item.matricula}
+                      </td>
+                      <td className="p-3 text-[var(--text2)] font-medium">
+                        {item.setor}
+                      </td>
+                      <td className="p-3">
+                        <span className="inline-block px-2.5 py-1 rounded-lg text-xs font-bold bg-[var(--blue-light)] text-[var(--blue-mid)] border border-[var(--blue-mid)]/20">
+                          {item.tipo}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono font-bold text-[var(--text)]">
+                        {item.dataOcorrencia || "—"}
+                      </td>
+                      <td className="p-3 font-mono text-[var(--text2)] text-[11px]">
+                        {item.dataLancamentoFormatada || "—"}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {afastamentosFiltrados.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-12 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <FileText size={32} className="text-[var(--text2)]/40" />
+                          <div className="text-sm font-bold text-[var(--text)]">
+                            Nenhum afastamento encontrado para os filtros selecionados.
+                          </div>
+                          <p className="text-xs text-[var(--text2)] max-w-md">
+                            Tente selecionar outro mês de referência, escolher "Todos os Tipos de Afastamento" ou limpar os termos da busca.
+                          </p>
+                          {(filtroTipo !== "todos" || filtroBusca !== "" || filtroMes !== "todos") && (
+                            <button
+                              onClick={() => {
+                                setFiltroMes("todos");
+                                setFiltroTipo("todos");
+                                setFiltroBusca("");
+                              }}
+                              className="mt-2 px-4 py-2 bg-[var(--blue-mid)] text-white text-xs font-bold rounded-xl shadow-sm hover:opacity-90 transition"
+                            >
+                              Ver Todos os Afastamentos
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      )}
+
       {/* STATIC RELATORIO SECTIONS TABLE INJECT */}
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
         <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-4 flex items-center gap-1.5">
@@ -523,22 +1187,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
         </div>
       </div>
 
-      {/* EXPANDABLE CONFERENCES / SECTORS */}
-      <div className="flex p-1 bg-[var(--border)] rounded-xl gap-1 select-none">
-        <button 
-          onClick={() => setSubTab('conf')}
-          className={`flex-1 py-3 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'conf' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)]'}`}
-        >
-          <List size={16} /> Conferências Recentes
-        </button>
-        <button 
-          onClick={() => setSubTab('setor')}
-          className={`flex-1 py-3 text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'setor' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)]'}`}
-        >
-          <PieChart size={16} /> Por Setor
-        </button>
-      </div>
-
+      {/* TAB 2: CONFERÊNCIAS RECENTES */}
       {subTab === 'conf' && (
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden shadow-sm">
           <div className="p-5 border-b border-[var(--border)] bg-[var(--bg)]/30 flex justify-between items-center">
@@ -586,6 +1235,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
         </div>
       )}
 
+      {/* TAB 3: POR SETOR */}
       {subTab === 'setor' && (
         <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden shadow-sm">
           <div className="p-5 border-b border-[var(--border)] bg-[var(--bg)]/30">
@@ -641,3 +1291,4 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     </div>
   );
 }
+
