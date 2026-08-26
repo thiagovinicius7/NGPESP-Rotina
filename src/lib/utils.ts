@@ -300,6 +300,37 @@ export function mergeFilaAvulsa(f1: any, f2: any): any {
   };
 }
 
+/**
+ * Safely merges two history arrays without losing entries across refreshes or multi-device sync.
+ */
+export function mergeHistorico(h1: any[] = [], h2: any[] = []): any[] {
+  const arr1 = Array.isArray(h1) ? h1 : [];
+  const arr2 = Array.isArray(h2) ? h2 : [];
+  if (arr1.length === 0) return arr2;
+  if (arr2.length === 0) return arr1;
+
+  const seen = new Set<string>();
+  const merged: any[] = [];
+
+  // Combine both sets preserving the most recent records first
+  [...arr1, ...arr2].forEach(item => {
+    if (!item) return;
+    // Unique key based on registration, timestamp, and optional quantity/occurrences
+    const key = `${item.mat || ''}_${item.ts || ''}_${item.qtd || 1}_${(item.ocorrencias || []).join('|')}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(item);
+    }
+  });
+
+  // Sort descending by timestamp so latest conferences are always first
+  return merged.sort((a, b) => {
+    const tA = a.ts ? new Date(a.ts).getTime() : 0;
+    const tB = b.ts ? new Date(b.ts).getTime() : 0;
+    return tB - tA;
+  }).slice(0, 5000);
+}
+
 const SNAPSHOTS_KEY = "ngpesp_local_snapshots";
 
 export interface StateSnapshot {
