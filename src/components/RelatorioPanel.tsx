@@ -239,13 +239,13 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
     const list: AfastamentoReportItem[] = [];
     const seen = new Set<string>();
 
-    // 1. Primary Source: State Historico
+    // 1. Primary Source: State Historico (Actual confirmed launches)
     (state.historico || []).forEach((h, hIdx) => {
-      if (!h || !h.nome) return;
+      if (!h || !h.nome || !h.ts) return;
       const srv = (state.servidores || []).find(s => s.matricula === h.mat);
       const setor = h.setor || srv?.lotacao || srv?.codLotacao || "Não especificado";
       const cargo = srv?.cargo || srv?.denominacao || "";
-      const launchIso = h.ts || new Date().toISOString();
+      const launchIso = h.ts;
       const launchYmd = toYmdDate(launchIso);
       const launchMonth = launchYmd.slice(0, 7); // YYYY-MM
 
@@ -312,7 +312,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
       }
     });
 
-    // 2. Secondary Source: Fila Avulsa SISREF
+    // 2. Secondary Source: Fila Avulsa SISREF (Only items with real dataLancamento recorded)
     if (state.filaAvulsa && state.filaAvulsa.listas) {
       Object.values(state.filaAvulsa.listas).forEach((q: any) => {
         (q.fila || []).forEach((server: any, sIdx: number) => {
@@ -322,8 +322,8 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
           const cargo = srv?.cargo || srv?.denominacao || "";
 
           (server.ocorrencias || []).forEach((oc: any, ocIdx: number) => {
-            if (oc && (oc.dataLancamento || oc.checked)) {
-              const lIso = oc.dataLancamento || new Date().toISOString();
+            if (oc && oc.dataLancamento) {
+              const lIso = oc.dataLancamento;
               const lYmd = toYmdDate(lIso);
               const lMonth = lYmd.slice(0, 7);
               const cleanTipo = cleanTipoName(oc.tipo) || "Afastamento / Ocorrência";
@@ -625,8 +625,8 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
           }
 
           ocs.forEach(o => {
-            if (o.checked || Boolean(o.dataLancamento)) {
-              const ocIsToday = isToday(o.dataLancamento) || isToday(o.data) || serverProcessedToday;
+            if (o.dataLancamento) {
+              const ocIsToday = isToday(o.dataLancamento);
               const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo);
               const matchesYear = anoFiltro === "todos" || !dateObj || dateObj.year === anoFiltro;
 
@@ -687,7 +687,7 @@ export default function RelatorioPanel({ state, updateState, onToast }: Relatori
           }
 
           ocs.forEach(o => {
-            if (o.checked || Boolean(o.dataLancamento)) {
+            if (o.dataLancamento) {
               const dateObj = parseMonthYear(o.data) || parseMonthYear(o.tipo);
               if (dateObj) {
                 anosDisponiveis.add(dateObj.year);
