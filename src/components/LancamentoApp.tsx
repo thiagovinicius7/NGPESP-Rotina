@@ -1276,9 +1276,11 @@ export default function LancamentoApp({
                               {alert.badge}
                             </span>
                           </div>
-                          <p className="mt-1 font-semibold text-xs leading-relaxed opacity-95">
-                            {alert.message}
-                          </p>
+                          {alert.message && (
+                            <p className="mt-1 font-semibold text-xs leading-relaxed opacity-95">
+                              {alert.message}
+                            </p>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1330,7 +1332,7 @@ export default function LancamentoApp({
                           <div className="flex items-center gap-1">
                             {ruleAlert && (
                               <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border uppercase tracking-wider ${ruleAlert.badgeClass}`}>
-                                {ruleAlert.type === 'danger_reject_medical' ? 'Rejeitar' : 'Aprovar (Sem SISREF)'}
+                                {ruleAlert.type === 'danger_reject_medical' ? 'Homologação Obrigatória' : 'Aprovar sem lançar no SIGRH'}
                               </span>
                             )}
                             <span className="text-[10px] font-mono font-bold text-[var(--text2)] opacity-70">
@@ -1347,7 +1349,7 @@ export default function LancamentoApp({
                             Sem data especificada
                           </div>
                         )}
-                        {ruleAlert && (
+                        {ruleAlert && ruleAlert.message && (
                           <div className={`text-[11px] font-semibold mt-2 p-2 rounded-lg border leading-relaxed ${
                             ruleAlert.type === 'danger_reject_medical' 
                               ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/25' 
@@ -1528,12 +1530,12 @@ export default function LancamentoApp({
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {hasRejectRule && (
                             <span className="text-[9px] font-black px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 rounded">
-                              Rejeitar Atest. Médico
+                              Homologação Obrigatória
                             </span>
                           )}
                           {hasNoSigrhRule && (
                             <span className="text-[9px] font-black px-1.5 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded">
-                              Atest. c/ comp
+                              Aprovar sem lançar no SIGRH
                             </span>
                           )}
                           <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-500/10 text-blue-600 rounded">
