@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { AppState } from "../types.js";
-import { mergeProdutividade, mergeFilaAvulsa, saveLocalSnapshot } from "../lib/utils";
+import { mergeProdutividade, mergeFilaAvulsa, mergeHistorico, saveLocalSnapshot } from "../lib/utils";
 import { 
   fetchFirestoreState, pushStateToFirestore, subscribeToFirestore 
 } from "../lib/firestoreSync";
@@ -106,14 +106,24 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       }
     } catch (_) {}
 
-    // Also check IndexedDB on startup if local state is blank
+    // Also check IndexedDB on startup to restore full history and data if localStorage was trimmed or empty
     loadStateFromIndexedDB().then(idbState => {
-      if (idbState && (!stateRef.current.servidores || stateRef.current.servidores.length === 0)) {
-        if ((idbState.servidores?.length || 0) > 0 || Object.keys(idbState.filaAvulsa?.listas || {}).length > 0) {
-          setStateState(idbState);
-          latestStateRef.current = idbState;
-          stateRef.current = idbState;
-        }
+      if (idbState) {
+        setStateState(prev => {
+          const mergedHist = mergeHistorico(prev.historico || [], idbState.historico || []);
+          const hasMoreServ = (idbState.servidores?.length || 0) > (prev.servidores?.length || 0);
+          const mergedFila = mergeFilaAvulsa(prev.filaAvulsa, idbState.filaAvulsa);
+          const reconciled: AppState = {
+            ...prev,
+            servidores: hasMoreServ ? idbState.servidores : prev.servidores,
+            historico: mergedHist,
+            filaAvulsa: mergedFila,
+            produtividade: mergeProdutividade(prev.produtividade || {}, idbState.produtividade || {})
+          };
+          latestStateRef.current = reconciled;
+          stateRef.current = reconciled;
+          return reconciled;
+        });
       }
     }).catch(() => {});
   }, []);
@@ -268,11 +278,12 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
 
       if (serverState) {
         const mergedFila = mergeFilaAvulsa(stateRef.current.filaAvulsa, serverState.filaAvulsa);
+        const mergedHist = mergeHistorico(stateRef.current.historico || [], serverState.historico || []);
         const mergedState: AppState = {
           ...defaultState,
           ...serverState,
           servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (stateRef.current.servidores || []),
-          historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (stateRef.current.historico || []),
+          historico: mergedHist,
           respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (stateRef.current.respostas || []),
           faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (stateRef.current.faq || []),
           produtividade: mergeProdutividade(stateRef.current.produtividade || {}, serverState.produtividade || {}),
@@ -351,11 +362,12 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           } else {
             // Existing device with data: merge safely without regressing queue progress
             const mergedFila = mergeFilaAvulsa(cachedState?.filaAvulsa, serverState.filaAvulsa);
+            const mergedHist = mergeHistorico(cachedState?.historico || [], serverState.historico || []);
             mergedState = {
               ...defaultState,
               ...serverState,
               servidores: (serverState.servidores && serverState.servidores.length > 0) ? serverState.servidores : (cachedState?.servidores || []),
-              historico: (serverState.historico && serverState.historico.length > 0) ? serverState.historico : (cachedState?.historico || []),
+              historico: mergedHist,
               respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState?.respostas || []),
               faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState?.faq || []),
               produtividade: mergeProdutividade(cachedState?.produtividade || {}, serverState.produtividade || {}),
@@ -455,7 +467,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             ? incomingPartial.servidores
             : prev.servidores,
           historico: incomingPartial.historico
-            ? incomingPartial.historico
+            ? mergeHistorico(prev.historico, incomingPartial.historico)
             : prev.historico,
           produtividade: incomingPartial.produtividade
             ? mergeProdutividade(prev.produtividade, incomingPartial.produtividade)
