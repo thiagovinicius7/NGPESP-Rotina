@@ -477,7 +477,7 @@ export function cleanTipoName(rawStr: string): string {
 export interface OccurrenceRuleAlert {
   type: 'info_no_sigrh' | 'danger_reject_medical';
   title: string;
-  message: string;
+  message?: string;
   badge: string;
   badgeClass: string;
   cardBorderClass: string;
@@ -485,7 +485,7 @@ export interface OccurrenceRuleAlert {
 
 /**
  * Checks specialized business rules for launch occurrences:
- * 1. "Atest. Comparec. (c/ comp)" -> Inform to approve/accept, but DO NOT launch in SIGRH/SISREF.
+ * 1. "Atest. Comparec. (c/ comp)" -> Inform to approve without launching in SIGRH.
  * 2. "Atestado Médico (Até 3 Dias)" occurring in/after June 2026 -> Must be homologated, so REJECT in SISREF.
  */
 export function getOccurrenceRuleAlert(tipo: string, dataOcorrencia?: string): OccurrenceRuleAlert | null {
@@ -502,8 +502,8 @@ export function getOccurrenceRuleAlert(tipo: string, dataOcorrencia?: string): O
     return {
       type: 'info_no_sigrh',
       title: 'Atestado de Comparecimento (c/ comp)',
-      message: 'Aprovar o documento, porém NÃO lançar no SISREF / SIGRH (não gera lançamento no sistema, diferentemente do Dec. 34023).',
-      badge: 'APROVAR (NÃO LANÇAR NO SISREF)',
+      message: '',
+      badge: 'APROVAR SEM LANÇAR NO SIGRH',
       badgeClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40',
       cardBorderClass: 'border-amber-400 dark:border-amber-500/60 bg-amber-50/40 dark:bg-amber-950/20'
     };
@@ -561,9 +561,9 @@ export function getOccurrenceRuleAlert(tipo: string, dataOcorrencia?: string): O
     if (isAfterJune2026) {
       return {
         type: 'danger_reject_medical',
-        title: 'Atestado Médico (Até 3 Dias) - Homologação Obrigatória',
-        message: 'A partir de Junho de 2026, todos os atestados médicos (até 3 dias) devem ser homologados. NÃO aceitar para lançamento via SISREF. REJEITAR o documento.',
-        badge: 'REJEITAR DOCUMENTO (HOMOLOGAÇÃO OBRIGATÓRIA)',
+        title: 'Atestado Médico (Até 3 Dias)',
+        message: 'A partir de Junho de 2026, todos os atestados médicos (até 3 dias) devem ser homologados.',
+        badge: 'HOMOLOGAÇÃO OBRIGATÓRIA',
         badgeClass: 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/50',
         cardBorderClass: 'border-rose-500 dark:border-rose-500/80 bg-rose-50/50 dark:bg-rose-950/30 ring-1 ring-rose-500/30'
       };

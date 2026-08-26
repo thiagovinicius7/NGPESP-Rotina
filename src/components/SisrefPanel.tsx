@@ -1330,12 +1330,12 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {hasRejectRule && (
                               <span className="text-[10px] font-black px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 rounded">
-                                Rejeitar Atest. Médico
+                                Homologação Obrigatória
                               </span>
                             )}
                             {hasNoSigrhRule && (
                               <span className="text-[10px] font-black px-1.5 py-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded">
-                                Atest. c/ comp
+                                Aprovar sem lançar no SIGRH
                               </span>
                             )}
                             <span className="text-xs font-bold bg-[var(--blue-light)] text-[var(--blue-mid)] px-2 py-0.5 rounded truncate">
@@ -1457,9 +1457,11 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                                     {alert.badge}
                                   </span>
                                 </div>
-                                <p className="mt-1 font-semibold text-xs leading-relaxed opacity-95">
-                                  {alert.message}
-                                </p>
+                                {alert.message && (
+                                  <p className="mt-1 font-semibold text-xs leading-relaxed opacity-95">
+                                    {alert.message}
+                                  </p>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -1489,7 +1491,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                                 <span className="text-sm font-bold text-[var(--text)] block truncate">{oc.tipo}</span>
                                 {ruleAlert && (
                                   <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border uppercase tracking-wider ${ruleAlert.badgeClass}`}>
-                                    {ruleAlert.type === 'danger_reject_medical' ? 'Rejeitar' : 'Aprovar (Sem SISREF)'}
+                                    {ruleAlert.type === 'danger_reject_medical' ? 'Homologação Obrigatória' : 'Aprovar sem lançar no SIGRH'}
                                   </span>
                                 )}
                               </div>
@@ -1502,7 +1504,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                                   Data não identificada
                                 </span>
                               )}
-                              {ruleAlert && (
+                              {ruleAlert && ruleAlert.message && (
                                 <div className={`text-[11px] font-semibold mt-1.5 p-1.5 rounded-lg border ${
                                   ruleAlert.type === 'danger_reject_medical' 
                                     ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20' 
