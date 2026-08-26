@@ -1423,54 +1423,8 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                       </div>
                     </div>
 
-                    {/* Occurrence Alert Banner for active server */}
-                    {(() => {
-                      const activeAlerts = currentQueueServer.ocorrencias
-                        .map(oc => getOccurrenceRuleAlert(oc.tipo, oc.data))
-                        .filter((a): a is NonNullable<typeof a> => a !== null);
-                      
-                      if (activeAlerts.length === 0) return null;
-
-                      // Unique alerts by type
-                      const uniqueAlerts = Array.from(new Map(activeAlerts.map(a => [a.type, a])).values());
-
-                      return (
-                        <div className="flex flex-col gap-2">
-                          {uniqueAlerts.map((alert, idx) => (
-                            <div 
-                              key={idx} 
-                              className={`p-3 rounded-xl border flex items-start gap-2.5 text-xs ${
-                                alert.type === 'danger_reject_medical'
-                                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200'
-                                  : 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
-                              }`}
-                            >
-                              {alert.type === 'danger_reject_medical' ? (
-                                <ShieldAlert size={18} className="text-rose-600 dark:text-rose-400 flex-shrink-0 mt-0.5" />
-                              ) : (
-                                <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <div className="font-black text-xs uppercase tracking-wide flex items-center gap-1.5 flex-wrap">
-                                  <span>{alert.title}</span>
-                                  <span className={`px-2 py-0.5 rounded text-[10px] font-black border ${alert.badgeClass}`}>
-                                    {alert.badge}
-                                  </span>
-                                </div>
-                                {alert.message && (
-                                  <p className="mt-1 font-semibold text-xs leading-relaxed opacity-95">
-                                    {alert.message}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-
                     {/* Checkboxes grid for doctor cert list */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 border-t border-[var(--border)] pt-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4 border-t border-[var(--border)] pt-4">
                       {currentQueueServer.ocorrencias.map((oc, i) => {
                         const ruleAlert = getOccurrenceRuleAlert(oc.tipo, oc.data);
                         return (

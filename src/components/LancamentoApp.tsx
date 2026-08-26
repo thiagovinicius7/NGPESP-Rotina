@@ -1243,51 +1243,6 @@ export default function LancamentoApp({
 
             {/* Occurrences Checklist Matrix */}
             <div className="p-5 sm:p-7 bg-[var(--bg)]/30 flex-1 flex flex-col gap-3">
-              {/* Specialized Occurrence Rule Alerts for active server */}
-              {(() => {
-                const activeAlerts = currentQueueServer.ocorrencias
-                  .map(oc => getOccurrenceRuleAlert(oc.tipo, oc.data))
-                  .filter((a): a is NonNullable<typeof a> => a !== null);
-                
-                if (activeAlerts.length === 0) return null;
-
-                const uniqueAlerts = Array.from(new Map(activeAlerts.map(a => [a.type, a])).values());
-
-                return (
-                  <div className="flex flex-col gap-2 mb-1">
-                    {uniqueAlerts.map((alert, idx) => (
-                      <div 
-                        key={idx} 
-                        className={`p-3.5 rounded-xl border flex items-start gap-3 text-xs animate-in fade-in duration-150 ${
-                          alert.type === 'danger_reject_medical'
-                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200'
-                            : 'bg-amber-500/10 border-amber-500/30 text-amber-900 dark:text-amber-200'
-                        }`}
-                      >
-                        {alert.type === 'danger_reject_medical' ? (
-                          <ShieldAlert size={20} className="text-rose-600 dark:text-rose-400 flex-shrink-0 mt-0.5" />
-                        ) : (
-                          <AlertTriangle size={20} className="text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="font-black text-xs uppercase tracking-wide flex items-center gap-1.5 flex-wrap">
-                            <span>{alert.title}</span>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-black border ${alert.badgeClass}`}>
-                              {alert.badge}
-                            </span>
-                          </div>
-                          {alert.message && (
-                            <p className="mt-1 font-semibold text-xs leading-relaxed opacity-95">
-                              {alert.message}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
-
               <div className="flex items-center justify-between mb-1">
                 <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1.5">
                   <CheckSquare size={14} className="text-blue-500" />
