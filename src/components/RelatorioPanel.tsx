@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { AppState, HistoryEntry, QueueServer } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName, getSaoPauloHour } from "../lib/utils.js";
+import { AppState, HistoryEntry, QueueServer, LancamentoAnteriorItem } from "../types.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getSaoPauloHour, normalizeMatricula } from "../lib/utils.js";
+import ModalColarLancamentosAnteriores from "./ModalColarLancamentosAnteriores.js";
 import { 
   Users, CalendarCheck2, Network, Timer, List, PieChart, 
   Trash2, ChevronRight, Edit2, LineChart, Calendar as CalendarIcon, 
@@ -80,6 +81,66 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
   const [filtroBusca, setFiltroBusca] = useState<string>("");
   const [criterioMes, setCriterioMes] = useState<'ambos' | 'lancamento' | 'ocorrencia'>('ambos');
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
+
+  // Modal Lançamentos Anteriores ao Sistema (Histórico SISREF)
+  const [isModalAnterioresOpen, setIsModalAnterioresOpen] = useState(false);
+
+  const lancamentosSalvos = useMemo<LancamentoAnteriorItem[]>(() => {
+    return (state.config?.lancamentosAnteriores || state.lancamentosAnteriores || []) as LancamentoAnteriorItem[];
+  }, [state.config?.lancamentosAnteriores, state.lancamentosAnteriores]);
+
+  const handleSalvarAnteriores = (novosItens: LancamentoAnteriorItem[], modo: 'adicionar' | 'substituir') => {
+    const atuais = (state.config?.lancamentosAnteriores || state.lancamentosAnteriores || []) as LancamentoAnteriorItem[];
+    let finalItens: LancamentoAnteriorItem[];
+    if (modo === 'substituir') {
+      finalItens = novosItens;
+    } else {
+      const map = new Map<string, LancamentoAnteriorItem>();
+      atuais.forEach(it => {
+        const key = `${normalizeMatricula(it.matricula)}_${(it.tipo || '').toLowerCase()}_${it.dataOcorrencia}_${it.mesAnoOcorrencia}`;
+        map.set(key, it);
+      });
+      novosItens.forEach(it => {
+        const key = `${normalizeMatricula(it.matricula)}_${(it.tipo || '').toLowerCase()}_${it.dataOcorrencia}_${it.mesAnoOcorrencia}`;
+        map.set(key, it);
+      });
+      finalItens = Array.from(map.values());
+    }
+
+    updateState(prev => ({
+      config: {
+        ...(prev.config || {}),
+        lancamentosAnteriores: finalItens
+      },
+      lancamentosAnteriores: finalItens
+    }));
+
+    onToast(`${novosItens.length} lançamento(s) anterior(es) salvo(s) com sucesso! Servidores com afastamentos a partir da data de corte foram atualizados.`, "ok");
+  };
+
+  const handleExcluirAnterior = (id: string) => {
+    const atuais = (state.config?.lancamentosAnteriores || state.lancamentosAnteriores || []) as LancamentoAnteriorItem[];
+    const finalItens = atuais.filter(it => it.id !== id);
+    updateState(prev => ({
+      config: {
+        ...(prev.config || {}),
+        lancamentosAnteriores: finalItens
+      },
+      lancamentosAnteriores: finalItens
+    }));
+    onToast("Lançamento anterior removido do sistema.", "info");
+  };
+
+  const handleLimparTodosAnteriores = () => {
+    updateState(prev => ({
+      config: {
+        ...(prev.config || {}),
+        lancamentosAnteriores: []
+      },
+      lancamentosAnteriores: []
+    }));
+    onToast("Todos os lançamentos anteriores ao sistema foram removidos.", "info");
+  };
 
   // Summary Metrics calculations
   const totalServidores = state.servidores.length;
@@ -393,13 +454,47 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
       });
     }
 
+    // 3. Source: Lançamentos Anteriores ao Sistema (Histórico SISREF colado manualmente)
+    const anteriores = (state.config?.lancamentosAnteriores || state.lancamentosAnteriores || []) as LancamentoAnteriorItem[];
+    anteriores.forEach((item, idx) => {
+      if (!item || !item.matricula) return;
+      const nMat = normalizeMatricula(item.matricula);
+      const srv = (state.servidores || []).find(s => normalizeMatricula(s.matricula) === nMat);
+      const setor = srv?.lotacao || srv?.codLotacao || "Não especificado";
+      const cargo = srv?.cargo || srv?.denominacao || "";
+      const cleanTipo = cleanTipoName(item.tipo) || item.tipo || "Afastamento Anterior";
+      const mesAno = item.mesAnoOcorrencia || (item.dataOcorrencia ? toYmdDate(item.dataOcorrencia).slice(0, 7) : "");
+
+      const uniqueKey = `${nMat}_ant_${cleanTipo}_${item.dataOcorrencia}_${mesAno}_${idx}`;
+      if (!seen.has(uniqueKey)) {
+        seen.add(uniqueKey);
+        list.push({
+          id: item.id || `ant_${nMat}_${idx}`,
+          matricula: item.matricula,
+          nome: item.nome || srv?.nome || "Servidor",
+          setor,
+          cargo,
+          tipo: cleanTipo,
+          tipoRaw: item.tipo,
+          dataOcorrencia: item.dataOcorrencia,
+          dataLancamentoIso: "", // Considerar sem data de lançamento identificada
+          dataLancamentoFormatada: "Lançamento Anterior ao SISREF",
+          mesAnoLancamento: mesAno, // Qualifies in month filters
+          mesAnoOcorrencia: mesAno,
+          origem: "Lançamento Anterior ao SISREF"
+        });
+      }
+    });
+
     return list.sort((a, b) => {
       // Sort newest launches first, then by name
-      const timeDiff = new Date(b.dataLancamentoIso).getTime() - new Date(a.dataLancamentoIso).getTime();
-      if (!isNaN(timeDiff) && timeDiff !== 0) return timeDiff;
+      const valA = a.dataLancamentoIso || (a.mesAnoOcorrencia ? a.mesAnoOcorrencia + "-01" : "");
+      const valB = b.dataLancamentoIso || (b.mesAnoOcorrencia ? b.mesAnoOcorrencia + "-01" : "");
+      const cmp = valB.localeCompare(valA);
+      if (cmp !== 0) return cmp;
       return a.nome.localeCompare(b.nome, "pt-BR");
     });
-  }, [state.historico, state.filaAvulsa, state.servidores]);
+  }, [state.historico, state.filaAvulsa, state.servidores, state.config?.lancamentosAnteriores, state.lancamentosAnteriores]);
 
   // Extract distinct available months
   const mesesDisponiveis = useMemo(() => {
@@ -1339,6 +1434,20 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
                 </button>
 
                 <button
+                  onClick={() => setIsModalAnterioresOpen(true)}
+                  className="px-3 py-2 text-xs font-bold rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 flex items-center gap-1.5 transition shadow-sm"
+                  title="Colar ou gerenciar afastamentos e lançamentos feitos antes do sistema"
+                >
+                  <FileSpreadsheet size={14} className="text-amber-600 dark:text-amber-400" />
+                  <span>Lançamentos Anteriores</span>
+                  {lancamentosSalvos.length > 0 && (
+                    <span className="px-1.5 py-0.2 text-[10px] font-black rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                      {lancamentosSalvos.length}
+                    </span>
+                  )}
+                </button>
+
+                <button
                   onClick={imprimirRelatorio}
                   className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm hidden sm:flex"
                   title="Imprimir relatório"
@@ -1698,54 +1807,102 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
                 </p>
               </div>
 
-              {/* CONTROLE DO MÊS DE CORTE */}
-              <div className="flex flex-wrap items-center gap-2 bg-[var(--bg)]/70 p-2 rounded-xl border border-[var(--border)]">
-                <span className="text-xs font-bold text-[var(--text2)] flex items-center gap-1 pl-1">
-                  <CalendarIcon size={14} /> Data de Corte:
-                </span>
-                <input 
-                  type="month" 
-                  value={corteMesAno}
-                  onChange={(e) => {
-                    setCorteMesAno(e.target.value);
-                    setSelectedMatriculasSemLanc({});
-                  }}
-                  className="px-2.5 py-1.5 text-xs font-bold font-mono rounded-lg bg-[var(--surface)] border border-[var(--border)] text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-mid)]"
-                />
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => {
-                      setCorteMesAno("2025-10");
+              {/* CONTROLES DO MÊS DE CORTE E LANÇAMENTOS ANTERIORES */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2 bg-[var(--bg)]/70 p-2 rounded-xl border border-[var(--border)]">
+                  <span className="text-xs font-bold text-[var(--text2)] flex items-center gap-1 pl-1">
+                    <CalendarIcon size={14} /> Data de Corte:
+                  </span>
+                  <input 
+                    type="month" 
+                    value={corteMesAno}
+                    onChange={(e) => {
+                      setCorteMesAno(e.target.value);
                       setSelectedMatriculasSemLanc({});
                     }}
-                    className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2025-10" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
-                    title="Definir corte para Outubro de 2025"
-                  >
-                    10/2025
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCorteMesAno("2026-01");
-                      setSelectedMatriculasSemLanc({});
-                    }}
-                    className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2026-01" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
-                    title="Definir corte para Janeiro de 2026"
-                  >
-                    01/2026
-                  </button>
-                  <button
-                    onClick={() => {
-                      setCorteMesAno("2026-05");
-                      setSelectedMatriculasSemLanc({});
-                    }}
-                    className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2026-05" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
-                    title="Definir corte para Maio de 2026"
-                  >
-                    05/2026
-                  </button>
+                    className="px-2.5 py-1.5 text-xs font-bold font-mono rounded-lg bg-[var(--surface)] border border-[var(--border)] text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-mid)]"
+                  />
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => {
+                        setCorteMesAno("2025-10");
+                        setSelectedMatriculasSemLanc({});
+                      }}
+                      className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2025-10" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
+                      title="Definir corte para Outubro de 2025"
+                    >
+                      10/2025
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCorteMesAno("2026-01");
+                        setSelectedMatriculasSemLanc({});
+                      }}
+                      className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2026-01" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
+                      title="Definir corte para Janeiro de 2026"
+                    >
+                      01/2026
+                    </button>
+                    <button
+                      onClick={() => {
+                        setCorteMesAno("2026-05");
+                        setSelectedMatriculasSemLanc({});
+                      }}
+                      className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2026-05" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
+                      title="Definir corte para Maio de 2026"
+                    >
+                      05/2026
+                    </button>
+                  </div>
                 </div>
+
+                {/* BOTÃO COLAR LANÇAMENTOS ANTERIORES */}
+                <button
+                  onClick={() => setIsModalAnterioresOpen(true)}
+                  className="px-3.5 py-2.5 text-xs font-bold rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 dark:text-amber-200 flex items-center gap-2 transition shadow-sm"
+                  title="Colar dados de afastamentos antigos para o sistema identificar e dar baixa neste relatório"
+                >
+                  <FileSpreadsheet size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
+                  <span>Colar Lançamentos Anteriores</span>
+                  {lancamentosSalvos.length > 0 && (
+                    <span className="px-1.5 py-0.2 text-[10px] font-black rounded-full bg-amber-500/25 text-amber-900 dark:text-amber-100">
+                      {lancamentosSalvos.length} salvo(s)
+                    </span>
+                  )}
+                </button>
               </div>
             </div>
+
+            {/* BANNER / CALLOUT LANÇAMENTOS ANTERIORES */}
+            {lancamentosSalvos.length > 0 ? (
+              <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200">
+                  <FileSpreadsheet size={18} className="text-amber-600 dark:text-amber-400 shrink-0" />
+                  <div>
+                    <span className="font-black">{lancamentosSalvos.length} lançamento(s) anterior(es) ao sistema</span> cadastrado(s). Os servidores com ocorrências a partir de {formatarMesAnoCurto(corteMesAno)} já foram baixados e saíram da lista de pendentes!
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsModalAnterioresOpen(true)}
+                  className="self-start sm:self-auto px-3 py-1.5 text-xs font-bold text-amber-800 dark:text-amber-200 bg-[var(--surface)] hover:bg-[var(--bg)] rounded-lg border border-amber-500/30 shadow-xs transition shrink-0"
+                >
+                  Gerenciar / Colar Mais
+                </button>
+              </div>
+            ) : (
+              <div className="bg-[var(--bg)]/50 border border-dashed border-[var(--border)] rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-[var(--text2)]">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet size={16} className="text-[var(--blue-mid)] shrink-0" />
+                  <span>Fez lançamentos no SISREF antes de usar o sistema? Cole os dados para o sistema identificar os afastamentos e retirar os servidores deste relatório.</span>
+                </div>
+                <button
+                  onClick={() => setIsModalAnterioresOpen(true)}
+                  className="self-start sm:self-auto px-3 py-1.5 text-xs font-bold bg-[var(--blue-mid)] text-white hover:opacity-90 rounded-lg shrink-0 flex items-center gap-1.5 transition shadow-xs"
+                >
+                  <Plus size={13} /> Colar Lançamentos Anteriores
+                </button>
+              </div>
+            )}
 
             {/* CRITÉRIO DE DATA & BADGE INFORMATIVO */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-[var(--bg)]/40 p-3 rounded-xl border border-[var(--border)]">
@@ -2339,6 +2496,18 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
           </div>
         </div>
       )}
+
+      {/* MODAL COLAR LANÇAMENTOS ANTERIORES AO SISTEMA */}
+      <ModalColarLancamentosAnteriores
+        isOpen={isModalAnterioresOpen}
+        onClose={() => setIsModalAnterioresOpen(false)}
+        servidores={state.servidores}
+        lancamentosSalvos={lancamentosSalvos}
+        onSalvar={handleSalvarAnteriores}
+        onExcluirItem={handleExcluirAnterior}
+        onLimparTodos={handleLimparTodosAnteriores}
+        onToast={onToast}
+      />
 
     </div>
   );

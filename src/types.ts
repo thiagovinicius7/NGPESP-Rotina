@@ -111,8 +111,20 @@ export interface QueueState {
   }[];
 }
 
+export interface LancamentoAnteriorItem {
+  id: string;
+  matricula: string;
+  nome: string;
+  tipo: string;
+  dataOcorrencia: string;
+  mesAnoOcorrencia: string; // YYYY-MM
+  status?: string;
+  origemTexto?: string;
+  criadoEm?: string;
+}
+
 export interface GlobalConfig {
-  gmov_data: string;
+  gmov_data?: string;
   spreadsheetId?: string;
   backupEnabled?: boolean;
   appPassword?: string;
@@ -120,6 +132,7 @@ export interface GlobalConfig {
   lastImportedMatriculas?: string[];
   lastImportCount?: number;
   matriculasCedidos?: string[];
+  lancamentosAnteriores?: LancamentoAnteriorItem[];
 }
 
 export interface AppState {
@@ -137,6 +150,7 @@ export interface AppState {
   balcaoAtendimentos: Record<string, string>; // date(YYYY-MM-DD) -> notes
   faq: { titulo: string; resposta: string }[];
   gasUrl: string;
+  lancamentosAnteriores?: LancamentoAnteriorItem[];
 }
 
 export interface ServerSyncResponse {
