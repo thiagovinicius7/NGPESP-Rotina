@@ -549,55 +549,51 @@ export function getOccurrenceRuleAlert(tipo: string, dataOcorrencia?: string): O
   ) || lowerTipo === "atestado médico (até 3 dias)";
 
   if (isAtestadoMedicoAte3Dias) {
-    // Check occurrence date or current date
-    let isAfterMay2026 = false;
+    // Determine the occurrence date (fato gerador) from dataOcorrencia or tipo text
+    const dateText = `${dataOcorrencia || ""} ${tipo || ""}`;
 
-    if (dataOcorrencia) {
-      // Formats: DD/MM/YYYY or YYYY-MM-DD or MM/YYYY
-      const dmy = dataOcorrencia.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-      const my = dataOcorrencia.match(/^(\d{1,2})\/(\d{4})/);
-      const ymd = dataOcorrencia.match(/^(\d{4})-(\d{1,2})/);
+    // Search for date patterns:
+    // 1. DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    const dmy = dateText.match(/(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})/);
+    // 2. YYYY-MM-DD or YYYY/MM/DD
+    const ymd = dateText.match(/(\d{4})[\/\.-](\d{1,2})[\/\.-](\d{1,2})/);
+    // 3. MM/YYYY or MM-YYYY
+    const my = dateText.match(/(?:^|\D)(\d{1,2})[\/\.-](\d{4})(?:\D|$)/);
 
-      if (dmy) {
-        const year = parseInt(dmy[3], 10);
-        const month = parseInt(dmy[2], 10);
-        if (year > 2026 || (year === 2026 && month >= 5)) {
-          isAfterMay2026 = true;
-        }
-      } else if (my) {
-        const year = parseInt(my[2], 10);
-        const month = parseInt(my[1], 10);
-        if (year > 2026 || (year === 2026 && month >= 5)) {
-          isAfterMay2026 = true;
-        }
-      } else if (ymd) {
-        const year = parseInt(ymd[1], 10);
-        const month = parseInt(ymd[2], 10);
-        if (year > 2026 || (year === 2026 && month >= 5)) {
-          isAfterMay2026 = true;
-        }
+    let year: number | null = null;
+    let month: number | null = null;
+
+    if (dmy) {
+      year = parseInt(dmy[3], 10);
+      month = parseInt(dmy[2], 10);
+    } else if (ymd) {
+      year = parseInt(ymd[1], 10);
+      month = parseInt(ymd[2], 10);
+    } else if (my) {
+      year = parseInt(my[2], 10);
+      month = parseInt(my[1], 10);
+    } else {
+      // Look for standalone 4 digit year
+      const yOnly = dateText.match(/\b(20\d{2})\b/);
+      if (yOnly) {
+        year = parseInt(yOnly[1], 10);
       }
     }
 
-    // Also fallback to current system date if no date provided or occurrence is in current period
-    if (!isAfterMay2026) {
-      const now = new Date();
-      const currentYear = now.getFullYear();
-      const currentMonth = now.getMonth() + 1; // 1-indexed
-      if (currentYear > 2026 || (currentYear === 2026 && currentMonth >= 5)) {
-        isAfterMay2026 = true;
+    // Only alert if the occurrence date (fato gerador) is strictly in or after May/2026 (>= 2026-05)
+    // If occurrence is from 2025 or Jan-Apr 2026, do NOT alert!
+    if (year !== null) {
+      const isAfterMay2026 = year > 2026 || (year === 2026 && (month === null || month >= 5));
+      if (isAfterMay2026) {
+        return {
+          type: 'danger_reject_medical',
+          title: 'Atestado Médico (Até 3 Dias)',
+          message: 'A partir de Maio de 2026, todos os atestados médicos (até 3 dias) devem ser homologados.',
+          badge: 'HOMOLOGAÇÃO OBRIGATÓRIA',
+          badgeClass: 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/50',
+          cardBorderClass: 'border-rose-500 dark:border-rose-500/80 bg-rose-50/50 dark:bg-rose-950/30 ring-1 ring-rose-500/30'
+        };
       }
-    }
-
-    if (isAfterMay2026) {
-      return {
-        type: 'danger_reject_medical',
-        title: 'Atestado Médico (Até 3 Dias)',
-        message: 'A partir de Maio de 2026, todos os atestados médicos (até 3 dias) devem ser homologados.',
-        badge: 'HOMOLOGAÇÃO OBRIGATÓRIA',
-        badgeClass: 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/50',
-        cardBorderClass: 'border-rose-500 dark:border-rose-500/80 bg-rose-50/50 dark:bg-rose-950/30 ring-1 ring-rose-500/30'
-      };
     }
   }
 
