@@ -2,6 +2,19 @@ import { AppState, ProdutividadeDia } from "../types";
 import { saveSnapshotToIDB, safeLocalStorageSet } from "./idbStorage.js";
 
 /**
+ * Standardizes server matricula by trimming, removing non-alphanumeric chars,
+ * padding with leading zeros up to 8 chars if numeric, and lowercasing.
+ */
+export function normalizeMatricula(m: any): string {
+  if (!m) return "";
+  let clean = String(m).trim().replace(/[^a-zA-Z0-9]/g, "");
+  if (/^\d+$/.test(clean) && clean.length > 0 && clean.length < 8) {
+    clean = clean.padStart(8, "0");
+  }
+  return clean.toLowerCase();
+}
+
+/**
  * Returns YYYY-MM-DD in Brazilian local timezone (America/Sao_Paulo).
  * Avoids the UTC date shift problem of new Date().toISOString().
  */
