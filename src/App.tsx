@@ -567,6 +567,10 @@ export default function App() {
               state={state} 
               updateState={updateState} 
               onToast={showToast} 
+              onNavigateToSisref={() => {
+                setActiveTab('sisref');
+                setSisrefSubTab('avulsa');
+              }}
             />
           )}
         </main>
