@@ -52,6 +52,26 @@ export interface ServidorSemLancamentoItem {
   totalHistorico: number;
 }
 
+// Format YYYY-MM to readable Portuguese (e.g. "Outubro de 2025 (10/2025)")
+function formatarMesAnoExtenso(yyyyMm: string): string {
+  if (!yyyyMm || !yyyyMm.includes("-")) return yyyyMm || "";
+  const [y, m] = yyyyMm.split("-");
+  const meses = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+  ];
+  const mNum = parseInt(m, 10);
+  const mNome = meses[mNum - 1] || m;
+  return `${mNome} de ${y} (${m}/${y})`;
+}
+
+// Format YYYY-MM to short label (e.g. "10/2025")
+function formatarMesAnoCurto(yyyyMm: string): string {
+  if (!yyyyMm || !yyyyMm.includes("-")) return yyyyMm || "";
+  const [y, m] = yyyyMm.split("-");
+  return `${m}/${y}`;
+}
+
 export default function RelatorioPanel({ state, updateState, onToast, onNavigateToSisref }: RelatorioPanelProps) {
   const [subTab, setSubTab] = useState<'afastamentos' | 'sem-lancamentos' | 'conf' | 'setor'>('afastamentos');
   const [expandedSetores, setExpandedSetores] = useState<Record<string, boolean>>({});
@@ -96,12 +116,14 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
       finalItens = novosItens;
     } else {
       const map = new Map<string, LancamentoAnteriorItem>();
-      atuais.forEach(it => {
-        const key = `${normalizeMatricula(it.matricula)}_${(it.tipo || '').toLowerCase()}_${it.dataOcorrencia}_${it.mesAnoOcorrencia}`;
+      (atuais || []).forEach(it => {
+        if (!it || !it.matricula) return;
+        const key = `${normalizeMatricula(it.matricula)}_${(it.tipo || '').toLowerCase()}_${it.dataOcorrencia || ''}_${it.mesAnoOcorrencia || ''}`;
         map.set(key, it);
       });
-      novosItens.forEach(it => {
-        const key = `${normalizeMatricula(it.matricula)}_${(it.tipo || '').toLowerCase()}_${it.dataOcorrencia}_${it.mesAnoOcorrencia}`;
+      (novosItens || []).forEach(it => {
+        if (!it || !it.matricula) return;
+        const key = `${normalizeMatricula(it.matricula)}_${(it.tipo || '').toLowerCase()}_${it.dataOcorrencia || ''}_${it.mesAnoOcorrencia || ''}`;
         map.set(key, it);
       });
       finalItens = Array.from(map.values());
@@ -459,7 +481,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
     anteriores.forEach((item, idx) => {
       if (!item || !item.matricula) return;
       const nMat = normalizeMatricula(item.matricula);
-      const srv = (state.servidores || []).find(s => normalizeMatricula(s.matricula) === nMat);
+      const srv = (state.servidores || []).find(s => s && s.matricula && normalizeMatricula(s.matricula) === nMat);
       const setor = srv?.lotacao || srv?.codLotacao || "Não especificado";
       const cargo = srv?.cargo || srv?.denominacao || "";
       const cleanTipo = cleanTipoName(item.tipo) || item.tipo || "Afastamento Anterior";
@@ -700,13 +722,6 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
     window.print();
   };
 
-  // Helper to normalize matriculas consistently across datasets
-  const normalizeMatricula = (m: any): string => {
-    if (!m) return "";
-    const clean = String(m).replace(/\D/g, "");
-    return clean ? clean.replace(/^0+/, "") : "";
-  };
-
   // Set of normalized matriculas of ceded servers (servidores cedidos)
   const cedidosNormSet = useMemo(() => {
     return new Set((state.config?.matriculasCedidos || []).map(m => normalizeMatricula(m)).filter(Boolean));
@@ -732,26 +747,6 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
 
     return { mapMat, mapNome };
   }, [todosAfastamentos]);
-
-  // Format YYYY-MM to readable Portuguese (e.g. "Outubro de 2025 (10/2025)")
-  const formatarMesAnoExtenso = (yyyyMm: string) => {
-    if (!yyyyMm || !yyyyMm.includes("-")) return yyyyMm;
-    const [y, m] = yyyyMm.split("-");
-    const meses = [
-      "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-      "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
-    ];
-    const mNum = parseInt(m, 10);
-    const mNome = meses[mNum - 1] || m;
-    return `${mNome} de ${y} (${m}/${y})`;
-  };
-
-  // Format YYYY-MM to short label (e.g. "10/2025")
-  const formatarMesAnoCurto = (yyyyMm: string) => {
-    if (!yyyyMm || !yyyyMm.includes("-")) return yyyyMm;
-    const [y, m] = yyyyMm.split("-");
-    return `${m}/${y}`;
-  };
 
   // Compute analysis of all servers against the cutoff month
   const relatorioSemLancamentoCompleto = useMemo(() => {

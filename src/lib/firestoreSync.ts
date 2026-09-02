@@ -266,6 +266,7 @@ export async function pushStateToFirestore(state: AppState): Promise<boolean> {
       balcaoAtendimentos: state.balcaoAtendimentos || {},
       faq: state.faq || [],
       config: state.config || {},
+      lancamentosAnteriores: state.lancamentosAnteriores || state.config?.lancamentosAnteriores || [],
       gasUrl: state.gasUrl || ""
     },
     updatedAt: now

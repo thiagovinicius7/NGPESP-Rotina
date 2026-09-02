@@ -118,7 +118,13 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             servidores: hasMoreServ ? idbState.servidores : prev.servidores,
             historico: mergedHist,
             filaAvulsa: mergedFila,
-            produtividade: mergeProdutividade(prev.produtividade || {}, idbState.produtividade || {})
+            produtividade: mergeProdutividade(prev.produtividade || {}, idbState.produtividade || {}),
+            lancamentosAnteriores: (idbState.lancamentosAnteriores?.length || 0) > (prev.lancamentosAnteriores?.length || 0) ? idbState.lancamentosAnteriores : prev.lancamentosAnteriores,
+            config: {
+              ...(prev.config || {}),
+              ...(idbState.config || {}),
+              lancamentosAnteriores: (idbState.config?.lancamentosAnteriores?.length || 0) > (prev.config?.lancamentosAnteriores?.length || 0) ? idbState.config?.lancamentosAnteriores : prev.config?.lancamentosAnteriores
+            }
           };
           latestStateRef.current = reconciled;
           stateRef.current = reconciled;
