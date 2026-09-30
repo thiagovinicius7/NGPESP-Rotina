@@ -123,6 +123,15 @@ export interface LancamentoAnteriorItem {
   criadoEm?: string;
 }
 
+export interface CasoEspecialItem {
+  id: string;
+  matricula: string;
+  nome?: string;
+  motivo: string; // Ex: "Contrato Temporário", "Caso Especial", etc.
+  observacao?: string;
+  criadoEm?: string;
+}
+
 export interface GlobalConfig {
   gmov_data?: string;
   spreadsheetId?: string;
@@ -132,6 +141,7 @@ export interface GlobalConfig {
   lastImportedMatriculas?: string[];
   lastImportCount?: number;
   matriculasCedidos?: string[];
+  casosEspeciais?: CasoEspecialItem[];
   lancamentosAnteriores?: LancamentoAnteriorItem[];
 }
 
@@ -151,6 +161,7 @@ export interface AppState {
   faq: { titulo: string; resposta: string }[];
   gasUrl: string;
   lancamentosAnteriores?: LancamentoAnteriorItem[];
+  casosEspeciais?: CasoEspecialItem[];
 }
 
 export interface ServerSyncResponse {

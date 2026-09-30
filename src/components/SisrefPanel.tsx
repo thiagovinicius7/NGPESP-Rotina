@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial } from "../lib/utils.js";
+import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { 
   Building2, ListTodo, MessageSquareQuote, Search, UserCheck, 
   Copy, Check, X, ClipboardList, Trash2, Network, ChevronRight, 
   ArrowLeft, CheckCheck, Users, CopyPlus, CheckSquare, Plus, Save,
-  AlertOctagon, CornerUpLeft, Zap, AlertTriangle, Info, ShieldAlert, CheckCircle2
+  AlertOctagon, CornerUpLeft, Zap, AlertTriangle, Info, ShieldAlert, CheckCircle2,
+  Star
 } from "lucide-react";
 
 interface SisrefPanelProps {
@@ -115,6 +117,9 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
   const [avulsaTxt, setAvulsaTxt] = useState("");
   const [avulsaResultados, setAvulsaResultados] = useState<QueueServer[]>([]);
   const [avulsaSelected, setAvulsaSelected] = useState<Record<number, boolean>>({});
+  const [showCasosModal, setShowCasosModal] = useState(false);
+
+  const casosEspeciaisList = state.config?.casosEspeciais || state.casosEspeciais || [];
 
   // Respostas Sub-tab state
   const [respBusca, setRespBusca] = useState("");
@@ -860,6 +865,16 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                       <div className="text-xs font-semibold text-[var(--blue-mid)] mt-1 font-mono">
                         {selectedServer.matricula} · {selectedServer.cargo}
                       </div>
+                      {(() => {
+                        const ce = findCasoEspecial(selectedServer.matricula, casosEspeciaisList);
+                        if (!ce) return null;
+                        return (
+                          <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500 text-white font-black text-xs shadow-2xs">
+                            <Star size={12} className="fill-current" />
+                            <span>SELO: CASO ESPECIAL ({ce.motivo})</span>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <button 
                       onClick={() => copiarTexto(selectedServer.matricula)}
@@ -1184,6 +1199,16 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
               </select>
             </div>
             <div className="flex gap-2 flex-wrap items-center">
+              <button
+                type="button"
+                onClick={() => setShowCasosModal(true)}
+                className="text-xs font-bold bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 px-3.5 py-2 rounded-lg flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                title="Visualizar e gerenciar lista de casos especiais com selo de aviso"
+              >
+                <Star size={14} className="fill-current text-amber-500" />
+                <span>Casos Especiais ({casosEspeciaisList.length})</span>
+              </button>
+
               <button 
                 type="button"
                 onClick={() => {
@@ -1310,6 +1335,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                     {avulsaResultados.map((r, i) => {
                       const hasRejectRule = r.ocorrencias.some(oc => getOccurrenceRuleAlert(oc.tipo, oc.data)?.type === 'danger_reject_medical');
                       const hasNoSigrhRule = r.ocorrencias.some(oc => getOccurrenceRuleAlert(oc.tipo, oc.data)?.type === 'info_no_sigrh');
+                      const casoEsp = findCasoEspecial(r.matricula, casosEspeciaisList);
 
                       return (
                         <div 
@@ -1317,7 +1343,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                           onClick={() => setAvulsaSelected(prev => ({ ...prev, [i]: !prev[i] }))}
                           className={`p-3.5 flex items-center gap-3 cursor-pointer hover:bg-[var(--bg)]/20 ${
                             avulsaSelected[i] ? 'bg-[var(--blue-light)]/20' : ''
-                          } ${hasRejectRule ? 'border-l-4 border-rose-500' : hasNoSigrhRule ? 'border-l-4 border-amber-500' : ''}`}
+                          } ${casoEsp ? 'border-l-4 border-amber-500 bg-amber-500/5' : hasRejectRule ? 'border-l-4 border-rose-500' : hasNoSigrhRule ? 'border-l-4 border-amber-500' : ''}`}
                         >
                           <input 
                             type="checkbox" 
@@ -1328,6 +1354,11 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                           <span className="font-mono text-xs font-bold text-[var(--text2)] min-w-20">{r.matricula}</span>
                           <span className="font-bold text-sm text-[var(--text)] flex-1 truncate">{r.nome}</span>
                           <div className="flex items-center gap-1.5 flex-wrap">
+                            {casoEsp && (
+                              <span className="text-[10px] font-black px-2 py-0.5 bg-amber-500 text-white rounded shadow-2xs flex items-center gap-1">
+                                ⭐ {casoEsp.motivo || "Caso Especial"}
+                              </span>
+                            )}
                             {hasRejectRule && (
                               <span className="text-[10px] font-black px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 rounded">
                                 Homologação Obrigatória
@@ -1389,6 +1420,37 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                 {/* Active check card */}
                 {currentQueueServer ? (
                   <div className="p-6 bg-[var(--blue-light)]/20 border-b border-[var(--border)] flex flex-col gap-4">
+                    {(() => {
+                      const ce = findCasoEspecial(currentQueueServer.matricula, casosEspeciaisList);
+                      if (!ce) return null;
+                      return (
+                        <div className="p-3.5 bg-amber-500/15 border-2 border-amber-500/40 rounded-xl text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 shadow-2xs animate-pulse">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="p-1.5 px-2.5 rounded-lg bg-amber-500 text-white font-black text-xs flex items-center gap-1.5 flex-shrink-0 shadow-2xs">
+                              <Star size={14} className="fill-current" /> SELO: CASO ESPECIAL
+                            </span>
+                            <div className="min-w-0">
+                              <div className="text-xs sm:text-sm font-black uppercase tracking-wider text-amber-800 dark:text-amber-200">
+                                {ce.motivo || "Atenção no Lançamento"}
+                              </div>
+                              {ce.observacao && (
+                                <div className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 truncate mt-0.5">
+                                  {ce.observacao}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowCasosModal(true)}
+                            className="px-2.5 py-1 text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-800 dark:text-amber-200 rounded-lg transition cursor-pointer flex-shrink-0"
+                          >
+                            Gerenciar
+                          </button>
+                        </div>
+                      );
+                    })()}
+
                     <div className="flex justify-between items-start gap-4">
                       <div className="min-w-0 flex-1">
                         <div className="text-lg font-bold text-[var(--text)] truncate">
@@ -1487,6 +1549,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                   {currentQueue.fila.map((s, i) => {
                     const isDone = i < currentQueue.idx;
                     const isCurrent = i === currentQueue.idx;
+                    const rowCasoEsp = findCasoEspecial(s.matricula, casosEspeciaisList);
                     return (
                       <div 
                         key={i}
@@ -1495,7 +1558,14 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                         <div className="flex items-center gap-3 min-w-0">
                           <span className="font-mono text-xs text-[var(--text2)] w-6 text-center">{i + 1}</span>
                           <div className="min-w-0 flex-1">
-                            <div className="font-bold text-sm text-[var(--text)] truncate">{s.nome}</div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-[var(--text)] truncate">{s.nome}</span>
+                              {rowCasoEsp && (
+                                <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-500 text-white shadow-2xs flex-shrink-0">
+                                  ⭐ {rowCasoEsp.motivo}
+                                </span>
+                              )}
+                            </div>
                             <div className="text-xs text-[var(--text2)] font-mono">{s.matricula}</div>
                           </div>
                         </div>
@@ -1636,6 +1706,14 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
           </div>
         </div>
       )}
+      {/* Modal Casos Especiais */}
+      <ModalCasosEspeciais
+        isOpen={showCasosModal}
+        onClose={() => setShowCasosModal(false)}
+        state={state}
+        updateState={updateState}
+        onToast={onToast}
+      />
     </div>
   );
 }
