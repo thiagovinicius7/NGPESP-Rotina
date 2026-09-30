@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial } from "../lib/utils.js";
+import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { 
   Zap, CheckCheck, Copy, AlertOctagon, CornerUpLeft, Plus, Trash2, 
   ChevronLeft, ChevronRight, CheckSquare, ListTodo, MessageSquareQuote, 
   Search, ExternalLink, Moon, Sun, Droplet, Maximize2, Minimize2, 
   HelpCircle, RefreshCw, X, ArrowLeft, ArrowRight, Check, Sparkles,
   Layers, Bookmark, Share2, Download, Monitor, Laptop, BookmarkPlus,
-  CheckCircle2, Cloud, UploadCloud, AlertTriangle, ShieldAlert, Info
+  CheckCircle2, Cloud, UploadCloud, AlertTriangle, ShieldAlert, Info,
+  Star
 } from "lucide-react";
 
 interface LancamentoAppProps {
@@ -86,7 +88,12 @@ export default function LancamentoApp({
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showSaveShortcutModal, setShowSaveShortcutModal] = useState(false);
   const [showQueueListDrawer, setShowQueueListDrawer] = useState(false);
+  const [showCasosModal, setShowCasosModal] = useState(false);
   const [copiedRecently, setCopiedRecently] = useState(false);
+
+  const casosEspeciaisList = useMemo(() => {
+    return state.config?.casosEspeciais || state.casosEspeciais || [];
+  }, [state.config?.casosEspeciais, state.casosEspeciais]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
 
@@ -876,6 +883,24 @@ export default function LancamentoApp({
 
           {/* Quick Action Buttons - Square, Compact and Single-Row */}
           <div className="flex items-center gap-1 flex-nowrap overflow-x-auto no-scrollbar flex-shrink-0">
+            {/* Casos Especiais Button */}
+            <button
+              type="button"
+              onClick={() => setShowCasosModal(true)}
+              className={`h-8 px-2.5 rounded-lg border flex items-center gap-1.5 transition-colors cursor-pointer flex-shrink-0 text-xs font-bold ${
+                casosEspeciaisList.length > 0
+                  ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
+                  : 'border-[var(--border2)] bg-[var(--bg)] text-[var(--text2)] hover:text-[var(--text)]'
+              }`}
+              title={`Gerenciar Casos Especiais SISREF (${casosEspeciaisList.length})`}
+            >
+              <Star size={14} className="fill-current text-amber-500" />
+              <span className="hidden sm:inline">Casos Especiais</span>
+              <span className="px-1 min-w-[14px] h-[14px] rounded-full bg-amber-500 text-white font-mono text-[9px] font-black flex items-center justify-center">
+                {casosEspeciaisList.length}
+              </span>
+            </button>
+
             {/* Queue list inspector toggle */}
             <button
               type="button"
@@ -1239,6 +1264,42 @@ export default function LancamentoApp({
                   </div>
                 </div>
               </div>
+
+              {/* SELO DE CASO ESPECIAL (AVISO EM DESTAQUE) */}
+              {(() => {
+                const ce = findCasoEspecial(officialServer?.matricula || currentQueueServer.matricula, casosEspeciaisList);
+                if (!ce) return null;
+                return (
+                  <div className="mt-4 p-3.5 sm:p-4 rounded-xl bg-amber-500/15 border-2 border-amber-500/40 text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 shadow-xs animate-pulse">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="p-2 sm:px-3 sm:py-2 rounded-xl bg-amber-500 text-white font-black text-xs sm:text-sm flex items-center gap-1.5 flex-shrink-0 shadow-xs">
+                        <Star size={16} className="fill-current" /> SELO: CASO ESPECIAL
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-sm sm:text-base font-black uppercase tracking-tight text-amber-800 dark:text-amber-200 truncate">
+                          {ce.motivo || "Atenção no Lançamento"}
+                        </div>
+                        {ce.observacao ? (
+                          <div className="text-xs font-semibold text-amber-700 dark:text-amber-300/90 truncate mt-0.5">
+                            {ce.observacao}
+                          </div>
+                        ) : (
+                          <div className="text-[11px] font-medium text-amber-700 dark:text-amber-300/80">
+                            Servidor sinalizado com caso especial rotativo. Verifique antes de lançar.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCasosModal(true)}
+                      className="px-3 py-1.5 text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-800 dark:text-amber-200 rounded-lg transition-colors cursor-pointer flex-shrink-0"
+                    >
+                      Gerenciar
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Occurrences Checklist Matrix */}
@@ -1466,12 +1527,13 @@ export default function LancamentoApp({
                   {importResultados.map((r, i) => {
                     const hasRejectRule = r.ocorrencias.some(oc => getOccurrenceRuleAlert(oc.tipo, oc.data)?.type === 'danger_reject_medical');
                     const hasNoSigrhRule = r.ocorrencias.some(oc => getOccurrenceRuleAlert(oc.tipo, oc.data)?.type === 'info_no_sigrh');
+                    const casoEsp = findCasoEspecial(r.matricula, casosEspeciaisList);
 
                     return (
                       <label
                         key={i}
                         className={`p-3 flex items-center gap-3 hover:bg-[var(--bg)]/50 cursor-pointer text-xs ${
-                          hasRejectRule ? 'bg-rose-500/5' : hasNoSigrhRule ? 'bg-amber-500/5' : ''
+                          casoEsp ? 'bg-amber-500/10 border-l-4 border-amber-500' : hasRejectRule ? 'bg-rose-500/5' : hasNoSigrhRule ? 'bg-amber-500/5' : ''
                         }`}
                       >
                         <input
@@ -1483,6 +1545,11 @@ export default function LancamentoApp({
                         <span className="font-mono font-bold text-[var(--text2)] min-w-[70px]">{formatMatricula(r.matricula)}</span>
                         <span className="font-bold text-[var(--text)] flex-1 truncate">{r.nome}</span>
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          {casoEsp && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 bg-amber-500 text-white rounded shadow-2xs flex items-center gap-1">
+                              ⭐ {casoEsp.motivo || "Caso Especial"}
+                            </span>
+                          )}
                           {hasRejectRule && (
                             <span className="text-[9px] font-black px-1.5 py-0.5 bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 rounded">
                               Homologação Obrigatória
@@ -1670,6 +1737,7 @@ export default function LancamentoApp({
               {currentQueue.fila.map((s, i) => {
                 const isDone = i < currentQueue.idx;
                 const isCurrent = i === currentQueue.idx;
+                const ce = findCasoEspecial(s.matricula, casosEspeciaisList);
                 return (
                   <div
                     key={i}
@@ -1685,7 +1753,14 @@ export default function LancamentoApp({
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span className="font-mono text-xs font-bold text-[var(--text2)] w-5 text-center">{i + 1}</span>
                       <div className="min-w-0 flex-1">
-                        <div className="font-bold text-xs text-[var(--text)] truncate">{s.nome}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-xs text-[var(--text)] truncate">{s.nome}</span>
+                          {ce && (
+                            <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-500 text-white shadow-2xs flex-shrink-0">
+                              ⭐ {ce.motivo}
+                            </span>
+                          )}
+                        </div>
                         <div className="font-mono text-[10px] text-[var(--text2)]">{formatMatricula(s.matricula)} · {s.ocorrencias.length} oc.</div>
                       </div>
                     </div>
@@ -2012,6 +2087,14 @@ export default function LancamentoApp({
           </div>
         </div>
       )}
+      {/* Modal Casos Especiais */}
+      <ModalCasosEspeciais
+        isOpen={showCasosModal}
+        onClose={() => setShowCasosModal(false)}
+        state={state}
+        updateState={updateState}
+        onToast={onToast}
+      />
     </div>
   );
 }

@@ -7,8 +7,9 @@ import {
   X, Check, Sunrise, Sunset, History, Calendar, FileText, 
   ArrowRight, Edit, AlertTriangle, AlertCircle, CheckCircle,
   Database, RefreshCw, Key, Search, Link as LinkIcon, ExternalLink, Unlink, UserX,
-  Cloud, FileDown, FileUp
+  Cloud, FileDown, FileUp, Star
 } from "lucide-react";
+import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { 
   syncToGoogleSheets, 
   loadServersFromBackup, 
@@ -110,6 +111,7 @@ export default function RotinaPanel({
   // Servidores Cedidos / Ignorados state
   const [cedidosInput, setCedidosInput] = useState("");
   const [cedidosSearch, setCedidosSearch] = useState("");
+  const [showCasosModal, setShowCasosModal] = useState(false);
 
   const handleAddCedidos = () => {
     if (!cedidosInput.trim()) {
@@ -1514,6 +1516,32 @@ export default function RotinaPanel({
             </div>
           </div>
           
+          {/* CASOS ESPECIAIS SISREF (SELO DE ATENÇÃO ROTATIVO) */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+              <div className="text-xs font-bold text-[var(--text)] uppercase tracking-wider flex items-center gap-2">
+                <Star className="text-amber-500 fill-current" size={16} /> Casos Especiais SISREF (Selo de Atenção no Lançamento)
+              </div>
+              <span className="px-2.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-black rounded-full">
+                {(state.config?.casosEspeciais || state.casosEspeciais || []).length} cadastrado(s)
+              </span>
+            </div>
+            
+            <p className="text-xs text-[var(--text2)] mb-4 font-semibold leading-relaxed">
+              Lista rotativa de servidores com casos especiais (ex: <strong>Contrato Temporário</strong>, horários diferenciados). O sistema exibe um <strong>selo de aviso em destaque</strong> na conferência e no lançamento das Filas Avulsas do SISREF. Matrículas com 7 dígitos recebem o <strong>0 à esquerda</strong> automaticamente.
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowCasosModal(true)}
+                className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer transition-all"
+              >
+                <Star size={14} className="fill-current" /> Gerenciar Casos Especiais (Incluir, Editar, Excluir)
+              </button>
+            </div>
+          </div>
+          
           {/* SERVIDORES CEDIDOS / IGNORADOS (FILA AVULSA SISREF) */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
             <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
@@ -2830,6 +2858,14 @@ function doGet(e) {
         </div>
       )}
 
+      {/* Modal Casos Especiais */}
+      <ModalCasosEspeciais
+        isOpen={showCasosModal}
+        onClose={() => setShowCasosModal(false)}
+        state={state}
+        updateState={updateState}
+        onToast={onToast}
+      />
     </div>
   );
 }

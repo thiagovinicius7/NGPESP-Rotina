@@ -1,4 +1,4 @@
-import { AppState, ProdutividadeDia } from "../types";
+import { AppState, ProdutividadeDia, CasoEspecialItem } from "../types";
 import { saveSnapshotToIDB, safeLocalStorageSet } from "./idbStorage.js";
 
 /**
@@ -12,6 +12,29 @@ export function normalizeMatricula(m: any): string {
     clean = clean.padStart(8, "0");
   }
   return clean.toLowerCase();
+}
+
+/**
+ * Formats server matricula by trimming, removing non-alphanumeric chars,
+ * and padding with leading zeros up to 8 chars if numeric.
+ */
+export function formatMatricula(m: any): string {
+  if (!m) return "";
+  let clean = String(m).trim().replace(/[^a-zA-Z0-9]/g, "");
+  if (/^\d+$/.test(clean) && clean.length > 0 && clean.length < 8) {
+    clean = clean.padStart(8, "0");
+  }
+  return clean;
+}
+
+/**
+ * Looks up if a matricula matches any registered CasoEspecialItem
+ */
+export function findCasoEspecial(matricula: any, casosEspeciais: CasoEspecialItem[] = []): CasoEspecialItem | undefined {
+  if (!matricula || !casosEspeciais || casosEspeciais.length === 0) return undefined;
+  const norm = normalizeMatricula(matricula);
+  if (!norm) return undefined;
+  return casosEspeciais.find(c => normalizeMatricula(c.matricula) === norm);
 }
 
 /**
