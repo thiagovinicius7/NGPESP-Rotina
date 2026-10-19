@@ -128,7 +128,7 @@ async function writeDocViaRest(
       firestoreQuotaExceeded = false;
       return true;
     }
-    if (precondition && (res.status === 400 || res.status === 409 || res.status === 412)) {
+    if (precondition && (res.status === 400 || res.status === 404 || res.status === 409 || res.status === 412)) {
       try {
         const body = await res.json();
         const st = String(body?.error?.status || body?.[0]?.error?.status || "");
