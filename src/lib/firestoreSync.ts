@@ -1,91 +1,64 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  onSnapshot, 
-  Unsubscribe 
-} from "firebase/firestore";
+import { getFirestore, doc, getDoc, onSnapshot } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { AppState } from "../types.js";
+import {
+  stateToSlots, slotsToState, slotDocId, mergeSlotIndex, changedGroups, groupFields, V2_VERSION, SlotMap
+} from "./chunkedStore";
+import { mergeHistorico, mergeProdutividade, mergeFilaAvulsa } from "./utils";
 
 // Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const dbId = (firebaseConfig as any).firestoreDatabaseId || "(default)";
 
-export const db = (firebaseConfig as any).firestoreDatabaseId 
-  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId) 
+export const db = (firebaseConfig as any).firestoreDatabaseId
+  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
   : getFirestore(app);
 
-const FIRESTORE_COLL = "ngpesp_sync";
+/**
+ * v1 (formato antigo): 5 documentos grandes em "ngpesp_sync".
+ * NÃO é mais gravado. É lido para converter para o v2 e para recuperar
+ * alterações de abas que ainda estejam com a versão antiga aberta.
+ * Os documentos antigos ficam intactos como cópia de segurança.
+ */
+const V1_COLL = "ngpesp_sync";
 const DOC_STATE = "global_state";
 const DOC_FILA = "fila_avulsa";
 const DOC_SERVIDORES = "servidores";
 const DOC_HISTORICO = "historico";
 const DOC_PRODUTIVIDADE = "produtividade";
+const V1_DOCS = [DOC_STATE, DOC_FILA, DOC_SERVIDORES, DOC_HISTORICO, DOC_PRODUTIVIDADE];
 
-let isWritingToCloud = false;
-let lastPushedTimestamp = 0;
+/** v2 (formato novo): documentos pequenos e imutáveis em "ngpesp_v2" + índice (ver chunkedStore.ts). */
+const V2_COLL = "ngpesp_v2";
+const V2_INDEX_ID = "_index";
+/** Documentos antigos só são apagados depois de 10 min fora do índice. */
+const GC_DELAY_MS = 10 * 60 * 1000;
 
-/**
- * ECONOMIA DE COTA
- * Guarda a "assinatura" (JSON) do último conteúdo gravado/lido de cada documento.
- * Só regravamos um documento quando o conteúdo dele realmente mudou.
- * (Antes, cada alteração regravava os 5 documentos, ~1,5 MB por salvamento.)
- */
-const lastSyncedSig: Record<string, string> = {};
+const REST_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents`;
 
-function rememberSig(docId: string, content: any) {
-  try {
-    lastSyncedSig[docId] = JSON.stringify(content);
-  } catch (_) {}
+interface V2Index {
+  version: number;
+  writer: string;
+  slots: Record<string, string>; // slot -> docId
+  garbage: { id: string; ts: number }[];
+  v1Seen: number; // maior updatedAt do v1 já incorporado
+  updatedAt: number;
 }
 
-/**
- * Os "lançamentos anteriores" existiam em dobro dentro do global_state
- * (state.lancamentosAnteriores e state.config.lancamentosAnteriores, idênticos).
- * Na nuvem gravamos só uma cópia; ao ler, recriamos a cópia em config para que
- * o app continue funcionando exatamente como antes.
- */
-function hydrateGlobalState(st: any): any {
-  if (!st || typeof st !== "object") return st;
-  const top = st.lancamentosAnteriores;
-  // A cópia principal (fora de config) é sempre a que vale ao ler da nuvem.
-  // Isso evita que uma aba antiga, com uma cópia desatualizada em config, se sobreponha.
-  if (Array.isArray(top) && st.config && typeof st.config === "object") {
-    return { ...st, config: { ...st.config, lancamentosAnteriores: top } };
-  }
-  return st;
-}
+/** Identifica esta aba (para depuração). */
+const WRITER_ID = Math.random().toString(36).slice(2, 10);
+/** Documentos v2 já lidos (imutáveis: o id muda quando o conteúdo muda). */
+const chunkCache = new Map<string, any>();
+/** Índice que corresponde ao estado local deste computador. */
+let baseSlots: Record<string, string> = {};
+/** Maior updatedAt do v1 já incorporado. */
+let v1SeenAt = 0;
+/** Evita dois envios simultâneos desta aba. */
+let pushChain: Promise<any> = Promise.resolve();
 
-/** Monta o conteúdo (sem updatedAt) de cada documento a partir do estado do app. */
-function buildDocContents(state: AppState): Record<string, any> {
-  // Mesma prioridade usada pela tela de Relatórios (o que o usuário está vendo)
-  const lancamentos = state.config?.lancamentosAnteriores || state.lancamentosAnteriores || [];
-  const { lancamentosAnteriores: _dup, ...configSemDuplicata } = (state.config || {}) as any;
-  return {
-    [DOC_FILA]: { filaAvulsa: state.filaAvulsa || {} },
-    [DOC_SERVIDORES]: { servidores: state.servidores || [] },
-    [DOC_HISTORICO]: { historico: (state.historico || []).slice(0, 1000) },
-    [DOC_PRODUTIVIDADE]: { produtividade: state.produtividade || {} },
-    [DOC_STATE]: {
-      state: {
-        respostas: state.respostas || [],
-        codigos: state.codigos || [],
-        sei: state.sei || [],
-        afastamentos: state.afastamentos || [],
-        ferias: state.ferias || {},
-        abonos: state.abonos || {},
-        balcaoAtendimentos: state.balcaoAtendimentos || {},
-        faq: state.faq || [],
-        config: configSemDuplicata,
-        lancamentosAnteriores: lancamentos,
-        gasUrl: state.gasUrl || ""
-      }
-    }
-  };
-}
+/** true quando foi detectada uma aba com a versão antiga gravando no formato antigo. */
+export let oldVersionDetected = false;
 
 /**
  * Timeout helper
@@ -110,16 +83,25 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Pr
 
 export let firestoreQuotaExceeded = false;
 
+/** Lê o campo "json" de um documento REST do Firestore. */
+function parseRestDoc(json: any): { data: any; updatedAt: number } | null {
+  if (json?.fields?.json?.stringValue) {
+    const parsed = JSON.parse(json.fields.json.stringValue);
+    const updatedAt = Number(json.fields.updatedAt?.integerValue || 0);
+    return { data: parsed, updatedAt };
+  }
+  return null;
+}
+
 /**
- * REST API Write: Ultra-fast, bypasses gRPC/WebChannel connection stalls
+ * REST API Write
  */
-async function writeDocViaRest(docId: string, data: any, timestamp: number): Promise<boolean> {
+async function writeDocViaRest(coll: string, docId: string, data: any, timestamp: number): Promise<boolean> {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents/${FIRESTORE_COLL}/${docId}?key=${firebaseConfig.apiKey}`;
-    const jsonStr = JSON.stringify(data);
+    const url = `${REST_BASE}/${coll}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
     const body = {
       fields: {
-        json: { stringValue: jsonStr },
+        json: { stringValue: JSON.stringify(data) },
         updatedAt: { integerValue: String(timestamp) }
       }
     };
@@ -130,7 +112,7 @@ async function writeDocViaRest(docId: string, data: any, timestamp: number): Pro
     });
     if (res.status === 429) {
       firestoreQuotaExceeded = true;
-      console.warn("Firestore daily write quota reached on free tier. Using container backend persistence.");
+      console.warn("Firestore: limite diário de gravações atingido.");
       return false;
     }
     if (res.ok) {
@@ -144,25 +126,94 @@ async function writeDocViaRest(docId: string, data: any, timestamp: number): Pro
   }
 }
 
+async function deleteDocViaRest(coll: string, docId: string): Promise<boolean> {
+  try {
+    const url = `${REST_BASE}/${coll}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
+    const res = await fetch(url, { method: "DELETE" });
+    return res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
 /**
- * REST API Read: Ultra-fast fallback
+ * REST API Read (v1)
  */
 async function readDocViaRest(docId: string): Promise<{ data: any; updatedAt: number } | null> {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents/${FIRESTORE_COLL}/${docId}?key=${firebaseConfig.apiKey}`;
+    const url = `${REST_BASE}/${V1_COLL}/${docId}?key=${firebaseConfig.apiKey}`;
     const res = await fetch(url);
     if (!res.ok) return null;
-    const json = await res.json();
-    if (json?.fields?.json?.stringValue) {
-      const parsed = JSON.parse(json.fields.json.stringValue);
-      const updatedAt = Number(json.fields.updatedAt?.integerValue || Date.now());
-      return { data: parsed, updatedAt };
-    }
-    return null;
+    const parsed = parseRestDoc(await res.json());
+    if (parsed && !parsed.updatedAt) parsed.updatedAt = Date.now();
+    return parsed;
   } catch (e) {
     console.warn(`REST read error for ${docId}:`, e);
     return null;
   }
+}
+
+/** Lê só o updatedAt de um documento v1 (download mínimo). */
+async function readV1UpdatedAt(docId: string): Promise<number> {
+  try {
+    const url = `${REST_BASE}/${V1_COLL}/${docId}?mask.fieldPaths=updatedAt&key=${firebaseConfig.apiKey}`;
+    const res = await fetch(url);
+    if (!res.ok) return 0;
+    const json = await res.json();
+    return Number(json?.fields?.updatedAt?.integerValue || 0);
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function readV1MaxUpdatedAt(): Promise<number> {
+  const times = await Promise.all(V1_DOCS.map(readV1UpdatedAt));
+  return Math.max(0, ...times);
+}
+
+/** Lê um documento v2. undefined = não existe; null = erro de leitura. */
+async function getV2Doc(docId: string): Promise<{ data: any; updatedAt: number } | undefined | null> {
+  try {
+    const url = `${REST_BASE}/${V2_COLL}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
+    const res = await fetch(url);
+    if (res.status === 404) return undefined;
+    if (!res.ok) return null;
+    return parseRestDoc(await res.json());
+  } catch (e) {
+    console.warn(`REST read v2 error for ${docId}:`, e);
+    return null;
+  }
+}
+
+async function readIndex(): Promise<V2Index | undefined | null> {
+  const r = await getV2Doc(V2_INDEX_ID);
+  if (r === undefined) return undefined;
+  if (r === null) return null;
+  const idx = r.data;
+  if (!idx || typeof idx.slots !== "object") return null;
+  return {
+    version: Number(idx.version || V2_VERSION),
+    writer: String(idx.writer || ""),
+    slots: idx.slots || {},
+    garbage: Array.isArray(idx.garbage) ? idx.garbage : [],
+    v1Seen: Number(idx.v1Seen || 0),
+    updatedAt: Number(idx.updatedAt || r.updatedAt || 0)
+  };
+}
+
+/** Lê (com cache) o conteúdo de todos os documentos de um índice. null se algum faltar. */
+async function loadSlots(slots: Record<string, string>): Promise<SlotMap | null> {
+  const entries = Object.entries(slots);
+  const missing = entries.filter(([, id]) => !chunkCache.has(id));
+  const results = await Promise.all(missing.map(([, id]) => getV2Doc(id)));
+  for (let i = 0; i < missing.length; i++) {
+    const r = results[i];
+    if (!r) return null; // não existe ou erro: não monta pela metade
+    chunkCache.set(missing[i][1], r.data?.c);
+  }
+  const out: SlotMap = {};
+  entries.forEach(([slot, id]) => (out[slot] = chunkCache.get(id)));
+  return out;
 }
 
 /**
@@ -181,33 +232,37 @@ function parseDocData(data: any): any {
 }
 
 /**
- * Loads the entire state across split documents from Firestore with REST fallback
+ * No v1 os "lançamentos anteriores" existiam em dobro (state.lancamentosAnteriores e
+ * state.config.lancamentosAnteriores). A cópia principal (fora de config) é a que vale.
  */
-export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>; updatedAt: number } | null> {
-  // Strategy 1: Fast REST API fetch in parallel (works 100% reliably in any environment)
-  try {
-    const restPromises = [
-      readDocViaRest(DOC_STATE),
-      readDocViaRest(DOC_FILA),
-      readDocViaRest(DOC_SERVIDORES),
-      readDocViaRest(DOC_HISTORICO),
-      readDocViaRest(DOC_PRODUTIVIDADE)
-    ];
+function hydrateGlobalState(st: any): any {
+  if (!st || typeof st !== "object") return st;
+  const top = st.lancamentosAnteriores;
+  if (Array.isArray(top) && st.config && typeof st.config === "object") {
+    return { ...st, config: { ...st.config, lancamentosAnteriores: top } };
+  }
+  return st;
+}
 
+/**
+ * Lê o formato antigo (v1). Usado só quando ainda não existe v2 na nuvem.
+ */
+async function fetchV1State(): Promise<{ state: Partial<AppState>; updatedAt: number } | null> {
+  // Strategy 1: REST
+  try {
     const [stateRest, filaRest, servRest, histRest, prodRest] = await withTimeout(
-      Promise.all(restPromises),
+      Promise.all([
+        readDocViaRest(DOC_STATE),
+        readDocViaRest(DOC_FILA),
+        readDocViaRest(DOC_SERVIDORES),
+        readDocViaRest(DOC_HISTORICO),
+        readDocViaRest(DOC_PRODUTIVIDADE)
+      ]),
       6000,
       "REST fetch timeout"
     );
 
-    const hasAnyRest = stateRest || filaRest || servRest || histRest || prodRest;
-    if (hasAnyRest) {
-      if (stateRest?.data?.state) rememberSig(DOC_STATE, { state: stateRest.data.state });
-      if (filaRest?.data?.filaAvulsa) rememberSig(DOC_FILA, { filaAvulsa: filaRest.data.filaAvulsa });
-      if (servRest?.data?.servidores) rememberSig(DOC_SERVIDORES, { servidores: servRest.data.servidores });
-      if (histRest?.data?.historico) rememberSig(DOC_HISTORICO, { historico: histRest.data.historico });
-      if (prodRest?.data?.produtividade) rememberSig(DOC_PRODUTIVIDADE, { produtividade: prodRest.data.produtividade });
-
+    if (stateRest || filaRest || servRest || histRest || prodRest) {
       const partialState: Partial<AppState> = {
         ...(hydrateGlobalState(stateRest?.data?.state) || {}),
         ...(filaRest?.data?.filaAvulsa ? { filaAvulsa: filaRest.data.filaAvulsa } : {}),
@@ -215,7 +270,6 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
         ...(histRest?.data?.historico ? { historico: histRest.data.historico } : {}),
         ...(prodRest?.data?.produtividade ? { produtividade: prodRest.data.produtividade } : {})
       };
-
       const maxTime = Math.max(
         stateRest?.updatedAt || 0,
         filaRest?.updatedAt || 0,
@@ -223,262 +277,268 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
         histRest?.updatedAt || 0,
         prodRest?.updatedAt || 0
       );
-
-      console.log("Successfully fetched state via REST:", {
-        servidoresCount: partialState.servidores?.length || 0,
-        historicoCount: partialState.historico?.length || 0,
-        hasFila: Boolean(partialState.filaAvulsa)
-      });
-
       return { state: partialState, updatedAt: maxTime || Date.now() };
     }
   } catch (restErr) {
     console.warn("REST fetch fallback to SDK:", restErr);
   }
 
-  // Strategy 2: Firestore SDK getDoc
-  try {
-    const fetchPromises = [
-      getDoc(doc(db, FIRESTORE_COLL, DOC_STATE)),
-      getDoc(doc(db, FIRESTORE_COLL, DOC_FILA)),
-      getDoc(doc(db, FIRESTORE_COLL, DOC_SERVIDORES)),
-      getDoc(doc(db, FIRESTORE_COLL, DOC_HISTORICO)),
-      getDoc(doc(db, FIRESTORE_COLL, DOC_PRODUTIVIDADE))
-    ];
+  // Strategy 2: SDK
+  const [stateSnap, filaSnap, servidoresSnap, histSnap, prodSnap] = await withTimeout(
+    Promise.all([
+      getDoc(doc(db, V1_COLL, DOC_STATE)),
+      getDoc(doc(db, V1_COLL, DOC_FILA)),
+      getDoc(doc(db, V1_COLL, DOC_SERVIDORES)),
+      getDoc(doc(db, V1_COLL, DOC_HISTORICO)),
+      getDoc(doc(db, V1_COLL, DOC_PRODUTIVIDADE))
+    ]),
+    7000,
+    "Tempo limite ao carregar dados da nuvem."
+  );
 
-    const [stateSnap, filaSnap, servidoresSnap, histSnap, prodSnap] = await withTimeout(
-      Promise.all(fetchPromises),
-      7000,
-      "Tempo limite ao carregar dados da nuvem."
-    );
-
-    const stateExists = stateSnap.exists();
-    const filaExists = filaSnap.exists();
-    const servExists = servidoresSnap.exists();
-    const histExists = histSnap.exists();
-    const prodExists = prodSnap.exists();
-
-    if (!stateExists && !filaExists && !servExists && !histExists && !prodExists) {
-      return null;
-    }
-
-    const stateData = stateExists ? parseDocData(stateSnap.data()) : {};
-    const filaData = filaExists ? parseDocData(filaSnap.data()) : {};
-    const servData = servExists ? parseDocData(servidoresSnap.data()) : {};
-    const histData = histExists ? parseDocData(histSnap.data()) : {};
-    const prodData = prodExists ? parseDocData(prodSnap.data()) : {};
-
-    if (stateData.state) rememberSig(DOC_STATE, { state: stateData.state });
-    if (filaData.filaAvulsa) rememberSig(DOC_FILA, { filaAvulsa: filaData.filaAvulsa });
-    if (servData.servidores) rememberSig(DOC_SERVIDORES, { servidores: servData.servidores });
-    if (histData.historico) rememberSig(DOC_HISTORICO, { historico: histData.historico });
-    if (prodData.produtividade) rememberSig(DOC_PRODUTIVIDADE, { produtividade: prodData.produtividade });
-
-    const partialState: Partial<AppState> = {
-      ...(hydrateGlobalState(stateData.state) || {}),
-      ...(filaData.filaAvulsa ? { filaAvulsa: filaData.filaAvulsa } : {}),
-      ...(servData.servidores ? { servidores: servData.servidores } : {}),
-      ...(histData.historico ? { historico: histData.historico } : {}),
-      ...(prodData.produtividade ? { produtividade: prodData.produtividade } : {})
-    };
-
-    const updatedAt = Math.max(
-      Number(stateData.updatedAt || 0),
-      Number(filaData.updatedAt || 0),
-      Number(servData.updatedAt || 0),
-      Number(histData.updatedAt || 0),
-      Number(prodData.updatedAt || 0)
-    );
-
-    return { state: partialState, updatedAt: updatedAt || Date.now() };
-  } catch (err) {
-    console.error("Firestore fetch error:", err);
-    throw err;
+  if (!stateSnap.exists() && !filaSnap.exists() && !servidoresSnap.exists() && !histSnap.exists() && !prodSnap.exists()) {
+    return null;
   }
+
+  const stateData = stateSnap.exists() ? parseDocData(stateSnap.data()) : {};
+  const filaData = filaSnap.exists() ? parseDocData(filaSnap.data()) : {};
+  const servData = servidoresSnap.exists() ? parseDocData(servidoresSnap.data()) : {};
+  const histData = histSnap.exists() ? parseDocData(histSnap.data()) : {};
+  const prodData = prodSnap.exists() ? parseDocData(prodSnap.data()) : {};
+
+  const partialState: Partial<AppState> = {
+    ...(hydrateGlobalState(stateData.state) || {}),
+    ...(filaData.filaAvulsa ? { filaAvulsa: filaData.filaAvulsa } : {}),
+    ...(servData.servidores ? { servidores: servData.servidores } : {}),
+    ...(histData.historico ? { historico: histData.historico } : {}),
+    ...(prodData.produtividade ? { produtividade: prodData.produtividade } : {})
+  };
+
+  const updatedAt = Math.max(
+    Number(stateData.updatedAt || 0),
+    Number(filaData.updatedAt || 0),
+    Number(servData.updatedAt || 0),
+    Number(histData.updatedAt || 0),
+    Number(prodData.updatedAt || 0)
+  );
+
+  return { state: partialState, updatedAt: updatedAt || Date.now() };
 }
 
 /**
- * Envia o estado para o Firestore, gravando SOMENTE os documentos cujo conteúdo mudou.
- * Use force = true para regravar tudo (ex.: "Salvar Este Computador na Nuvem Agora").
+ * Recupera alterações gravadas no formato antigo por uma aba desatualizada
+ * (histórico, produtividade e fila são mesclados sem perder nada).
  */
-export async function pushStateToFirestore(state: AppState, force: boolean = false): Promise<boolean> {
+function mergeV1Into(state: Partial<AppState>, v1: Partial<AppState>): Partial<AppState> {
+  return {
+    ...state,
+    historico: mergeHistorico(state.historico || [], v1.historico || []),
+    produtividade: mergeProdutividade(state.produtividade || {}, v1.produtividade || {}),
+    filaAvulsa: mergeFilaAvulsa(state.filaAvulsa, v1.filaAvulsa)
+  };
+}
+
+/**
+ * Carrega o estado da nuvem: formato novo (v2) se existir; senão o antigo (v1).
+ */
+export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>; updatedAt: number } | null> {
+  let index = await withTimeout(readIndex(), 8000, "timeout").catch(() => null);
+
+  if (index === undefined) {
+    console.log("Nuvem ainda no formato antigo (v1). Será convertida no próximo salvamento.");
+    const [v1, v1Max] = await Promise.all([fetchV1State(), readV1MaxUpdatedAt()]);
+    v1SeenAt = Math.max(v1SeenAt, v1Max);
+    baseSlots = {};
+    return v1;
+  }
+
+  let slots = index ? await loadSlots(index.slots) : null;
+  if (!slots) {
+    // Um documento pode ter sido trocado entre a leitura do índice e a dos pedaços: tenta de novo
+    await new Promise(r => setTimeout(r, 1000));
+    index = await withTimeout(readIndex(), 8000, "timeout").catch(() => null);
+    slots = index ? await loadSlots(index.slots) : null;
+  }
+  let state = slots ? slotsToState(slots) : null;
+  if (!index || !state) {
+    throw new Error("Não foi possível carregar os dados da nuvem agora. Tente sincronizar novamente em instantes.");
+  }
+
+  baseSlots = { ...index.slots };
+  v1SeenAt = Math.max(v1SeenAt, index.v1Seen);
+
+  // Alguma aba com a versão antiga gravou depois da conversão?
+  try {
+    const v1Max = await readV1MaxUpdatedAt();
+    if (v1Max > v1SeenAt) {
+      const v1 = await fetchV1State();
+      if (v1?.state) {
+        state = mergeV1Into(state, v1.state);
+        oldVersionDetected = true;
+        console.warn("Alterações de uma aba com a versão antiga foram recuperadas.");
+      }
+      v1SeenAt = v1Max;
+      baseSlots = {}; // força regravar os grupos alterados pela mescla no próximo envio
+    }
+  } catch (_) {}
+
+  console.log("Estado carregado da nuvem (v2):", {
+    servidores: state.servidores?.length || 0,
+    historico: state.historico?.length || 0
+  });
+  return { state, updatedAt: index.updatedAt || Date.now() };
+}
+
+/**
+ * Envia o estado para o Firestore (v2).
+ * 1. Lê o índice atual da nuvem.
+ * 2. Grava só os documentos novos (conteúdo que mudou).
+ * 3. Grava o índice (por último, numa única escrita), preservando grupos que
+ *    outros computadores alteraram e este não.
+ * 4. Apaga documentos que saíram do índice há mais de 10 minutos.
+ * Use force = true para que este computador vença em todos os grupos.
+ */
+export function pushStateToFirestore(state: AppState, force: boolean = false): Promise<boolean> {
+  const run = pushChain.then(() => doPush(state, force)).catch(() => false);
+  pushChain = run;
+  return run;
+}
+
+async function doPush(state: AppState, force: boolean): Promise<boolean> {
   if (!state) return false;
 
-  const contents = buildDocContents(state);
-  const changed: { docId: string; content: any; sig: string }[] = [];
-  for (const [docId, content] of Object.entries(contents)) {
-    const sig = JSON.stringify(content);
-    if (force || lastSyncedSig[docId] !== sig) {
-      changed.push({ docId, content, sig });
-    }
+  const slotContents = stateToSlots(state);
+  const desired: Record<string, string> = {};
+  Object.entries(slotContents).forEach(([slot, content]) => (desired[slot] = slotDocId(slot, content)));
+
+  const fresh = await readIndex();
+  if (fresh === null) return false; // erro de leitura: tenta depois
+  const freshSlots = fresh ? fresh.slots : {};
+
+  const merged = mergeSlotIndex(baseSlots, freshSlots, desired, force || !fresh);
+  const sameAsFresh = fresh && JSON.stringify(Object.entries(merged).sort()) === JSON.stringify(Object.entries(freshSlots).sort());
+  if (sameAsFresh && !force) {
+    baseSlots = desired;
+    return true; // nada mudou: não gasta cota
   }
 
-  // Nada mudou: não gasta cota
-  if (changed.length === 0) {
-    return true;
-  }
-
-  isWritingToCloud = true;
   const now = Date.now();
-  lastPushedTimestamp = now;
+  const referenced = new Set(Object.values(freshSlots));
 
-  try {
-    const results = await Promise.all(
-      changed.map(async ({ docId, content, sig }) => {
-        const ok = await writeDocViaRest(docId, { ...content, updatedAt: now }, now);
-        if (ok) lastSyncedSig[docId] = sig; // se falhar, tenta de novo no próximo salvamento
-        return ok;
-      })
-    );
+  // 2. Documentos novos (os que o índice atual não cita)
+  const toWrite = Object.entries(merged).filter(([slot, id]) => desired[slot] === id && (force || !referenced.has(id)));
+  const results = await Promise.all(
+    toWrite.map(async ([slot, id]) => {
+      const ok = await writeDocViaRest(V2_COLL, id, { c: slotContents[slot] }, now);
+      if (ok) chunkCache.set(id, slotContents[slot]);
+      return ok;
+    })
+  );
+  if (results.some(r => !r)) return false; // índice NÃO é gravado se faltar algum documento
 
-    isWritingToCloud = false;
-    const anyOk = results.some(r => r === true);
-    if (anyOk) {
-      console.log(
-        `Nuvem atualizada (${changed.map(c => c.docId).join(", ")}) em`,
-        new Date(now).toISOString()
-      );
-    }
-    return anyOk;
-  } catch (e) {
-    console.warn("Cloud push error:", e);
-    isWritingToCloud = false;
-    return false;
-  }
+  // 3. Índice
+  const mergedIds = new Set(Object.values(merged));
+  const garbage = (fresh?.garbage || []).filter(g => !mergedIds.has(g.id));
+  Object.values(freshSlots).forEach(id => {
+    if (!mergedIds.has(id) && !garbage.some(g => g.id === id)) garbage.push({ id, ts: now });
+  });
+  const expired = garbage.filter(g => now - g.ts > GC_DELAY_MS);
+  const remaining = garbage.filter(g => now - g.ts <= GC_DELAY_MS);
+  const newIndex: V2Index = {
+    version: V2_VERSION,
+    writer: WRITER_ID,
+    slots: merged,
+    garbage: remaining,
+    v1Seen: Math.max(v1SeenAt, fresh?.v1Seen || 0),
+    updatedAt: now
+  };
+  const okIndex = await writeDocViaRest(V2_COLL, V2_INDEX_ID, newIndex, now);
+  if (!okIndex) return false;
+
+  // O estado local corresponde ao que este computador quis gravar.
+  // Grupos preservados de outros computadores chegam pelo listener.
+  baseSlots = desired;
+  v1SeenAt = newIndex.v1Seen;
+
+  // 4. Limpeza (melhor esforço)
+  await Promise.all(expired.map(async g => {
+    await deleteDocViaRest(V2_COLL, g.id);
+    chunkCache.delete(g.id);
+  }));
+
+  console.log(`Nuvem atualizada: ${toWrite.length} documento(s) + índice`);
+  return true;
 }
 
 /**
- * Subscribes to real-time updates from Firestore across all devices.
+ * Atualizações em tempo real (v2): escuta só o índice. Quando outro computador
+ * grava, baixa apenas os documentos novos e aplica só os grupos que mudaram.
+ * onUpdate deve retornar false se não aplicou (ex.: há edição local pendente).
  */
 export function subscribeToFirestore(
-  onUpdate: (partial: Partial<AppState>, updatedAt: number) => void
+  onUpdate: (partial: Partial<AppState>, updatedAt: number) => boolean | void
 ): () => void {
-  const unsubs: Unsubscribe[] = [];
+  let stopped = false;
+  let latest: V2Index | null = null;
+  let running = false;
 
+  const process = async () => {
+    if (running) return;
+    running = true;
+    try {
+      while (latest && !stopped) {
+        const idx = latest;
+        latest = null;
+        const groups = changedGroups(baseSlots, idx.slots);
+        if (groups.size === 0) {
+          continue;
+        }
+        const slots = await loadSlots(idx.slots);
+        if (!slots || stopped) continue; // documento faltando: espera o próximo índice
+        const full = slotsToState(slots);
+        if (!full) continue;
+        const fields = new Set<string>();
+        groups.forEach(g => groupFields(g).forEach(f => fields.add(f)));
+        const partial: any = {};
+        fields.forEach(f => {
+          if ((full as any)[f] !== undefined) partial[f] = (full as any)[f];
+        });
+        const applied = onUpdate(partial, idx.updatedAt);
+        if (applied !== false) {
+          baseSlots = { ...idx.slots };
+        }
+      }
+    } finally {
+      running = false;
+    }
+  };
+
+  let unsub: () => void = () => {};
   try {
-    // 1. Listen to Fila Avulsa in real time
-    const unsubFila = onSnapshot(
-      doc(db, FIRESTORE_COLL, DOC_FILA),
+    unsub = onSnapshot(
+      doc(db, V2_COLL, V2_INDEX_ID),
       (snapshot) => {
-        if (snapshot.exists()) {
-          const raw = snapshot.data();
-          const data = parseDocData(raw);
-          if (data && data.filaAvulsa) {
-            rememberSig(DOC_FILA, { filaAvulsa: data.filaAvulsa });
-            const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
-            if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
-              return;
-            }
-            onUpdate({ filaAvulsa: data.filaAvulsa }, updatedAt);
-          }
-        }
+        if (!snapshot.exists()) return; // ainda no formato antigo
+        const data = parseDocData(snapshot.data());
+        if (!data || typeof data.slots !== "object") return;
+        latest = {
+          version: Number(data.version || V2_VERSION),
+          writer: String(data.writer || ""),
+          slots: data.slots,
+          garbage: data.garbage || [],
+          v1Seen: Number(data.v1Seen || 0),
+          updatedAt: Number(data.updatedAt || 0)
+        };
+        process();
       },
-      (error) => {
-        console.warn("Firestore Fila subscription notice:", error);
-      }
+      (error) => console.warn("Firestore subscription notice:", error)
     );
-    unsubs.push(unsubFila);
-
-    // 2. Listen to Servidores in real time
-    const unsubServ = onSnapshot(
-      doc(db, FIRESTORE_COLL, DOC_SERVIDORES),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const raw = snapshot.data();
-          const data = parseDocData(raw);
-          if (data && data.servidores) {
-            rememberSig(DOC_SERVIDORES, { servidores: data.servidores });
-            const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
-            if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
-              return;
-            }
-            onUpdate({ servidores: data.servidores }, updatedAt);
-          }
-        }
-      },
-      (error) => {
-        console.warn("Firestore Servidores subscription notice:", error);
-      }
-    );
-    unsubs.push(unsubServ);
-
-    // 3. Listen to Produtividade in real time
-    const unsubProd = onSnapshot(
-      doc(db, FIRESTORE_COLL, DOC_PRODUTIVIDADE),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const raw = snapshot.data();
-          const data = parseDocData(raw);
-          if (data && data.produtividade) {
-            rememberSig(DOC_PRODUTIVIDADE, { produtividade: data.produtividade });
-            const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
-            if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
-              return;
-            }
-            onUpdate({ produtividade: data.produtividade }, updatedAt);
-          }
-        }
-      },
-      (error) => {
-        console.warn("Firestore Produtividade subscription notice:", error);
-      }
-    );
-    unsubs.push(unsubProd);
-
-    // 4. Listen to Historico in real time
-    const unsubHist = onSnapshot(
-      doc(db, FIRESTORE_COLL, DOC_HISTORICO),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const raw = snapshot.data();
-          const data = parseDocData(raw);
-          if (data && data.historico) {
-            rememberSig(DOC_HISTORICO, { historico: data.historico });
-            const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
-            if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
-              return;
-            }
-            onUpdate({ historico: data.historico }, updatedAt);
-          }
-        }
-      },
-      (error) => {
-        console.warn("Firestore Historico subscription notice:", error);
-      }
-    );
-    unsubs.push(unsubHist);
-
-    // 5. Listen to Global State in real time
-    const unsubState = onSnapshot(
-      doc(db, FIRESTORE_COLL, DOC_STATE),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const raw = snapshot.data();
-          const data = parseDocData(raw);
-          if (data && data.state) {
-            rememberSig(DOC_STATE, { state: data.state });
-            const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
-            if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
-              return;
-            }
-            onUpdate(hydrateGlobalState(data.state), updatedAt);
-          }
-        }
-      },
-      (error) => {
-        console.warn("Firestore State subscription notice:", error);
-      }
-    );
-    unsubs.push(unsubState);
   } catch (err) {
-    console.warn("Could not start Firestore listeners:", err);
+    console.warn("Could not start Firestore listener:", err);
   }
 
   return () => {
-    unsubs.forEach(unsub => {
-      try {
-        unsub();
-      } catch (_) {}
-    });
+    stopped = true;
+    try { unsub(); } catch (_) {}
   };
 }

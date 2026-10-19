@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { AppState } from "../types.js";
 import { mergeProdutividade, mergeFilaAvulsa, mergeHistorico, saveLocalSnapshot } from "../lib/utils";
 import { 
-  fetchFirestoreState, pushStateToFirestore, subscribeToFirestore 
+  fetchFirestoreState, pushStateToFirestore, subscribeToFirestore,
+  firestoreQuotaExceeded, oldVersionDetected
 } from "../lib/firestoreSync";
 import { safeLocalStorageSet, saveStateToIndexedDB, loadStateFromIndexedDB } from "../lib/idbStorage";
 
@@ -89,6 +90,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   
   // Track if we have local mutations that have not been successfully pushed/saved to the cloud yet
   const isDirtyRef = useRef<boolean>(false);
+  // Conta edições locais (para não marcar como "salvo" se houve edição durante o envio)
+  const editCounterRef = useRef<number>(0);
   const hasLoadedFromCloudRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -175,6 +178,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     });
 
     isDirtyRef.current = true;
+    editCounterRef.current += 1;
 
     // 4. Debounce pushing to Firestore cloud
     if (pushTimeoutRef.current) {
@@ -201,12 +205,21 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       }
 
       // Push to Firestore (works universally on all devices and GitHub Pages)
+      const editsAtStart = editCounterRef.current;
       const firestoreOk = await pushStateToFirestore(currentState);
       if (firestoreOk) {
         safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(now));
         setLastUpdated(now);
-        isDirtyRef.current = false;
+        // Só considera "salvo" se não houve nova edição durante o envio
+        if (editCounterRef.current === editsAtStart) isDirtyRef.current = false;
         setCloudSynced(true);
+      } else if (!pushTimeoutRef.current) {
+        // Falhou: tenta de novo mais tarde (os dados continuam salvos neste computador)
+        const delay = firestoreQuotaExceeded ? 10 * 60 * 1000 : 30 * 1000;
+        pushTimeoutRef.current = setTimeout(() => {
+          pushTimeoutRef.current = null;
+          pushStateToCloudRef.current(latestStateRef.current);
+        }, delay);
       }
 
       // Also push to Node backend if available (fallback)
@@ -440,6 +453,10 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           if (localHasData && !cloudHasData) {
             console.log("Pushing local data to initialize Firestore cloud");
             await pushStateToFirestore(mergedState, true);
+          } else if (oldVersionDetected) {
+            // Alterações feitas numa aba com a versão antiga foram recuperadas: salva no formato novo
+            onToastRef.current("Um computador está com a versão antiga do app aberta. Recarregue a página (F5) nos outros computadores.", "info");
+            await pushStateToFirestore(mergedState);
           }
           return;
         }
@@ -492,7 +509,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   useEffect(() => {
     const unsubscribe = subscribeToFirestore((incomingPartial, updatedAt) => {
       // If we are currently typing/mutating locally, don't clobber
-      if (isDirtyRef.current) return;
+      if (isDirtyRef.current) return false;
 
       setStateState(prev => {
         const merged: AppState = {
@@ -526,6 +543,16 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       }
       setCloudSynced(true);
       hasLoadedFromCloudRef.current = true;
+
+      // A mescla pode ter juntado dados deste computador que a nuvem ainda não tem
+      // (ex.: histórico). Agenda um envio: se nada diferir, não grava nada.
+      if (!pushTimeoutRef.current) {
+        pushTimeoutRef.current = setTimeout(() => {
+          pushTimeoutRef.current = null;
+          pushStateToCloudRef.current(latestStateRef.current);
+        }, 2000);
+      }
+      return true;
     });
 
     return () => {
