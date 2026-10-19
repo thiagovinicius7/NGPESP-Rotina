@@ -3,12 +3,36 @@ import { AppState } from "../types.js";
 import { mergeProdutividade, mergeFilaAvulsa, mergeHistorico, saveLocalSnapshot } from "../lib/utils";
 import { 
   fetchFirestoreState, pushStateToFirestore, subscribeToFirestore,
-  firestoreQuotaExceeded, oldVersionDetected
+  firestoreQuotaExceeded, oldVersionDetected, isCloudLoaded
 } from "../lib/firestoreSync";
 import { safeLocalStorageSet, saveStateToIndexedDB, loadStateFromIndexedDB } from "../lib/idbStorage";
 
 const LOCAL_STORAGE_KEY = "ngpesp_local_state";
 const LOCAL_TIMESTAMP_KEY = "ngpesp_local_updated_at";
+// Marca que este computador tem alterações ainda não enviadas à nuvem
+const PENDING_KEY = "ngpesp_cloud_pending";
+
+function hasPendingLocalChanges(): boolean {
+  try { return localStorage.getItem(PENDING_KEY) === "1"; } catch (_) { return false; }
+}
+function setPendingLocalChanges(v: boolean) {
+  try {
+    if (v) localStorage.setItem(PENDING_KEY, "1");
+    else localStorage.removeItem(PENDING_KEY);
+  } catch (_) {}
+}
+
+/**
+ * Fila ao juntar dados locais com os da nuvem: se este computador tem alterações
+ * não enviadas, junta (para não perdê-las); senão a nuvem vale como está
+ * (assim listas/itens apagados em outro computador não voltam).
+ */
+function chooseFila(localFila: any, serverFila: any): any {
+  if (!serverFila || !serverFila.listas) return localFila;
+  if (hasPendingLocalChanges()) return mergeFilaAvulsa(localFila, serverFila);
+  const ativa = localFila?.ativa && serverFila.listas[localFila.ativa] ? localFila.ativa : serverFila.ativa;
+  return { ...serverFila, ativa };
+}
 
 const DEFAULT_SPREADSHEET_ID = "1gk5MZYPDb3g5XM5y52OLMHMU0B0R2qbbZD79ryBizek";
 
@@ -179,6 +203,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
 
     isDirtyRef.current = true;
     editCounterRef.current += 1;
+    setPendingLocalChanges(true);
 
     // 4. Debounce pushing to Firestore cloud
     if (pushTimeoutRef.current) {
@@ -211,8 +236,20 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(now));
         setLastUpdated(now);
         // Só considera "salvo" se não houve nova edição durante o envio
-        if (editCounterRef.current === editsAtStart) isDirtyRef.current = false;
+        if (editCounterRef.current === editsAtStart) {
+          isDirtyRef.current = false;
+          setPendingLocalChanges(false);
+        }
         setCloudSynced(true);
+      } else if (!isCloudLoaded()) {
+        // Não conseguiu carregar a nuvem no início: carrega agora, junta e tenta enviar de novo
+        const loaded = await forcePullFromCloudRef.current(true);
+        if (!pushTimeoutRef.current) {
+          pushTimeoutRef.current = setTimeout(() => {
+            pushTimeoutRef.current = null;
+            pushStateToCloudRef.current(latestStateRef.current);
+          }, loaded ? 3000 : 60 * 1000);
+        }
       } else if (!pushTimeoutRef.current) {
         // Falhou: tenta de novo mais tarde (os dados continuam salvos neste computador)
         const delay = firestoreQuotaExceeded ? 10 * 60 * 1000 : 30 * 1000;
@@ -297,8 +334,9 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   };
 
   // Force Pull latest data from cloud
-  const forcePullFromCloud = async () => {
-    setSyncing(true);
+  const forcePullFromCloud = async (quiet: boolean = false): Promise<boolean> => {
+    if (!quiet) setSyncing(true);
+    let loaded = false;
     try {
       let serverState: Partial<AppState> | null = null;
       let serverTime = 0;
@@ -328,7 +366,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       }
 
       if (serverState) {
-        const mergedFila = mergeFilaAvulsa(stateRef.current.filaAvulsa, serverState.filaAvulsa);
+        const mergedFila = chooseFila(stateRef.current.filaAvulsa, serverState.filaAvulsa);
         const mergedHist = mergeHistorico(stateRef.current.historico || [], serverState.historico || []);
         const mergedState: AppState = {
           ...defaultState,
@@ -344,28 +382,43 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         };
 
         setStateState(mergedState);
+        latestStateRef.current = mergedState;
+        stateRef.current = mergedState;
         safeLocalStorageSet(LOCAL_STORAGE_KEY, JSON.stringify(mergedState));
         saveStateToIndexedDB(mergedState).catch(() => {});
         saveLocalSnapshot(mergedState);
         const nextTime = Math.max(serverTime || 0, Date.now());
         setLastUpdated(nextTime);
         safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(nextTime));
-        isDirtyRef.current = false;
+        // Se havia alterações locais não enviadas, continuam marcadas para envio
+        isDirtyRef.current = hasPendingLocalChanges();
         hasLoadedFromCloudRef.current = true;
         setCloudSynced(true);
-        const totalServ = mergedState.servidores?.length || 0;
-        const totalFila = mergedState.filaAvulsa?.listas?.[mergedState.filaAvulsa?.ativa || "Padrão"]?.fila?.length || 0;
-        onToast(`Sincronização concluída! (${totalServ} servidores, ${totalFila} na fila)`, "ok");
-      } else {
+        loaded = true;
+        if (!quiet) {
+          const totalServ = mergedState.servidores?.length || 0;
+          const totalFila = mergedState.filaAvulsa?.listas?.[mergedState.filaAvulsa?.ativa || "Padrão"]?.fila?.length || 0;
+          onToast(`Sincronização concluída! (${totalServ} servidores, ${totalFila} na fila)`, "ok");
+          if (hasPendingLocalChanges() && !pushTimeoutRef.current) {
+            pushTimeoutRef.current = setTimeout(() => {
+              pushTimeoutRef.current = null;
+              pushStateToCloudRef.current(latestStateRef.current);
+            }, 1500);
+          }
+        }
+      } else if (!quiet) {
         onToast("Nenhum dado encontrado na nuvem ainda. Clique em 'Salvar Este Computador na Nuvem Agora'.", "info");
       }
     } catch (e: any) {
       console.error(e);
-      onToast(e?.message || "Erro ao conectar com a nuvem", "err");
+      if (!quiet) onToast(e?.message || "Erro ao conectar com a nuvem", "err");
     } finally {
-      setSyncing(false);
+      if (!quiet) setSyncing(false);
     }
+    return loaded;
   };
+  const forcePullFromCloudRef = useRef(forcePullFromCloud);
+  forcePullFromCloudRef.current = forcePullFromCloud;
 
   // General force sync (saves current computer state to cloud and server)
   const forceSync = async () => {
@@ -412,7 +465,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             };
           } else {
             // Existing device with data: merge safely without regressing queue progress
-            const mergedFila = mergeFilaAvulsa(cachedState?.filaAvulsa, serverState.filaAvulsa);
+            const mergedFila = chooseFila(cachedState?.filaAvulsa, serverState.filaAvulsa);
             const mergedHist = mergeHistorico(cachedState?.historico || [], serverState.historico || []);
             mergedState = {
               ...defaultState,
@@ -453,6 +506,10 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           if (localHasData && !cloudHasData) {
             console.log("Pushing local data to initialize Firestore cloud");
             await pushStateToFirestore(mergedState, true);
+          } else if (hasPendingLocalChanges() && localHasData) {
+            // Alterações feitas aqui que não chegaram à nuvem (ex.: aba fechada antes de enviar)
+            isDirtyRef.current = true;
+            await pushStateToFirestore(mergedState).then(ok => { if (ok) { isDirtyRef.current = false; setPendingLocalChanges(false); } });
           } else if (oldVersionDetected) {
             // Alterações feitas numa aba com a versão antiga foram recuperadas: salva no formato novo
             onToastRef.current("Um computador está com a versão antiga do app aberta. Recarregue a página (F5) nos outros computadores.", "info");
@@ -644,7 +701,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     syncing,
     forceSync,
     forcePushThisDeviceToCloud,
-    forcePullFromCloud,
+    forcePullFromCloud: async () => { await forcePullFromCloud(false); },
     isStaticMode,
     cloudSynced,
     exportBackupJson,

@@ -33,8 +33,8 @@ const V1_DOCS = [DOC_STATE, DOC_FILA, DOC_SERVIDORES, DOC_HISTORICO, DOC_PRODUTI
 /** v2 (formato novo): documentos pequenos e imutáveis em "ngpesp_v2" + índice (ver chunkedStore.ts). */
 const V2_COLL = "ngpesp_v2";
 const V2_INDEX_ID = "_index";
-/** Documentos antigos só são apagados depois de 10 min fora do índice. */
-const GC_DELAY_MS = 10 * 60 * 1000;
+/** Documentos antigos só são apagados depois de 2 min fora do índice. */
+const GC_DELAY_MS = 2 * 60 * 1000;
 
 const REST_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents`;
 
@@ -60,6 +60,21 @@ let v1SeenAt = 0;
 let baseLoaded = false;
 /** Reavalia o último índice recebido (definido pelo listener). */
 let recheckFn: (() => void) | null = null;
+/** Índices já superados por uma gravação nossa (o listener os ignora se chegarem atrasados). */
+const staleIndexKeys = new Set<string>();
+/** Último índice gravado por esta aba. */
+let lastWrittenIndex: V2Index | null = null;
+/** Incrementa a cada gravação bem-sucedida (descarta processamentos do listener iniciados antes). */
+let pushGeneration = 0;
+
+function indexKey(idx: { writer?: string; updatedAt?: number } | null | undefined): string {
+  return idx ? `${idx.writer || ""}:${idx.updatedAt || 0}` : "";
+}
+
+/** true depois que este computador carregou os dados da nuvem. */
+export function isCloudLoaded(): boolean {
+  return baseLoaded;
+}
 /** Evita dois envios simultâneos desta aba. */
 let pushChain: Promise<any> = Promise.resolve();
 
@@ -424,7 +439,7 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
  * 2. Grava só os documentos novos (conteúdo que mudou).
  * 3. Grava o índice (por último, numa única escrita), preservando grupos que
  *    outros computadores alteraram e este não.
- * 4. Apaga documentos que saíram do índice há mais de 10 minutos.
+ * 4. Apaga documentos que saíram do índice há mais de 2 minutos.
  * Use force = true para que este computador vença em todos os grupos.
  */
 export function pushStateToFirestore(state: AppState, force: boolean = false): Promise<boolean> {
@@ -550,8 +565,13 @@ async function pushOnce(
   baseSlots = newBase;
   baseLoaded = true;
   v1SeenAt = newIndex.v1Seen;
+  // Qualquer índice anterior que chegue atrasado ao listener deve ser ignorado
+  if (fresh) staleIndexKeys.add(indexKey(fresh));
+  if (lastWrittenIndex) staleIndexKeys.add(indexKey(lastWrittenIndex));
+  lastWrittenIndex = newIndex;
+  pushGeneration++;
 
-  // 3. Limpeza (melhor esforço): só o que saiu do índice há mais de 10 min
+  // 3. Limpeza (melhor esforço): só o que saiu do índice há mais de 2 min
   await Promise.all(expired.map(async gb => {
     await deleteDocViaRest(V2_COLL, gb.id);
     chunkCache.delete(gb.id);
@@ -587,12 +607,15 @@ export function subscribeToFirestore(
       while (latest && !stopped) {
         const idx = latest;
         latest = null;
+        if (staleIndexKeys.has(indexKey(idx))) continue; // índice antigo chegando atrasado
+        const gen = pushGeneration;
         const groups = changedGroups(baseSlots, idx.slots);
         if (groups.size === 0) {
           continue;
         }
         const slots = await loadSlots(idx.slots);
         if (!slots || stopped) continue; // documento faltando: espera o próximo índice
+        if (gen !== pushGeneration || staleIndexKeys.has(indexKey(idx))) continue; // gravamos no meio: descarta
         const full = slotsToState(slots);
         if (!full) continue;
         const fields = new Set<string>();
@@ -637,8 +660,11 @@ export function subscribeToFirestore(
   }
 
   recheckFn = () => {
-    if (!stopped && lastSeen) {
-      latest = lastSeen;
+    if (stopped) return;
+    // Usa o índice mais novo conhecido: o recebido, ou o que acabamos de gravar
+    const candidate = lastSeen && !staleIndexKeys.has(indexKey(lastSeen)) ? lastSeen : lastWrittenIndex;
+    if (candidate) {
+      latest = candidate;
       process();
     }
   };
