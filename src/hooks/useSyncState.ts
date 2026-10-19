@@ -14,6 +14,9 @@ const DEFAULT_SPREADSHEET_ID = "1gk5MZYPDb3g5XM5y52OLMHMU0B0R2qbbZD79ryBizek";
 // Broadcast channel for instant multi-window / multi-tab synchronization
 const SYNC_CHANNEL_NAME = "ngpesp_intertab_sync";
 
+// Tempo de espera para juntar várias alterações num único envio à nuvem
+const CLOUD_PUSH_DEBOUNCE_MS = 1500;
+
 const defaultState: AppState = {
   servidores: [],
   historico: [],
@@ -177,9 +180,12 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     if (pushTimeoutRef.current) {
       clearTimeout(pushTimeoutRef.current);
     }
+    // Junta alterações feitas em sequência num único envio (economiza cota do Firestore).
+    // Os dados já ficam salvos na hora no navegador (localStorage/IndexedDB).
     pushTimeoutRef.current = setTimeout(() => {
+      pushTimeoutRef.current = null;
       pushStateToCloud(latestStateRef.current);
-    }, 600);
+    }, CLOUD_PUSH_DEBOUNCE_MS);
   };
 
   const pushStateToCloud = async (currentState: AppState) => {
@@ -218,20 +224,46 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     }
   };
 
+  // Se a aba for escondida/fechada com um envio pendente, envia na hora
+  const pushStateToCloudRef = useRef(pushStateToCloud);
+  pushStateToCloudRef.current = pushStateToCloud;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const flushPending = () => {
+      if (pushTimeoutRef.current) {
+        clearTimeout(pushTimeoutRef.current);
+        pushTimeoutRef.current = null;
+        pushStateToCloudRef.current(latestStateRef.current);
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushPending();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flushPending);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flushPending);
+    };
+  }, []);
+
   // Force Push THIS device's data to cloud immediately
   const forcePushThisDeviceToCloud = async () => {
     setSyncing(true);
     try {
       const currentState = stateRef.current;
       
-      const fsPromise = pushStateToFirestore(currentState);
+      const fsPromise = pushStateToFirestore(currentState, true);
       const apiPromise = !isStaticMode ? fetch("/api/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: currentState, updatedAt: Date.now() })
       }).catch(() => null) : Promise.resolve(null);
 
-      await Promise.all([fsPromise, apiPromise]);
+      const [fsOk] = await Promise.all([fsPromise, apiPromise]);
+      if (!fsOk && isStaticMode) {
+        throw new Error("Não foi possível salvar na nuvem agora (o limite diário do banco pode ter sido atingido). Seus dados continuam salvos neste computador.");
+      }
 
       const now = Date.now();
       setLastUpdated(now);
@@ -407,7 +439,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           // If local has data that was missing in cloud, push merged back to cloud
           if (localHasData && !cloudHasData) {
             console.log("Pushing local data to initialize Firestore cloud");
-            await pushStateToFirestore(mergedState);
+            await pushStateToFirestore(mergedState, true);
           }
           return;
         }
@@ -415,7 +447,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         // If Firestore is empty but this device HAS data:
         if (!cloudData && localHasData && cachedState) {
           console.log("Firestore empty: Auto-seeding cloud with this computer's data!");
-          await pushStateToFirestore(cachedState);
+          await pushStateToFirestore(cachedState, true);
           setCloudSynced(true);
           hasLoadedFromCloudRef.current = true;
         }
@@ -571,7 +603,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         const parsed = JSON.parse(content);
         if (parsed) {
           updateState(parsed);
-          await pushStateToFirestore(parsed);
+          await pushStateToFirestore(parsed, true);
           onToast("Backup restaurado e sincronizado com a nuvem!", "ok");
         }
       } catch (err) {

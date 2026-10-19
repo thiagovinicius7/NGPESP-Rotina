@@ -29,6 +29,65 @@ let isWritingToCloud = false;
 let lastPushedTimestamp = 0;
 
 /**
+ * ECONOMIA DE COTA
+ * Guarda a "assinatura" (JSON) do último conteúdo gravado/lido de cada documento.
+ * Só regravamos um documento quando o conteúdo dele realmente mudou.
+ * (Antes, cada alteração regravava os 5 documentos, ~1,5 MB por salvamento.)
+ */
+const lastSyncedSig: Record<string, string> = {};
+
+function rememberSig(docId: string, content: any) {
+  try {
+    lastSyncedSig[docId] = JSON.stringify(content);
+  } catch (_) {}
+}
+
+/**
+ * Os "lançamentos anteriores" existiam em dobro dentro do global_state
+ * (state.lancamentosAnteriores e state.config.lancamentosAnteriores, idênticos).
+ * Na nuvem gravamos só uma cópia; ao ler, recriamos a cópia em config para que
+ * o app continue funcionando exatamente como antes.
+ */
+function hydrateGlobalState(st: any): any {
+  if (!st || typeof st !== "object") return st;
+  const top = st.lancamentosAnteriores;
+  // A cópia principal (fora de config) é sempre a que vale ao ler da nuvem.
+  // Isso evita que uma aba antiga, com uma cópia desatualizada em config, se sobreponha.
+  if (Array.isArray(top) && st.config && typeof st.config === "object") {
+    return { ...st, config: { ...st.config, lancamentosAnteriores: top } };
+  }
+  return st;
+}
+
+/** Monta o conteúdo (sem updatedAt) de cada documento a partir do estado do app. */
+function buildDocContents(state: AppState): Record<string, any> {
+  // Mesma prioridade usada pela tela de Relatórios (o que o usuário está vendo)
+  const lancamentos = state.config?.lancamentosAnteriores || state.lancamentosAnteriores || [];
+  const { lancamentosAnteriores: _dup, ...configSemDuplicata } = (state.config || {}) as any;
+  return {
+    [DOC_FILA]: { filaAvulsa: state.filaAvulsa || {} },
+    [DOC_SERVIDORES]: { servidores: state.servidores || [] },
+    [DOC_HISTORICO]: { historico: (state.historico || []).slice(0, 1000) },
+    [DOC_PRODUTIVIDADE]: { produtividade: state.produtividade || {} },
+    [DOC_STATE]: {
+      state: {
+        respostas: state.respostas || [],
+        codigos: state.codigos || [],
+        sei: state.sei || [],
+        afastamentos: state.afastamentos || [],
+        ferias: state.ferias || {},
+        abonos: state.abonos || {},
+        balcaoAtendimentos: state.balcaoAtendimentos || {},
+        faq: state.faq || [],
+        config: configSemDuplicata,
+        lancamentosAnteriores: lancamentos,
+        gasUrl: state.gasUrl || ""
+      }
+    }
+  };
+}
+
+/**
  * Timeout helper
  */
 function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Promise<T> {
@@ -143,8 +202,14 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
 
     const hasAnyRest = stateRest || filaRest || servRest || histRest || prodRest;
     if (hasAnyRest) {
+      if (stateRest?.data?.state) rememberSig(DOC_STATE, { state: stateRest.data.state });
+      if (filaRest?.data?.filaAvulsa) rememberSig(DOC_FILA, { filaAvulsa: filaRest.data.filaAvulsa });
+      if (servRest?.data?.servidores) rememberSig(DOC_SERVIDORES, { servidores: servRest.data.servidores });
+      if (histRest?.data?.historico) rememberSig(DOC_HISTORICO, { historico: histRest.data.historico });
+      if (prodRest?.data?.produtividade) rememberSig(DOC_PRODUTIVIDADE, { produtividade: prodRest.data.produtividade });
+
       const partialState: Partial<AppState> = {
-        ...(stateRest?.data?.state || {}),
+        ...(hydrateGlobalState(stateRest?.data?.state) || {}),
         ...(filaRest?.data?.filaAvulsa ? { filaAvulsa: filaRest.data.filaAvulsa } : {}),
         ...(servRest?.data?.servidores ? { servidores: servRest.data.servidores } : {}),
         ...(histRest?.data?.historico ? { historico: histRest.data.historico } : {}),
@@ -203,8 +268,14 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
     const histData = histExists ? parseDocData(histSnap.data()) : {};
     const prodData = prodExists ? parseDocData(prodSnap.data()) : {};
 
+    if (stateData.state) rememberSig(DOC_STATE, { state: stateData.state });
+    if (filaData.filaAvulsa) rememberSig(DOC_FILA, { filaAvulsa: filaData.filaAvulsa });
+    if (servData.servidores) rememberSig(DOC_SERVIDORES, { servidores: servData.servidores });
+    if (histData.historico) rememberSig(DOC_HISTORICO, { historico: histData.historico });
+    if (prodData.produtividade) rememberSig(DOC_PRODUTIVIDADE, { produtividade: prodData.produtividade });
+
     const partialState: Partial<AppState> = {
-      ...(stateData.state || {}),
+      ...(hydrateGlobalState(stateData.state) || {}),
       ...(filaData.filaAvulsa ? { filaAvulsa: filaData.filaAvulsa } : {}),
       ...(servData.servidores ? { servidores: servData.servidores } : {}),
       ...(histData.historico ? { historico: histData.historico } : {}),
@@ -227,65 +298,46 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
 }
 
 /**
- * Pushes the full state to Firestore using dual-transport (REST API + SDK) with instant resolution.
+ * Envia o estado para o Firestore, gravando SOMENTE os documentos cujo conteúdo mudou.
+ * Use force = true para regravar tudo (ex.: "Salvar Este Computador na Nuvem Agora").
  */
-export async function pushStateToFirestore(state: AppState): Promise<boolean> {
+export async function pushStateToFirestore(state: AppState, force: boolean = false): Promise<boolean> {
   if (!state) return false;
+
+  const contents = buildDocContents(state);
+  const changed: { docId: string; content: any; sig: string }[] = [];
+  for (const [docId, content] of Object.entries(contents)) {
+    const sig = JSON.stringify(content);
+    if (force || lastSyncedSig[docId] !== sig) {
+      changed.push({ docId, content, sig });
+    }
+  }
+
+  // Nada mudou: não gasta cota
+  if (changed.length === 0) {
+    return true;
+  }
+
   isWritingToCloud = true;
   const now = Date.now();
   lastPushedTimestamp = now;
 
-  const filaPayload = {
-    filaAvulsa: state.filaAvulsa || {},
-    updatedAt: now
-  };
-
-  const servPayload = {
-    servidores: state.servidores || [],
-    updatedAt: now
-  };
-
-  const histPayload = {
-    historico: (state.historico || []).slice(0, 1000),
-    updatedAt: now
-  };
-
-  const prodPayload = {
-    produtividade: state.produtividade || {},
-    updatedAt: now
-  };
-
-  const globalPayload = {
-    state: {
-      respostas: state.respostas || [],
-      codigos: state.codigos || [],
-      sei: state.sei || [],
-      afastamentos: state.afastamentos || [],
-      ferias: state.ferias || {},
-      abonos: state.abonos || {},
-      balcaoAtendimentos: state.balcaoAtendimentos || {},
-      faq: state.faq || [],
-      config: state.config || {},
-      lancamentosAnteriores: state.lancamentosAnteriores || state.config?.lancamentosAnteriores || [],
-      gasUrl: state.gasUrl || ""
-    },
-    updatedAt: now
-  };
-
-  // Use single clean REST write channel (avoids burning 2x quota with concurrent SDK duplicates)
   try {
-    const results = await Promise.all([
-      writeDocViaRest(DOC_FILA, filaPayload, now),
-      writeDocViaRest(DOC_SERVIDORES, servPayload, now),
-      writeDocViaRest(DOC_HISTORICO, histPayload, now),
-      writeDocViaRest(DOC_PRODUTIVIDADE, prodPayload, now),
-      writeDocViaRest(DOC_STATE, globalPayload, now)
-    ]);
-    
+    const results = await Promise.all(
+      changed.map(async ({ docId, content, sig }) => {
+        const ok = await writeDocViaRest(docId, { ...content, updatedAt: now }, now);
+        if (ok) lastSyncedSig[docId] = sig; // se falhar, tenta de novo no próximo salvamento
+        return ok;
+      })
+    );
+
     isWritingToCloud = false;
     const anyOk = results.some(r => r === true);
     if (anyOk) {
-      console.log("Successfully updated cloud state at", new Date(now).toISOString());
+      console.log(
+        `Nuvem atualizada (${changed.map(c => c.docId).join(", ")}) em`,
+        new Date(now).toISOString()
+      );
     }
     return anyOk;
   } catch (e) {
@@ -312,6 +364,7 @@ export function subscribeToFirestore(
           const raw = snapshot.data();
           const data = parseDocData(raw);
           if (data && data.filaAvulsa) {
+            rememberSig(DOC_FILA, { filaAvulsa: data.filaAvulsa });
             const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
             if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
               return;
@@ -334,6 +387,7 @@ export function subscribeToFirestore(
           const raw = snapshot.data();
           const data = parseDocData(raw);
           if (data && data.servidores) {
+            rememberSig(DOC_SERVIDORES, { servidores: data.servidores });
             const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
             if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
               return;
@@ -356,6 +410,7 @@ export function subscribeToFirestore(
           const raw = snapshot.data();
           const data = parseDocData(raw);
           if (data && data.produtividade) {
+            rememberSig(DOC_PRODUTIVIDADE, { produtividade: data.produtividade });
             const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
             if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
               return;
@@ -378,6 +433,7 @@ export function subscribeToFirestore(
           const raw = snapshot.data();
           const data = parseDocData(raw);
           if (data && data.historico) {
+            rememberSig(DOC_HISTORICO, { historico: data.historico });
             const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
             if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
               return;
@@ -400,11 +456,12 @@ export function subscribeToFirestore(
           const raw = snapshot.data();
           const data = parseDocData(raw);
           if (data && data.state) {
+            rememberSig(DOC_STATE, { state: data.state });
             const updatedAt = Number(data.updatedAt || raw.updatedAt || 0);
             if (updatedAt && Math.abs(updatedAt - lastPushedTimestamp) < 500 && isWritingToCloud) {
               return;
             }
-            onUpdate(data.state, updatedAt);
+            onUpdate(hydrateGlobalState(data.state), updatedAt);
           }
         }
       },
