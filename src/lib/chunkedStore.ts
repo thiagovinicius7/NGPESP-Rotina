@@ -49,8 +49,13 @@ export function contentHash(str: string): string {
   return h1.toString(36) + h2.toString(36) + str.length.toString(36);
 }
 
-export function slotDocId(slot: string, content: any): string {
-  return `${slot}~${contentHash(JSON.stringify(content))}`;
+export function slotHash(content: any): string {
+  return contentHash(JSON.stringify(content));
+}
+
+/** Id de documento novo: inclui um nonce para nunca reaproveitar o id de um documento antigo. */
+export function newDocId(slot: string, hash: string): string {
+  return `${slot}~${hash}~${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /** Grupo ao qual o slot pertence. */
@@ -212,44 +217,47 @@ export function slotsToState(slots: SlotMap): Partial<AppState> | null {
   return result as Partial<AppState>;
 }
 
-/**
- * Combina 3 índices (slot -> docId) por grupo:
- *  - base:    o que este computador tinha carregado/aplicado
- *  - fresh:   o que está na nuvem agora
- *  - desired: o que este computador quer gravar
- * Para cada grupo: se este computador não mudou o grupo (desired == base), mantém o da nuvem
- * (preserva alterações feitas por outros); senão, o deste computador vence.
- */
-export function mergeSlotIndex(
-  base: Record<string, string>,
-  fresh: Record<string, string>,
-  desired: Record<string, string>,
-  force: boolean
-): Record<string, string> {
-  if (force) return { ...desired };
-  const groups = new Set<string>();
-  [base, fresh, desired].forEach(m => Object.keys(m).forEach(s => groups.add(slotGroup(s))));
-  const pick = (m: Record<string, string>, g: string) => {
-    const out: Record<string, string> = {};
-    Object.entries(m).forEach(([s, id]) => { if (slotGroup(s) === g) out[s] = id; });
-    return out;
-  };
-  const same = (a: Record<string, string>, b: Record<string, string>) => {
-    const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
-    return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a[k] === b[k]);
-  };
-  const result: Record<string, string> = {};
-  groups.forEach(g => {
-    const b = pick(base, g), f = pick(fresh, g), d = pick(desired, g);
-    Object.assign(result, same(d, b) ? f : d);
-  });
-  return result;
+/** Hash de conteúdo contido num id "<slot>~<hash>~<nonce>". */
+export function hashOfId(id: string | undefined): string {
+  if (!id) return "";
+  return id.split("~")[1] || "";
 }
 
-/** Grupos cujo mapeamento difere entre dois índices. */
+/** Mapa slot -> hash. */
+export function hashMap(m: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  Object.entries(m).forEach(([s, id]) => (out[s] = hashOfId(id)));
+  return out;
+}
+
+/** Slots de um grupo, com seus hashes. */
+export function groupHashes(m: Record<string, string>, g: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  Object.entries(m).forEach(([s, id]) => { if (slotGroup(s) === g) out[s] = hashOfId(id); });
+  return out;
+}
+
+export function sameHashes(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a[k] === b[k]);
+}
+
+/** Todos os grupos presentes em qualquer dos mapas. */
+export function allGroups(...maps: Record<string, string>[]): Set<string> {
+  const groups = new Set<string>();
+  maps.forEach(m => Object.keys(m).forEach(s => groups.add(slotGroup(s))));
+  return groups;
+}
+
+/** Grupos cujo conteúdo (hash) difere entre dois índices. */
 export function changedGroups(a: Record<string, string>, b: Record<string, string>): Set<string> {
   const out = new Set<string>();
   const slots = new Set([...Object.keys(a), ...Object.keys(b)]);
-  slots.forEach(s => { if (a[s] !== b[s]) out.add(slotGroup(s)); });
+  slots.forEach(s => { if (hashOfId(a[s]) !== hashOfId(b[s])) out.add(slotGroup(s)); });
   return out;
+}
+
+/** Grupos cujo conteúdo pode ser unido entre computadores (registros que só se acumulam). */
+export function isUnionGroup(g: string): boolean {
+  return g.startsWith("hist__") || g.startsWith("prod__");
 }

@@ -3,9 +3,10 @@ import { getFirestore, doc, getDoc, onSnapshot } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { AppState } from "../types.js";
 import {
-  stateToSlots, slotsToState, slotDocId, mergeSlotIndex, changedGroups, groupFields, V2_VERSION, SlotMap
+  stateToSlots, slotsToState, slotHash, newDocId, hashMap, hashOfId, sameHashes, allGroups, slotGroup,
+  changedGroups, groupFields, isUnionGroup, V2_VERSION, SlotMap
 } from "./chunkedStore";
-import { mergeHistorico, mergeProdutividade, mergeFilaAvulsa } from "./utils";
+import { mergeHistorico, mergeProdutividade } from "./utils";
 
 // Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -38,6 +39,7 @@ const GC_DELAY_MS = 10 * 60 * 1000;
 const REST_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents`;
 
 interface V2Index {
+  updateTime?: string; // versão do documento no servidor (para gravação condicional)
   version: number;
   writer: string;
   slots: Record<string, string>; // slot -> docId
@@ -54,6 +56,10 @@ const chunkCache = new Map<string, any>();
 let baseSlots: Record<string, string> = {};
 /** Maior updatedAt do v1 já incorporado. */
 let v1SeenAt = 0;
+/** true depois que este computador carregou da nuvem com sucesso. */
+let baseLoaded = false;
+/** Reavalia o último índice recebido (definido pelo listener). */
+let recheckFn: (() => void) | null = null;
 /** Evita dois envios simultâneos desta aba. */
 let pushChain: Promise<any> = Promise.resolve();
 
@@ -96,9 +102,12 @@ function parseRestDoc(json: any): { data: any; updatedAt: number } | null {
 /**
  * REST API Write
  */
-async function writeDocViaRest(coll: string, docId: string, data: any, timestamp: number): Promise<boolean> {
+async function writeDocViaRest(
+  coll: string, docId: string, data: any, timestamp: number, precondition?: string
+): Promise<boolean | "conflict"> {
   try {
-    const url = `${REST_BASE}/${coll}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
+    const url = `${REST_BASE}/${coll}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}` +
+      (precondition ? `&${precondition}` : "");
     const body = {
       fields: {
         json: { stringValue: JSON.stringify(data) },
@@ -118,6 +127,13 @@ async function writeDocViaRest(coll: string, docId: string, data: any, timestamp
     if (res.ok) {
       firestoreQuotaExceeded = false;
       return true;
+    }
+    if (precondition && (res.status === 400 || res.status === 409 || res.status === 412)) {
+      try {
+        const body = await res.json();
+        const st = String(body?.error?.status || body?.[0]?.error?.status || "");
+        if (st === "FAILED_PRECONDITION" || st === "ABORTED" || st === "ALREADY_EXISTS" || st === "NOT_FOUND") return "conflict";
+      } catch (_) {}
     }
     return false;
   } catch (e) {
@@ -172,13 +188,15 @@ async function readV1MaxUpdatedAt(): Promise<number> {
 }
 
 /** Lê um documento v2. undefined = não existe; null = erro de leitura. */
-async function getV2Doc(docId: string): Promise<{ data: any; updatedAt: number } | undefined | null> {
+async function getV2Doc(docId: string): Promise<{ data: any; updatedAt: number; updateTime?: string } | undefined | null> {
   try {
     const url = `${REST_BASE}/${V2_COLL}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
     const res = await fetch(url);
     if (res.status === 404) return undefined;
     if (!res.ok) return null;
-    return parseRestDoc(await res.json());
+    const json = await res.json();
+    const parsed = parseRestDoc(json);
+    return parsed ? { ...parsed, updateTime: json?.updateTime } : null;
   } catch (e) {
     console.warn(`REST read v2 error for ${docId}:`, e);
     return null;
@@ -192,6 +210,7 @@ async function readIndex(): Promise<V2Index | undefined | null> {
   const idx = r.data;
   if (!idx || typeof idx.slots !== "object") return null;
   return {
+    updateTime: r.updateTime,
     version: Number(idx.version || V2_VERSION),
     writer: String(idx.writer || ""),
     slots: idx.slots || {},
@@ -214,6 +233,15 @@ async function loadSlots(slots: Record<string, string>): Promise<SlotMap | null>
   const out: SlotMap = {};
   entries.forEach(([slot, id]) => (out[slot] = chunkCache.get(id)));
   return out;
+}
+
+/** Conteúdo de um documento v2 (com cache). undefined se não existir; null em erro. */
+async function loadDoc(id: string): Promise<any | undefined | null> {
+  if (chunkCache.has(id)) return chunkCache.get(id);
+  const r = await getV2Doc(id);
+  if (r === undefined || r === null) return r;
+  chunkCache.set(id, r.data?.c);
+  return r.data?.c;
 }
 
 /**
@@ -327,14 +355,14 @@ async function fetchV1State(): Promise<{ state: Partial<AppState>; updatedAt: nu
 
 /**
  * Recupera alterações gravadas no formato antigo por uma aba desatualizada
- * (histórico, produtividade e fila são mesclados sem perder nada).
+ * (só histórico e produtividade, que apenas se acumulam — para não ressuscitar
+ * itens já apagados da fila).
  */
 function mergeV1Into(state: Partial<AppState>, v1: Partial<AppState>): Partial<AppState> {
   return {
     ...state,
     historico: mergeHistorico(state.historico || [], v1.historico || []),
-    produtividade: mergeProdutividade(state.produtividade || {}, v1.produtividade || {}),
-    filaAvulsa: mergeFilaAvulsa(state.filaAvulsa, v1.filaAvulsa)
+    produtividade: mergeProdutividade(state.produtividade || {}, v1.produtividade || {})
   };
 }
 
@@ -349,6 +377,7 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
     const [v1, v1Max] = await Promise.all([fetchV1State(), readV1MaxUpdatedAt()]);
     v1SeenAt = Math.max(v1SeenAt, v1Max);
     baseSlots = {};
+    if (v1) baseLoaded = true;
     return v1;
   }
 
@@ -365,6 +394,7 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
   }
 
   baseSlots = { ...index.slots };
+  baseLoaded = true;
   v1SeenAt = Math.max(v1SeenAt, index.v1Seen);
 
   // Alguma aba com a versão antiga gravou depois da conversão?
@@ -378,7 +408,6 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
         console.warn("Alterações de uma aba com a versão antiga foram recuperadas.");
       }
       v1SeenAt = v1Max;
-      baseSlots = {}; // força regravar os grupos alterados pela mescla no próximo envio
     }
   } catch (_) {}
 
@@ -406,68 +435,136 @@ export function pushStateToFirestore(state: AppState, force: boolean = false): P
 
 async function doPush(state: AppState, force: boolean): Promise<boolean> {
   if (!state) return false;
+  if (!baseLoaded && !force) {
+    // Sem saber o que há na nuvem, gravar poderia sobrescrever alterações de outros computadores
+    console.warn("Envio adiado: este computador ainda não carregou os dados da nuvem.");
+    return false;
+  }
+  const contents = stateToSlots(state);
+  const desiredHash: Record<string, string> = {};
+  Object.entries(contents).forEach(([slot, c]) => (desiredHash[slot] = slotHash(c)));
 
-  const slotContents = stateToSlots(state);
-  const desired: Record<string, string> = {};
-  Object.entries(slotContents).forEach(([slot, content]) => (desired[slot] = slotDocId(slot, content)));
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const r = await pushOnce(contents, desiredHash, force);
+    if (r !== "conflict") return r;
+    console.log("Outro computador salvou ao mesmo tempo; juntando e tentando de novo...");
+  }
+  return false;
+}
 
+function pickGroup(m: Record<string, string>, g: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  Object.entries(m).forEach(([s, v]) => { if (slotGroup(s) === g) out[s] = v; });
+  return out;
+}
+
+async function pushOnce(
+  contents: SlotMap, desiredHash: Record<string, string>, force: boolean
+): Promise<boolean | "conflict"> {
   const fresh = await readIndex();
   if (fresh === null) return false; // erro de leitura: tenta depois
   const freshSlots = fresh ? fresh.slots : {};
+  const baseHash = hashMap(baseSlots);
+  const freshHash = hashMap(freshSlots);
 
-  const merged = mergeSlotIndex(baseSlots, freshSlots, desired, force || !fresh);
-  const sameAsFresh = fresh && JSON.stringify(Object.entries(merged).sort()) === JSON.stringify(Object.entries(freshSlots).sort());
-  if (sameAsFresh && !force) {
-    baseSlots = desired;
+  const finalIds: Record<string, string> = {};  // o que vai para o índice
+  const newBase: Record<string, string> = {};   // o que corresponde ao estado local
+  const toWrite: { id: string; content: any }[] = [];
+
+  for (const g of allGroups(baseSlots, freshSlots, desiredHash)) {
+    const bg = pickGroup(baseHash, g), fg = pickGroup(freshHash, g), dg = pickGroup(desiredHash, g);
+    const localChanged = force || !fresh || !sameHashes(dg, bg);
+    const remoteChanged = !sameHashes(fg, bg);
+
+    if (!localChanged) {
+      // Este computador não mexeu no grupo: mantém o da nuvem (o listener aplica depois)
+      Object.keys(fg).forEach(slot => (finalIds[slot] = freshSlots[slot]));
+      Object.keys(bg).forEach(slot => (newBase[slot] = baseSlots[slot]));
+    } else if (remoteChanged && isUnionGroup(g) && Object.keys(fg).length > 0) {
+      // Histórico/produtividade alterados aqui e em outro computador: junta os dois
+      for (const slot of new Set([...Object.keys(dg), ...Object.keys(fg)])) {
+        const mine = contents[slot];
+        const fid = freshSlots[slot];
+        if (mine === undefined) { finalIds[slot] = fid; continue; } // não descarta o que só existe na nuvem
+        const theirs = fid ? await loadDoc(fid) : undefined;
+        if (theirs === null) return false;
+        const union = theirs === undefined
+          ? mine
+          : g.startsWith("hist__") ? mergeHistorico(mine || [], theirs || []) : mergeProdutividade(mine || {}, theirs || {});
+        const uh = slotHash(union);
+        const id = freshHash[slot] === uh ? fid : newDocId(slot, uh);
+        if (id !== fid) toWrite.push({ id, content: union });
+        finalIds[slot] = id;
+        newBase[slot] = `${slot}~${desiredHash[slot]}~local`;
+      }
+    } else {
+      // Este computador vence no grupo
+      Object.keys(dg).forEach(slot => {
+        // force ("Salvar na nuvem" manual): regrava tudo, consertando qualquer documento ausente
+        const id = !force && freshHash[slot] === dg[slot] ? freshSlots[slot] : newDocId(slot, dg[slot]);
+        if (id !== freshSlots[slot]) toWrite.push({ id, content: contents[slot] });
+        finalIds[slot] = id;
+        newBase[slot] = id;
+      });
+    }
+  }
+
+  if (fresh && !force && toWrite.length === 0 && sameHashes(hashMap(finalIds), freshHash)) {
+    baseSlots = newBase;
+    scheduleRecheck();
     return true; // nada mudou: não gasta cota
   }
 
   const now = Date.now();
-  const referenced = new Set(Object.values(freshSlots));
 
-  // 2. Documentos novos (os que o índice atual não cita)
-  const toWrite = Object.entries(merged).filter(([slot, id]) => desired[slot] === id && (force || !referenced.has(id)));
-  const results = await Promise.all(
-    toWrite.map(async ([slot, id]) => {
-      const ok = await writeDocViaRest(V2_COLL, id, { c: slotContents[slot] }, now);
-      if (ok) chunkCache.set(id, slotContents[slot]);
-      return ok;
-    })
-  );
+  // 1. Documentos novos (ids nunca usados antes)
+  const results = await Promise.all(toWrite.map(async ({ id, content }) => {
+    const ok = await writeDocViaRest(V2_COLL, id, { c: content }, now);
+    if (ok === true) chunkCache.set(id, content);
+    return ok === true;
+  }));
   if (results.some(r => !r)) return false; // índice NÃO é gravado se faltar algum documento
 
-  // 3. Índice
-  const mergedIds = new Set(Object.values(merged));
-  const garbage = (fresh?.garbage || []).filter(g => !mergedIds.has(g.id));
+  // 2. Índice, só se ninguém gravou desde a leitura
+  const finalSet = new Set(Object.values(finalIds));
+  const garbage = (fresh?.garbage || []).filter(gb => !finalSet.has(gb.id));
   Object.values(freshSlots).forEach(id => {
-    if (!mergedIds.has(id) && !garbage.some(g => g.id === id)) garbage.push({ id, ts: now });
+    if (!finalSet.has(id) && !garbage.some(gb => gb.id === id)) garbage.push({ id, ts: now });
   });
-  const expired = garbage.filter(g => now - g.ts > GC_DELAY_MS);
-  const remaining = garbage.filter(g => now - g.ts <= GC_DELAY_MS);
+  const expired = garbage.filter(gb => now - gb.ts > GC_DELAY_MS);
   const newIndex: V2Index = {
     version: V2_VERSION,
     writer: WRITER_ID,
-    slots: merged,
-    garbage: remaining,
+    slots: finalIds,
+    garbage: garbage.filter(gb => now - gb.ts <= GC_DELAY_MS),
     v1Seen: Math.max(v1SeenAt, fresh?.v1Seen || 0),
     updatedAt: now
   };
-  const okIndex = await writeDocViaRest(V2_COLL, V2_INDEX_ID, newIndex, now);
-  if (!okIndex) return false;
+  const precondition = fresh?.updateTime
+    ? `currentDocument.updateTime=${encodeURIComponent(fresh.updateTime)}`
+    : (fresh ? undefined : "currentDocument.exists=false");
+  const okIndex = await writeDocViaRest(V2_COLL, V2_INDEX_ID, newIndex, now, precondition);
+  if (okIndex === "conflict") return "conflict";
+  if (okIndex !== true) return false;
 
-  // O estado local corresponde ao que este computador quis gravar.
-  // Grupos preservados de outros computadores chegam pelo listener.
-  baseSlots = desired;
+  baseSlots = newBase;
+  baseLoaded = true;
   v1SeenAt = newIndex.v1Seen;
 
-  // 4. Limpeza (melhor esforço)
-  await Promise.all(expired.map(async g => {
-    await deleteDocViaRest(V2_COLL, g.id);
-    chunkCache.delete(g.id);
+  // 3. Limpeza (melhor esforço): só o que saiu do índice há mais de 10 min
+  await Promise.all(expired.map(async gb => {
+    await deleteDocViaRest(V2_COLL, gb.id);
+    chunkCache.delete(gb.id);
   }));
 
+  scheduleRecheck();
   console.log(`Nuvem atualizada: ${toWrite.length} documento(s) + índice`);
   return true;
+}
+
+function scheduleRecheck() {
+  // Depois de salvar, aplica alterações de outros computadores que tenham ficado pendentes
+  setTimeout(() => recheckFn?.(), 800);
 }
 
 /**
@@ -480,6 +577,7 @@ export function subscribeToFirestore(
 ): () => void {
   let stopped = false;
   let latest: V2Index | null = null;
+  let lastSeen: V2Index | null = null;
   let running = false;
 
   const process = async () => {
@@ -506,6 +604,7 @@ export function subscribeToFirestore(
         const applied = onUpdate(partial, idx.updatedAt);
         if (applied !== false) {
           baseSlots = { ...idx.slots };
+          baseLoaded = true;
         }
       }
     } finally {
@@ -521,7 +620,7 @@ export function subscribeToFirestore(
         if (!snapshot.exists()) return; // ainda no formato antigo
         const data = parseDocData(snapshot.data());
         if (!data || typeof data.slots !== "object") return;
-        latest = {
+        latest = lastSeen = {
           version: Number(data.version || V2_VERSION),
           writer: String(data.writer || ""),
           slots: data.slots,
@@ -537,8 +636,16 @@ export function subscribeToFirestore(
     console.warn("Could not start Firestore listener:", err);
   }
 
+  recheckFn = () => {
+    if (!stopped && lastSeen) {
+      latest = lastSeen;
+      process();
+    }
+  };
+
   return () => {
     stopped = true;
+    recheckFn = null;
     try { unsub(); } catch (_) {}
   };
 }

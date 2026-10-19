@@ -515,8 +515,15 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         const merged: AppState = {
           ...prev,
           ...incomingPartial,
-          filaAvulsa: incomingPartial.filaAvulsa 
-            ? mergeFilaAvulsa(prev.filaAvulsa, incomingPartial.filaAvulsa)
+          // Sem edição local pendente, a fila da nuvem é a correta: aplica como está,
+          // mantendo apenas a lista que este computador tem aberta.
+          filaAvulsa: incomingPartial.filaAvulsa
+            ? {
+                ...incomingPartial.filaAvulsa,
+                ativa: prev.filaAvulsa?.ativa && incomingPartial.filaAvulsa.listas?.[prev.filaAvulsa.ativa]
+                  ? prev.filaAvulsa.ativa
+                  : incomingPartial.filaAvulsa.ativa
+              }
             : prev.filaAvulsa,
           servidores: incomingPartial.servidores
             ? incomingPartial.servidores
@@ -543,15 +550,6 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       }
       setCloudSynced(true);
       hasLoadedFromCloudRef.current = true;
-
-      // A mescla pode ter juntado dados deste computador que a nuvem ainda não tem
-      // (ex.: histórico). Agenda um envio: se nada diferir, não grava nada.
-      if (!pushTimeoutRef.current) {
-        pushTimeoutRef.current = setTimeout(() => {
-          pushTimeoutRef.current = null;
-          pushStateToCloudRef.current(latestStateRef.current);
-        }, 2000);
-      }
       return true;
     });
 
