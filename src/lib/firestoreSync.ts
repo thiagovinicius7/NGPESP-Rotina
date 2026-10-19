@@ -86,7 +86,8 @@ export function restorePersistedBase(): boolean {
     const raw = localStorage.getItem(BASE_STORAGE_KEY);
     if (!raw) return false;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed.slots !== "object") return false;
+    // Base vazio = desconhecido (ex.: ainda do formato antigo): não serve como referência
+    if (!parsed || typeof parsed.slots !== "object" || Object.keys(parsed.slots).length === 0) return false;
     baseSlots = parsed.slots;
     lastSeq = Math.max(lastSeq, Number(parsed.seq || 0));
     baseLoaded = true;
@@ -448,7 +449,7 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
     throw new Error("Não foi possível carregar os dados da nuvem agora. Tente sincronizar novamente em instantes.");
   }
 
-  lastSeq = Math.max(lastSeq, index.seq);
+  lastSeq = index.seq; // a nuvem acabou de ser lida: esta é a referência
   setBase({ ...index.slots });
   baseLoaded = true;
   v1SeenAt = Math.max(v1SeenAt, index.v1Seen);
@@ -519,6 +520,7 @@ async function pushOnce(
 ): Promise<boolean | "conflict"> {
   const fresh = await readIndex();
   if (fresh === null) return false; // erro de leitura: tenta depois
+  if (fresh && fresh.seq < lastSeq) lastSeq = fresh.seq; // índice recriado: recomeça a sequência
   const freshSlots = fresh ? fresh.slots : {};
   const baseHash = hashMap(baseSlots);
   const freshHash = hashMap(freshSlots);

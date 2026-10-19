@@ -3,7 +3,7 @@ import { AppState } from "../types.js";
 import { mergeProdutividade, mergeFilaAvulsa, mergeHistorico, saveLocalSnapshot } from "../lib/utils";
 import { 
   fetchFirestoreState, pushStateToFirestore, subscribeToFirestore,
-  firestoreQuotaExceeded, oldVersionDetected, isCloudLoaded, restorePersistedBase, adoptCloudBaseOnly
+  firestoreQuotaExceeded, oldVersionDetected, isCloudLoaded, restorePersistedBase
 } from "../lib/firestoreSync";
 import { safeLocalStorageSet, saveStateToIndexedDB, loadStateFromIndexedDB } from "../lib/idbStorage";
 
@@ -35,6 +35,17 @@ function setPendingLocalChanges(v: boolean) {
 /** Depois de enviar os dados locais já mesclados (que incluem as edições das outras abas), limpa todas as marcas. */
 function clearAllPendingLocalChanges() {
   try { pendingKeys().forEach(k => localStorage.removeItem(k)); } catch (_) {}
+}
+/**
+ * Depois de um envio bem-sucedido do estado compartilhado (o mesmo cache para todas as abas),
+ * limpa as marcas criadas antes do início do envio — essas edições já estão na nuvem.
+ */
+function clearPendingOlderThan(ts: number) {
+  try {
+    pendingKeys().forEach(k => {
+      if (Number(localStorage.getItem(k) || 0) <= ts) localStorage.removeItem(k);
+    });
+  } catch (_) {}
 }
 
 /**
@@ -246,6 +257,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
 
       // Push to Firestore (works universally on all devices and GitHub Pages)
       const editsAtStart = editCounterRef.current;
+      const pushStartedAt = Date.now();
       const firestoreOk = await pushStateToFirestore(currentState);
       if (firestoreOk) {
         safeLocalStorageSet(LOCAL_TIMESTAMP_KEY, String(now));
@@ -255,11 +267,13 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           isDirtyRef.current = false;
           setPendingLocalChanges(false);
         }
+        clearPendingOlderThan(pushStartedAt);
         setCloudSynced(true);
       } else if (!isCloudLoaded()) {
         // A nuvem não carregou ao abrir o app. Usa a última versão da nuvem conhecida por este
         // navegador para saber o que foi editado aqui; os dados locais NÃO são alterados.
-        const loaded = restorePersistedBase() || (await adoptCloudBaseOnly());
+        // Sem base guardado (ex.: primeiro dia da versão nova), carrega a nuvem e junta.
+        const loaded = restorePersistedBase() || (await forcePullFromCloudRef.current(true));
         if (!pushTimeoutRef.current) {
           pushTimeoutRef.current = setTimeout(() => {
             pushTimeoutRef.current = null;
@@ -590,8 +604,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   // 2. Real-time multi-device subscription via Firestore
   useEffect(() => {
     const unsubscribe = subscribeToFirestore((incomingPartial, updatedAt) => {
-      // If we are currently typing/mutating locally, don't clobber
-      if (isDirtyRef.current) return false;
+      // If we are currently typing/mutating locally (nesta ou em outra aba), don't clobber
+      if (isDirtyRef.current || hasPendingLocalChanges()) return false;
 
       setStateState(prev => {
         const merged: AppState = {
