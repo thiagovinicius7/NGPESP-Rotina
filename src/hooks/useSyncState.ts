@@ -3,23 +3,38 @@ import { AppState } from "../types.js";
 import { mergeProdutividade, mergeFilaAvulsa, mergeHistorico, saveLocalSnapshot } from "../lib/utils";
 import { 
   fetchFirestoreState, pushStateToFirestore, subscribeToFirestore,
-  firestoreQuotaExceeded, oldVersionDetected, isCloudLoaded
+  firestoreQuotaExceeded, oldVersionDetected, isCloudLoaded, restorePersistedBase, adoptCloudBaseOnly
 } from "../lib/firestoreSync";
 import { safeLocalStorageSet, saveStateToIndexedDB, loadStateFromIndexedDB } from "../lib/idbStorage";
 
 const LOCAL_STORAGE_KEY = "ngpesp_local_state";
 const LOCAL_TIMESTAMP_KEY = "ngpesp_local_updated_at";
-// Marca que este computador tem alterações ainda não enviadas à nuvem
-const PENDING_KEY = "ngpesp_cloud_pending";
+// Marca (por aba) que há alterações ainda não enviadas à nuvem
+const PENDING_PREFIX = "ngpesp_cloud_pending_";
+const TAB_ID = Math.random().toString(36).slice(2, 10);
 
+function pendingKeys(): string[] {
+  const keys: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(PENDING_PREFIX)) keys.push(k);
+    }
+  } catch (_) {}
+  return keys;
+}
 function hasPendingLocalChanges(): boolean {
-  try { return localStorage.getItem(PENDING_KEY) === "1"; } catch (_) { return false; }
+  return pendingKeys().length > 0;
 }
 function setPendingLocalChanges(v: boolean) {
   try {
-    if (v) localStorage.setItem(PENDING_KEY, "1");
-    else localStorage.removeItem(PENDING_KEY);
+    if (v) localStorage.setItem(PENDING_PREFIX + TAB_ID, String(Date.now()));
+    else localStorage.removeItem(PENDING_PREFIX + TAB_ID);
   } catch (_) {}
+}
+/** Depois de enviar os dados locais já mesclados (que incluem as edições das outras abas), limpa todas as marcas. */
+function clearAllPendingLocalChanges() {
+  try { pendingKeys().forEach(k => localStorage.removeItem(k)); } catch (_) {}
 }
 
 /**
@@ -242,8 +257,9 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         }
         setCloudSynced(true);
       } else if (!isCloudLoaded()) {
-        // Não conseguiu carregar a nuvem no início: carrega agora, junta e tenta enviar de novo
-        const loaded = await forcePullFromCloudRef.current(true);
+        // A nuvem não carregou ao abrir o app. Usa a última versão da nuvem conhecida por este
+        // navegador para saber o que foi editado aqui; os dados locais NÃO são alterados.
+        const loaded = restorePersistedBase() || (await adoptCloudBaseOnly());
         if (!pushTimeoutRef.current) {
           pushTimeoutRef.current = setTimeout(() => {
             pushTimeoutRef.current = null;
@@ -509,7 +525,16 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           } else if (hasPendingLocalChanges() && localHasData) {
             // Alterações feitas aqui que não chegaram à nuvem (ex.: aba fechada antes de enviar)
             isDirtyRef.current = true;
-            await pushStateToFirestore(mergedState).then(ok => { if (ok) { isDirtyRef.current = false; setPendingLocalChanges(false); } });
+            const ok = await pushStateToFirestore(mergedState);
+            if (ok) {
+              isDirtyRef.current = false;
+              clearAllPendingLocalChanges();
+            } else if (!pushTimeoutRef.current) {
+              pushTimeoutRef.current = setTimeout(() => {
+                pushTimeoutRef.current = null;
+                pushStateToCloudRef.current(latestStateRef.current);
+              }, 30 * 1000);
+            }
           } else if (oldVersionDetected) {
             // Alterações feitas numa aba com a versão antiga foram recuperadas: salva no formato novo
             onToastRef.current("Um computador está com a versão antiga do app aberta. Recarregue a página (F5) nos outros computadores.", "info");

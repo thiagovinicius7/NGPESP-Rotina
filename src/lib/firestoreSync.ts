@@ -45,6 +45,7 @@ interface V2Index {
   slots: Record<string, string>; // slot -> docId
   garbage: { id: string; ts: number }[];
   v1Seen: number; // maior updatedAt do v1 já incorporado
+  seq: number;    // número de sequência: só aumenta (garantido pela gravação condicional)
   updatedAt: number;
 }
 
@@ -60,15 +61,53 @@ let v1SeenAt = 0;
 let baseLoaded = false;
 /** Reavalia o último índice recebido (definido pelo listener). */
 let recheckFn: (() => void) | null = null;
-/** Índices já superados por uma gravação nossa (o listener os ignora se chegarem atrasados). */
-const staleIndexKeys = new Set<string>();
+/** Maior número de sequência de índice já carregado/aplicado/gravado (índices menores chegaram atrasados). */
+let lastSeq = 0;
 /** Último índice gravado por esta aba. */
 let lastWrittenIndex: V2Index | null = null;
 /** Incrementa a cada gravação bem-sucedida (descarta processamentos do listener iniciados antes). */
 let pushGeneration = 0;
 
-function indexKey(idx: { writer?: string; updatedAt?: number } | null | undefined): string {
-  return idx ? `${idx.writer || ""}:${idx.updatedAt || 0}` : "";
+/**
+ * O "base" (versão da nuvem que corresponde aos dados locais) é guardado no navegador
+ * junto com os dados. Assim, mesmo se a nuvem não carregar ao abrir o app, sabemos
+ * exatamente o que foi editado aqui e o que veio de outros computadores.
+ */
+const BASE_STORAGE_KEY = "ngpesp_v2_base";
+function setBase(slots: Record<string, string>) {
+  baseSlots = slots;
+  try { localStorage.setItem(BASE_STORAGE_KEY, JSON.stringify({ slots, seq: lastSeq })); } catch (_) {}
+}
+
+/** Recupera o base guardado no navegador (usado quando a nuvem não carregou ao abrir). */
+export function restorePersistedBase(): boolean {
+  if (baseLoaded) return true;
+  try {
+    const raw = localStorage.getItem(BASE_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.slots !== "object") return false;
+    baseSlots = parsed.slots;
+    lastSeq = Math.max(lastSeq, Number(parsed.seq || 0));
+    baseLoaded = true;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** Define o base a partir da nuvem sem mexer nos dados locais (último recurso). */
+export async function adoptCloudBaseOnly(): Promise<boolean> {
+  try {
+    const idx = await readIndex();
+    if (idx === null) return false;
+    lastSeq = Math.max(lastSeq, idx?.seq || 0);
+    setBase(idx ? { ...idx.slots } : {});
+    baseLoaded = true;
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 /** true depois que este computador carregou os dados da nuvem. */
@@ -231,6 +270,7 @@ async function readIndex(): Promise<V2Index | undefined | null> {
     slots: idx.slots || {},
     garbage: Array.isArray(idx.garbage) ? idx.garbage : [],
     v1Seen: Number(idx.v1Seen || 0),
+    seq: Number(idx.seq || 0),
     updatedAt: Number(idx.updatedAt || r.updatedAt || 0)
   };
 }
@@ -391,7 +431,7 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
     console.log("Nuvem ainda no formato antigo (v1). Será convertida no próximo salvamento.");
     const [v1, v1Max] = await Promise.all([fetchV1State(), readV1MaxUpdatedAt()]);
     v1SeenAt = Math.max(v1SeenAt, v1Max);
-    baseSlots = {};
+    setBase({});
     if (v1) baseLoaded = true;
     return v1;
   }
@@ -408,7 +448,8 @@ export async function fetchFirestoreState(): Promise<{ state: Partial<AppState>;
     throw new Error("Não foi possível carregar os dados da nuvem agora. Tente sincronizar novamente em instantes.");
   }
 
-  baseSlots = { ...index.slots };
+  lastSeq = Math.max(lastSeq, index.seq);
+  setBase({ ...index.slots });
   baseLoaded = true;
   v1SeenAt = Math.max(v1SeenAt, index.v1Seen);
 
@@ -525,7 +566,8 @@ async function pushOnce(
   }
 
   if (fresh && !force && toWrite.length === 0 && sameHashes(hashMap(finalIds), freshHash)) {
-    baseSlots = newBase;
+    lastSeq = Math.max(lastSeq, fresh.seq);
+    setBase(newBase);
     scheduleRecheck();
     return true; // nada mudou: não gasta cota
   }
@@ -553,6 +595,7 @@ async function pushOnce(
     slots: finalIds,
     garbage: garbage.filter(gb => now - gb.ts <= GC_DELAY_MS),
     v1Seen: Math.max(v1SeenAt, fresh?.v1Seen || 0),
+    seq: (fresh?.seq || 0) + 1,
     updatedAt: now
   };
   const precondition = fresh?.updateTime
@@ -562,12 +605,10 @@ async function pushOnce(
   if (okIndex === "conflict") return "conflict";
   if (okIndex !== true) return false;
 
-  baseSlots = newBase;
+  lastSeq = Math.max(lastSeq, newIndex.seq);
+  setBase(newBase);
   baseLoaded = true;
   v1SeenAt = newIndex.v1Seen;
-  // Qualquer índice anterior que chegue atrasado ao listener deve ser ignorado
-  if (fresh) staleIndexKeys.add(indexKey(fresh));
-  if (lastWrittenIndex) staleIndexKeys.add(indexKey(lastWrittenIndex));
   lastWrittenIndex = newIndex;
   pushGeneration++;
 
@@ -607,7 +648,7 @@ export function subscribeToFirestore(
       while (latest && !stopped) {
         const idx = latest;
         latest = null;
-        if (staleIndexKeys.has(indexKey(idx))) continue; // índice antigo chegando atrasado
+        if (idx.seq < lastSeq) continue; // índice antigo chegando atrasado
         const gen = pushGeneration;
         const groups = changedGroups(baseSlots, idx.slots);
         if (groups.size === 0) {
@@ -615,7 +656,7 @@ export function subscribeToFirestore(
         }
         const slots = await loadSlots(idx.slots);
         if (!slots || stopped) continue; // documento faltando: espera o próximo índice
-        if (gen !== pushGeneration || staleIndexKeys.has(indexKey(idx))) continue; // gravamos no meio: descarta
+        if (gen !== pushGeneration || idx.seq < lastSeq) continue; // gravamos no meio: descarta
         const full = slotsToState(slots);
         if (!full) continue;
         const fields = new Set<string>();
@@ -626,7 +667,8 @@ export function subscribeToFirestore(
         });
         const applied = onUpdate(partial, idx.updatedAt);
         if (applied !== false) {
-          baseSlots = { ...idx.slots };
+          lastSeq = Math.max(lastSeq, idx.seq);
+          setBase({ ...idx.slots });
           baseLoaded = true;
         }
       }
@@ -649,6 +691,7 @@ export function subscribeToFirestore(
           slots: data.slots,
           garbage: data.garbage || [],
           v1Seen: Number(data.v1Seen || 0),
+          seq: Number(data.seq || 0),
           updatedAt: Number(data.updatedAt || 0)
         };
         process();
@@ -662,7 +705,7 @@ export function subscribeToFirestore(
   recheckFn = () => {
     if (stopped) return;
     // Usa o índice mais novo conhecido: o recebido, ou o que acabamos de gravar
-    const candidate = lastSeen && !staleIndexKeys.has(indexKey(lastSeen)) ? lastSeen : lastWrittenIndex;
+    const candidate = lastSeen && (!lastWrittenIndex || lastSeen.seq >= lastWrittenIndex.seq) ? lastSeen : lastWrittenIndex;
     if (candidate) {
       latest = candidate;
       process();
