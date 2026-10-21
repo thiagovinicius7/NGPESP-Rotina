@@ -1,4 +1,5 @@
 import { lerTextoSisref, servidoresSelecionados, colocarNaFilaAtiva, progressoFilaAtiva, contarDiasParaAtualizar, atualizarDiasNaFilaAtiva } from "../lib/sisrefImport.js";
+import { Tema, proximoTema, nomeTema, IconeTema } from "../lib/temas.js";
 import RecentLaunchWarning from "./RecentLaunchWarning.js";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
@@ -20,8 +21,8 @@ interface LancamentoAppProps {
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
   openModal?: (nome: string, mat: string, setor: string, onConfirm: (qtd: number) => void, defaultQtd?: number) => void;
   onSwitchToFullApp?: () => void;
-  theme: 'claro' | 'escuro' | 'petroleo';
-  setTheme: (t: 'claro' | 'escuro' | 'petroleo') => void;
+  theme: Tema;
+  setTheme: (t: Tema) => void;
   forceSync?: () => void;
   forcePushThisDeviceToCloud?: () => Promise<void>;
   forcePullFromCloud?: () => Promise<void>;
@@ -913,13 +914,11 @@ export default function LancamentoApp({
             {/* Theme Toggle */}
             <button
               type="button"
-              onClick={() => setTheme(theme === 'claro' ? 'escuro' : theme === 'escuro' ? 'petroleo' : 'claro')}
+              onClick={() => setTheme(proximoTema(theme))}
               className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text2)] hover:text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
-              title={`Tema: ${theme}`}
+              title={`Tema: ${nomeTema(theme)} — clique para: ${nomeTema(proximoTema(theme))}`}
             >
-              {theme === 'claro' && <Sun size={15} />}
-              {theme === 'escuro' && <Moon size={15} />}
-              {theme === 'petroleo' && <Droplet size={15} />}
+              <IconeTema tema={theme} size={15} />
             </button>
 
             {/* Switch to Full Main App */}

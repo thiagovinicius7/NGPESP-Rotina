@@ -450,13 +450,13 @@ export default function SigrhPanel({ state, updateState, onToast }: SigrhPanelPr
                       <div className="flex gap-1 justify-end">
                         <button 
                           onClick={() => setCodForm({ idx: i, num: c.num, nome: c.nome, periodo: c.periodo })}
-                          className="p-1 border border-[var(--border)] bg-white text-[var(--text2)] rounded hover:bg-[var(--bg)]"
+                          className="p-1 border border-[var(--border)] bg-[var(--surface)] text-[var(--text2)] rounded hover:bg-[var(--bg)]"
                         >
                           <Edit2 size={12} />
                         </button>
                         <button 
                           onClick={() => excluirCodigo(i)}
-                          className="p-1 border border-[var(--border)] bg-white text-[var(--red)] rounded hover:bg-[var(--red-light)]"
+                          className="p-1 border border-[var(--border)] bg-[var(--surface)] text-[var(--red)] rounded hover:bg-[var(--red-light)]"
                         >
                           <Trash2 size={12} />
                         </button>
@@ -688,13 +688,13 @@ export default function SigrhPanel({ state, updateState, onToast }: SigrhPanelPr
                   </span>
                   <button 
                     onClick={() => editarNatal(i)}
-                    className="p-1 border border-[var(--border)] bg-white text-[var(--text2)] rounded hover:bg-[var(--bg)]"
+                    className="p-1 border border-[var(--border)] bg-[var(--surface)] text-[var(--text2)] rounded hover:bg-[var(--bg)]"
                   >
                     <Edit2 size={11} />
                   </button>
                   <button 
                     onClick={() => excluirNatal(i)}
-                    className="p-1 border border-[var(--border)] bg-white text-[var(--red)] rounded hover:bg-[var(--red-light)]"
+                    className="p-1 border border-[var(--border)] bg-[var(--surface)] text-[var(--red)] rounded hover:bg-[var(--red-light)]"
                   >
                     <Trash2 size={11} />
                   </button>

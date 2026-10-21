@@ -1342,7 +1342,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                       <div className="flex flex-col gap-2 flex-shrink-0">
                         <button 
                           onClick={() => copiarTexto(getOfficialServer(currentQueueServer.matricula, currentQueueServer.nome, state.servidores).matricula)}
-                          className="px-3 py-1.5 bg-white border border-[rgba(37,99,235,0.2)] text-[var(--blue-mid)] hover:bg-[var(--blue-mid)] hover:text-white text-xs font-bold rounded-lg transition"
+                          className="px-3 py-1.5 bg-[var(--surface)] border border-[rgba(37,99,235,0.2)] text-[var(--blue-mid)] hover:bg-[var(--blue-mid)] hover:text-white text-xs font-bold rounded-lg transition"
                         >
                           Copiar mat.
                         </button>

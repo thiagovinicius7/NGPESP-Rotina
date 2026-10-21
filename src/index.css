@@ -1,6 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
+/* As variantes dark: seguem o tema escolhido no app (e não o modo do sistema operacional) */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -53,7 +56,7 @@
   --teal-light: rgba(20, 184, 166, 0.15);
 }
 
-[data-theme="petroleo"], .theme-petroleo {
+html[data-theme="petroleo"], body[data-theme="petroleo"], [data-theme="petroleo"], .theme-petroleo {
   --bg: #06131c; /* Petrol bento dark background */
   --surface: #0b2131; /* Deep petrol card surface */
   --border: #10324b; /* Petrol border */
@@ -70,6 +73,45 @@
   --red-light: rgba(239, 68, 68, 0.12);
   --gray-light: rgba(129, 167, 196, 0.12);
   --teal-light: rgba(6, 182, 212, 0.12);
+}
+
+/* Meio-termo claro: cinza suave, menos brilho que o branco */
+[data-theme="suave"], .theme-suave {
+  --bg: #dde2e9;
+  --surface: #eaedf2;
+  --border: #c8cfd9;
+  --border2: #b3bcc9;
+  --text: #1e2633;
+  --text2: #4d5868;
+  --blue: #4f46e5;
+  --blue-mid: #5b5fe0;
+  --blue-light: #dcdff8;
+  --green-light: #d6ebdd;
+  --amber-light: #f1e6cc;
+  --red-light: #f2dada;
+  --gray-light: #dfe3ea;
+  --teal-light: #d3e9e6;
+  --shadow-bento: 0 1px 2px 0 rgba(30, 38, 51, 0.06);
+}
+
+/* Meio-termo escuro: cinza-azulado, menos contraste que o escuro */
+html[data-theme="penumbra"], body[data-theme="penumbra"], [data-theme="penumbra"], .theme-penumbra {
+  --bg: #22272e;
+  --surface: #2d333b;
+  --border: #3d444d;
+  --border2: #545d68;
+  --text: #d5dee8;
+  --text2: #95a2b0;
+  --blue: #a5b0f7;
+  --blue-mid: #7c86ec;
+  --blue-light: rgba(124, 134, 236, 0.18);
+  --green-light: rgba(52, 168, 104, 0.16);
+  --green-mid: #3fb27f;
+  --amber-light: rgba(214, 156, 46, 0.16);
+  --red-light: rgba(229, 83, 75, 0.16);
+  --gray-light: rgba(149, 162, 176, 0.14);
+  --teal-light: rgba(45, 170, 160, 0.16);
+  --shadow-bento: none;
 }
 
 /* Custom UI improvements */

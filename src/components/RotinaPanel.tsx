@@ -1086,7 +1086,7 @@ export default function RotinaPanel({
                   className={`px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-1.5 border transition cursor-pointer
                     ${importType === opt.id 
                       ? 'bg-[var(--blue-light)] text-[var(--blue-mid)] border-[var(--blue-mid)]' 
-                      : 'bg-white text-[var(--text2)] border-[var(--border2)] hover:bg-[var(--bg)]'}`}
+                      : 'bg-[var(--surface)] text-[var(--text2)] border-[var(--border2)] hover:bg-[var(--bg)]'}`}
                 >
                   {opt.icon}
                   <span>{opt.label}</span>
@@ -1153,7 +1153,7 @@ export default function RotinaPanel({
               />
               <button 
                 onClick={() => document.getElementById("central-loader-file")?.click()}
-                className="mt-2 px-3 py-1.5 bg-white border border-[var(--border2)] text-[10px] font-bold rounded-lg hover:bg-gray-50"
+                className="mt-2 px-3 py-1.5 bg-[var(--surface)] border border-[var(--border2)] text-[10px] font-bold rounded-lg hover:bg-gray-50"
               >
                 Selecionar arquivo do computador
               </button>

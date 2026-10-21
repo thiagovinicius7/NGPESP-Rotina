@@ -373,7 +373,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
               />
             </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setFaqForm(null)} className="px-3 py-1 bg-white text-xs border rounded-lg">Cancelar</button>
+              <button onClick={() => setFaqForm(null)} className="px-3 py-1 bg-[var(--surface)] text-xs border rounded-lg">Cancelar</button>
               <button onClick={salvarFAQ} className="px-4 py-1 bg-[var(--blue-mid)] text-white text-xs font-bold rounded-lg">Salvar</button>
             </div>
           </div>
@@ -403,7 +403,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
                           e.stopPropagation();
                           setFaqForm({ idx: listIdx, titulo: f.titulo, resposta: f.resposta });
                         }} 
-                        className="p-1.5 border border-[var(--border)] bg-white rounded hover:bg-[var(--bg)] text-[var(--text2)]"
+                        className="p-1.5 border border-[var(--border)] bg-[var(--surface)] rounded hover:bg-[var(--bg)] text-[var(--text2)]"
                       >
                         <Edit size={11} />
                       </button>
@@ -412,7 +412,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
                           e.stopPropagation();
                           excluirFAQ(listIdx);
                         }} 
-                        className="p-1.5 border border-[var(--border)] bg-white rounded hover:bg-[var(--red-light)] text-[var(--red)]"
+                        className="p-1.5 border border-[var(--border)] bg-[var(--surface)] rounded hover:bg-[var(--red-light)] text-[var(--red)]"
                       >
                         <Trash2 size={11} />
                       </button>
@@ -422,7 +422,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
                 </div>
 
                 {isExpanded && (
-                  <div className="px-5 pb-5 pt-1 text-xs font-semibold leading-relaxed text-[var(--text2)] border-t border-dashed border-[var(--border)] bg-white/50 whitespace-pre-wrap">
+                  <div className="px-5 pb-5 pt-1 text-xs font-semibold leading-relaxed text-[var(--text2)] border-t border-dashed border-[var(--border)] bg-[var(--surface)]/50 whitespace-pre-wrap">
                     {f.resposta}
                   </div>
                 )}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Tema, temaValido, proximoTema, nomeTema, IconeTema, aplicarTema } from "./lib/temas.js";
 import { 
   CheckCircle, Database, DownloadCloud, LogOut, Moon, 
   RefreshCw, Sun, LayoutDashboard, ClipboardCheck, 
@@ -49,8 +50,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
   const [sisrefShowPendencias, setSisrefShowPendencias] = useState(false);
   
   // Theme state: claro, escuro, petroleo
-  const [theme, setTheme] = useState<'claro' | 'escuro' | 'petroleo'>(() => {
-    return (localStorage.getItem("ss_tema") as any) || "claro";
+  const [theme, setTheme] = useState<Tema>(() => {
+    try { return temaValido(localStorage.getItem("ss_tema")); } catch (_) { return "claro"; }
   });
 
   // Global custom toasts list state
@@ -105,23 +106,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
 
   // Apply theme to document
   useEffect(() => {
-    const root = document.documentElement;
-    root.setAttribute("data-theme", theme);
-    document.body.setAttribute("data-theme", theme);
-    root.classList.remove("theme-claro", "theme-escuro", "theme-petroleo", "dark");
-    document.body.classList.remove("theme-claro", "theme-escuro", "theme-petroleo", "dark");
-    
-    if (theme === "escuro") {
-      root.classList.add("theme-escuro", "dark");
-      document.body.classList.add("theme-escuro", "dark");
-    } else if (theme === "petroleo") {
-      root.classList.add("theme-petroleo", "dark");
-      document.body.classList.add("theme-petroleo", "dark");
-    } else {
-      root.classList.add("theme-claro");
-      document.body.classList.add("theme-claro");
-    }
-    localStorage.setItem("ss_tema", theme);
+    aplicarTema(theme);
+    try { localStorage.setItem("ss_tema", theme); } catch (_) { /* ok */ }
   }, [theme]);
 
   // Password verification logic
@@ -172,11 +158,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
     });
   };
 
-  const toggleTheme = () => {
-    if (theme === "claro") setTheme("escuro");
-    else if (theme === "escuro") setTheme("petroleo");
-    else setTheme("claro");
-  };
+  const toggleTheme = () => setTheme(proximoTema(theme));
 
   const getSheetIdDisplay = () => {
     if (!state.config.spreadsheetId) return "Sem Planilha Vinculada";
@@ -321,10 +303,9 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
             <button 
               onClick={toggleTheme}
               className="p-2 border border-[var(--border)] rounded-xl bg-[var(--surface)] hover:bg-[var(--bg)]/40 transition-all text-[var(--text)] cursor-pointer"
-              title="Alternar tema de cores"
+              title={`Tema: ${nomeTema(theme)} — clique para: ${nomeTema(proximoTema(theme))}`}
             >
-              {theme === "claro" ? <Moon size={18} /> : 
-               theme === "escuro" ? <Droplet className="text-[var(--blue-mid)]" size={18} /> : <Sun className="text-[var(--amber-mid)]" size={18} />}
+              <IconeTema tema={theme} size={18} />
             </button>
 
             {/* Lock / Logout system button */}
