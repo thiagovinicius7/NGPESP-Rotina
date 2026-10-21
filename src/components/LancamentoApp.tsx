@@ -114,6 +114,14 @@ export default function LancamentoApp({
     document.title = "⚡ Lançador SISREF — NGPESP";
     return () => { document.title = anterior; };
   }, []);
+  const [showMaisMenu, setShowMaisMenu] = useState(false);
+  // Fecha o menu "⋯" ao clicar fora dele
+  useEffect(() => {
+    if (!showMaisMenu) return;
+    const fechar = () => setShowMaisMenu(false);
+    const t = setTimeout(() => window.addEventListener("click", fechar), 0);
+    return () => { clearTimeout(t); window.removeEventListener("click", fechar); };
+  }, [showMaisMenu]);
   const confirmModalOpenRef = useRef(false);
   useEffect(() => { confirmModalOpenRef.current = !!confirmModal?.show; }, [confirmModal]);
 
@@ -973,15 +981,6 @@ export default function LancamentoApp({
               )}
             </button>
 
-            {/* Quick Answers Button */}
-            <button
-              type="button"
-              onClick={() => setShowRespostasDrawer(true)}
-              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
-              title="Respostas Rápidas de Atendimento"
-            >
-              <MessageSquareQuote size={15} className="text-indigo-500" />
-            </button>
 
             {/* Import / Paste Button */}
             <button
@@ -993,15 +992,6 @@ export default function LancamentoApp({
               <Plus size={16} />
             </button>
 
-            {/* Salvar Atalho na Área de Trabalho Button */}
-            <button
-              type="button"
-              onClick={() => setShowSaveShortcutModal(true)}
-              className="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shadow-xs transition-colors cursor-pointer flex-shrink-0"
-              title="Salvar Atalho do App / Compartilhar"
-            >
-              <Download size={15} />
-            </button>
 
             {/* Cloud Sync Status / Button */}
             {forceSync && (
@@ -1022,6 +1012,38 @@ export default function LancamentoApp({
               </button>
             )}
 
+            {/* Botões menos usados: em linha na tela cheia; no menu "⋯" em meia tela */}
+            <div className="relative flex items-center">
+              <button
+                type="button"
+                onClick={() => setShowMaisMenu(v => !v)}
+                className="lg:hidden w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center cursor-pointer font-black"
+                title="Mais opções"
+              >
+                ⋯
+              </button>
+              <div
+                onClick={() => setShowMaisMenu(false)}
+                className={`${showMaisMenu ? "flex" : "hidden"} absolute right-0 top-full mt-2 z-50 p-2 gap-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl lg:flex lg:static lg:mt-0 lg:p-0 lg:border-0 lg:shadow-none lg:bg-transparent items-center`}
+              >
+            {/* Quick Answers Button */}
+            <button
+              type="button"
+              onClick={() => setShowRespostasDrawer(true)}
+              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+              title="Respostas Rápidas de Atendimento"
+            >
+              <MessageSquareQuote size={15} className="text-indigo-500" />
+            </button>
+            {/* Salvar Atalho na Área de Trabalho Button */}
+            <button
+              type="button"
+              onClick={() => setShowSaveShortcutModal(true)}
+              className="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center shadow-xs transition-colors cursor-pointer flex-shrink-0"
+              title="Salvar Atalho do App / Compartilhar"
+            >
+              <Download size={15} />
+            </button>
             {/* Shortcuts Help */}
             <button
               type="button"
@@ -1055,6 +1077,8 @@ export default function LancamentoApp({
                 <Layers size={14} />
               </button>
             )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1122,40 +1146,40 @@ export default function LancamentoApp({
           </div>
 
           {/* 4 Micro KPI Metric Badges */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-            <div className="p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-between">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 lg:gap-2 mt-2 lg:mt-3">
+            <div className="p-2 lg:p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-between gap-1">
               <div>
-                <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider">Servidores Faltando</div>
-                <div className="text-base font-mono font-black text-[var(--text)] mt-0.5">{remainingServers}</div>
+                <div className="text-[9px] lg:text-[10px] font-bold text-[var(--text2)] uppercase tracking-normal lg:tracking-wider leading-tight whitespace-nowrap">Servidores Faltando</div>
+                <div className="text-base font-mono font-black text-[var(--text)] mt-0.5">{remainingServers}<span className="lg:hidden text-[10px] font-bold text-[var(--text2)]"> / {totalServers}</span></div>
               </div>
-              <div className="text-[10px] font-bold text-[var(--text2)] text-right">
+              <div className="hidden lg:block text-[10px] font-bold text-[var(--text2)] text-right">
                 de {totalServers} total
               </div>
             </div>
 
-            <div className="p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-between">
+            <div className="p-2 lg:p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-between gap-1">
               <div>
-                <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider">Lançamentos Faltando</div>
-                <div className="text-base font-mono font-black text-amber-600 dark:text-amber-400 mt-0.5">{remainingLancamentos}</div>
+                <div className="text-[9px] lg:text-[10px] font-bold text-[var(--text2)] uppercase tracking-normal lg:tracking-wider leading-tight whitespace-nowrap">Lançamentos Faltando</div>
+                <div className="text-base font-mono font-black text-amber-600 dark:text-amber-400 mt-0.5">{remainingLancamentos}<span className="lg:hidden text-[10px] font-bold text-[var(--text2)]"> / {totalLancamentos}</span></div>
               </div>
-              <div className="text-[10px] font-bold text-[var(--text2)] text-right">
+              <div className="hidden lg:block text-[10px] font-bold text-[var(--text2)] text-right">
                 de {totalLancamentos} total
               </div>
             </div>
 
-            <div className="p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-between">
+            <div className="p-2 lg:p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-between gap-1">
               <div>
-                <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider">Concluídos na Fila</div>
-                <div className="text-base font-mono font-black text-emerald-600 dark:text-emerald-400 mt-0.5">{serversDone}</div>
+                <div className="text-[9px] lg:text-[10px] font-bold text-[var(--text2)] uppercase tracking-normal lg:tracking-wider leading-tight whitespace-nowrap">Concluídos na Fila</div>
+                <div className="text-base font-mono font-black text-emerald-600 dark:text-emerald-400 mt-0.5">{serversDone}<span className="lg:hidden text-[10px] font-bold text-emerald-600"> · {progressoPct}%</span></div>
               </div>
-              <div className="text-[10px] font-bold text-emerald-600 text-right">
+              <div className="hidden lg:block text-[10px] font-bold text-emerald-600 text-right">
                 {progressoPct}%
               </div>
             </div>
 
-            <div className="p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-between">
+            <div className="p-2 lg:p-2.5 rounded-xl bg-[var(--bg)] border border-[var(--border2)] flex items-center justify-between gap-1">
               <div>
-                <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider">Pendências Ativas</div>
+                <div className="text-[9px] lg:text-[10px] font-bold text-[var(--text2)] uppercase tracking-normal lg:tracking-wider leading-tight whitespace-nowrap">Pendências Ativas</div>
                 <div className="text-base font-mono font-black text-red-500 mt-0.5">{(state.filaAvulsa?.pendencias || []).length}</div>
               </div>
               <button
@@ -1277,7 +1301,7 @@ export default function LancamentoApp({
                     <div className="text-xs font-semibold text-[var(--text2)] mt-1 flex items-center gap-2 flex-wrap">
                       <span>{currentQueueServer.ocorrencias.length} ocorrência(s) na fila</span>
                       {currentQueueServer.tipos.length > 0 && (
-                        <span>· {currentQueueServer.tipos.join(' · ')}</span>
+                        <span className="hidden lg:inline">· {currentQueueServer.tipos.join(' · ')}</span>
                       )}
                     </div>
                   )}
