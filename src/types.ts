@@ -76,7 +76,8 @@ export interface NatalAnalysis {
 
 export interface QueueOcorrencia {
   tipo: string;
-  data: string;
+  data: string;        // último dia (fato gerador)
+  dataInicio?: string; // primeiro dia, quando o afastamento tem mais de um dia
   checked: boolean;
   dataLancamento?: string;
 }

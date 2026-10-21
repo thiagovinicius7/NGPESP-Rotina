@@ -637,3 +637,39 @@ export function getOccurrenceRuleAlert(tipo: string, dataOcorrencia?: string): O
 }
 
 
+
+/**
+ * Período de uma ocorrência no texto copiado do SISREF.
+ * No SISREF cada registro vem em várias linhas: a folha (MM/AAAA), as datas
+ * (uma por linha: primeiro e último dia) e depois a linha com ocorrência e servidor.
+ * Junta as datas completas da própria linha e das linhas só-com-data logo acima.
+ * Retorna data = último dia (mantém o "fato gerador" usado no resto do app)
+ * e dataInicio = primeiro dia, quando o período tem mais de um dia.
+ */
+export function extrairPeriodoSisref(linhas: string[], idx: number, fallback: string = ""): { data: string; dataInicio?: string } {
+  const FULL = /^\d{1,2}\/\d{1,2}\/\d{4}$/;
+  const datas: string[] = [...((linhas[idx] || "").match(/\d{1,2}\/\d{1,2}\/\d{4}/g) || [])];
+  for (let j = idx - 1; j >= 0; j--) {
+    const l = (linhas[j] || "").trim();
+    if (!l) continue;
+    if (FULL.test(l)) { datas.push(l); continue; }
+    break; // folha (MM/AAAA), cabeçalho ou registro anterior
+  }
+  if (datas.length === 0) return { data: fallback };
+  const toKey = (d: string) => {
+    const [dd, mm, yy] = d.split("/");
+    return `${yy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  };
+  const ord = Array.from(new Set(datas)).sort((a, b) => (toKey(a) < toKey(b) ? -1 : toKey(a) > toKey(b) ? 1 : 0));
+  const inicio = ord[0];
+  const fim = ord[ord.length - 1];
+  return inicio !== fim ? { data: fim, dataInicio: inicio } : { data: fim };
+}
+
+/** Quantidade de dias (inclusive) entre duas datas DD/MM/AAAA; null se inválido. */
+export function diasNoPeriodo(inicio?: string, fim?: string): number | null {
+  if (!inicio || !fim) return null;
+  const p = (d: string) => { const [dd, mm, yy] = d.split("/").map(Number); return Date.UTC(yy, mm - 1, dd); };
+  const n = Math.round((p(fim) - p(inicio)) / 86400000) + 1;
+  return isFinite(n) && n > 0 ? n : null;
+}

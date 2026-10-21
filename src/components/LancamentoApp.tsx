@@ -1,7 +1,7 @@
 import RecentLaunchWarning from "./RecentLaunchWarning.js";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial, extrairPeriodoSisref, diasNoPeriodo } from "../lib/utils.js";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { 
   Zap, CheckCheck, Copy, AlertOctagon, CornerUpLeft, Plus, Trash2, 
@@ -666,9 +666,12 @@ export default function LancamentoApp({
 
       const matchPrevDate = idx > 0 ? (linhas[idx - 1].match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/) || linhas[idx - 1].match(/(\d{1,2}\/\d{2,4})/)) : null;
       const dataAnterior = matchPrevDate ? matchPrevDate[0] : "";
+      // Período completo (primeiro e último dia) quando o SISREF traz as duas datas
+      const periodo = extrairPeriodoSisref(linhas, idx, data || dataAnterior);
       map[finalMatricula].ocorrencias.push({
         tipo: tipoLimpo,
-        data: data || dataAnterior,
+        data: periodo.data,
+        ...(periodo.dataInicio ? { dataInicio: periodo.dataInicio } : {}),
         checked: false
       });
 
@@ -695,6 +698,44 @@ export default function LancamentoApp({
     } else {
       onToast(`${parsedArr.length} servidores identificados!`, "ok");
     }
+  };
+
+  // Preenche o período (primeiro dia) nas ocorrências da fila ativa, sem mexer no progresso
+  const atualizarPeriodosFilaAtiva = () => {
+    const chave = (mat: string, tipo: string, data: string) => `${normalizeMatricula(mat)}|${(tipo || "").trim().toLowerCase()}|${(data || "").trim()}`;
+    const inicios = new Map<string, string>();
+    importResultados.forEach(s => (s.ocorrencias || []).forEach((o: any) => {
+      if (o.dataInicio) inicios.set(chave(s.matricula, o.tipo, o.data), o.dataInicio);
+    }));
+    if (inicios.size === 0) {
+      onToast("O texto colado não tem períodos de mais de um dia para atualizar.", "info");
+      return;
+    }
+    // Conta antes (a partir do estado atual) para a mensagem
+    const filaAtual = state.filaAvulsa?.listas?.[state.filaAvulsa?.ativa || "Padrão"]?.fila || [];
+    const atualizadas = filaAtual.reduce((n: number, srv: any) => n + (srv.ocorrencias || []).filter((o: any) => {
+      const ini = inicios.get(chave(srv.matricula, o.tipo, o.data));
+      return ini && o.dataInicio !== ini;
+    }).length, 0);
+    updateState(prev => {
+      const fa = prev.filaAvulsa;
+      const nome = fa?.ativa || "Padrão";
+      const q = fa?.listas?.[nome];
+      if (!q) return {};
+      const fila = (q.fila || []).map((srv: any) => ({
+        ...srv,
+        ocorrencias: (srv.ocorrencias || []).map((o: any) => {
+          const ini = inicios.get(chave(srv.matricula, o.tipo, o.data));
+          if (ini && o.dataInicio !== ini) return { ...o, dataInicio: ini };
+          return o;
+        })
+      }));
+      return { filaAvulsa: { ...fa, listas: { ...fa.listas, [nome]: { ...q, fila } } } };
+    });
+    onToast(atualizadas > 0 ? `Períodos atualizados em ${atualizadas} ocorrência(s) da fila ativa.` : "Nenhuma ocorrência da fila ativa corresponde ao texto colado.", atualizadas > 0 ? "ok" : "info");
+    setImportResultados([]);
+    setImportTxt("");
+    setShowImportModal(false);
   };
 
   // Append or Replace Queue with imported servers
@@ -1421,7 +1462,9 @@ export default function LancamentoApp({
                         </div>
                         {oc.data ? (
                           <div className="text-[11px] font-mono font-bold text-blue-600 dark:text-blue-400 mt-1">
-                            Fato Gerador: {oc.data}
+                            {oc.dataInicio
+                              ? <>Período: {oc.dataInicio} a {oc.data}{diasNoPeriodo(oc.dataInicio, oc.data) ? ` · ${diasNoPeriodo(oc.dataInicio, oc.data)} dias` : ""}</>
+                              : <>Data: {oc.data}</>}
                           </div>
                         ) : (
                           <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1">
@@ -1646,6 +1689,16 @@ export default function LancamentoApp({
                     className="flex-1 py-2.5 bg-[var(--surface)] border border-[var(--border2)] hover:bg-[var(--bg)] text-[var(--text)] font-bold text-xs rounded-xl cursor-pointer"
                   >
                     Anexar à Fila Existente
+                  </button>
+                </div>
+                <div className="px-3 pb-3 bg-[var(--bg)]">
+                  <button
+                    type="button"
+                    onClick={atualizarPeriodosFilaAtiva}
+                    className="w-full py-2 bg-emerald-600/10 border border-emerald-500/40 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 font-bold text-xs rounded-xl cursor-pointer"
+                    title="Não altera a fila nem o progresso: só completa o primeiro dia dos afastamentos"
+                  >
+                    Só atualizar os períodos da fila ativa (mantém o progresso)
                   </button>
                 </div>
               </div>

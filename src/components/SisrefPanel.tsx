@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial, extrairPeriodoSisref, diasNoPeriodo } from "../lib/utils.js";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { 
   Building2, ListTodo, MessageSquareQuote, Search, UserCheck, 
@@ -440,9 +440,12 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
 
       const matchPrevDate = idx > 0 ? (linhas[idx - 1].match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/) || linhas[idx - 1].match(/(\d{1,2}\/\d{2,4})/)) : null;
       const dataAnterior = matchPrevDate ? matchPrevDate[0] : "";
+      // Período completo (primeiro e último dia) quando o SISREF traz as duas datas
+      const periodo = extrairPeriodoSisref(linhas, idx, data || dataAnterior);
       map[finalMatricula].ocorrencias.push({
         tipo: tipoLimpo,
-        data: data || dataAnterior,
+        data: periodo.data,
+        ...(periodo.dataInicio ? { dataInicio: periodo.dataInicio } : {}),
         checked: false
       });
 
