@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
+import { lerTextoSisref, servidoresSelecionados, colocarNaFilaAtiva, progressoFilaAtiva, contarDiasParaAtualizar, atualizarDiasNaFilaAtiva } from "../lib/sisrefImport.js";
 import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial, extrairPeriodoSisref, textoDiasOcorrencia } from "../lib/utils.js";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { 
@@ -14,7 +15,7 @@ interface SisrefPanelProps {
   state: AppState;
   updateState: (newState: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => void;
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
-  openModal: (nome: string, mat: string, setor: string, onConfirm: (qtd: number) => void, defaultQtd?: number) => void;
+  openModal: (nome: string, mat: string, setor: string, onConfirm: (qtd: number) => void, defaultQtd?: number, ocorrencias?: any[]) => void;
   subTab?: 'setores' | 'avulsa' | 'respostas';
   setSubTab?: (t: 'setores' | 'avulsa' | 'respostas') => void;
   showPendencias?: boolean;
@@ -310,152 +311,11 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
 
   // Parse SISREF parsed queue
   const parsearSisrefText = () => {
-    const txt = avulsaTxt.trim();
-    if (!txt) {
+    if (!avulsaTxt.trim()) {
       onToast("Cole o texto do SISREF primeiro", "err");
       return;
     }
-
-    // Index registered servidores in state (canonical source from SIGRH)
-    const srvByMatMap = new Map<string, Server>();
-    const srvByNameMap = new Map<string, Server>();
-    (state.servidores || []).forEach(s => {
-      if (s.matricula) {
-        const nm = normalizeMatricula(s.matricula);
-        if (nm) srvByMatMap.set(nm, s);
-      }
-      if (s.nome) {
-        srvByNameMap.set(s.nome.trim().toLowerCase(), s);
-      }
-    });
-
-    // Set of cedidos/ignorados matriculas
-    const cedidosNormSet = new Set((state.config?.matriculasCedidos || []).map(m => normalizeMatricula(m)).filter(Boolean));
-    let cedidosIgnoradosCount = 0;
-
-    const map: Record<string, QueueServer> = {};
-    const linhas = txt.split(/\n/);
-
-    linhas.forEach((linha, idx) => {
-      if (!linha.trim()) return;
-
-      const dataMatch = linha.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/) || linha.match(/(\d{1,2}\/\d{2,4})/) || linha.match(/(\d{4}-\d{1,2}(?:-\d{1,2})?)/);
-      const data = dataMatch ? dataMatch[0] : "";
-
-      // Look for 6 to 9 digit matriculas or Matrícula labels
-      const matMatch = linha.match(/\b(\d{6,9}[A-Z0-9]?)\b/i) || linha.match(/(?:matrícula|mat|matr)\s*[:.]?\s*(\d{6,9}[A-Z0-9]?)/i);
-      let matricula = matMatch ? matMatch[1].trim() : "";
-      let nomeExtraido = "";
-
-      if (matricula) {
-        let rest = linha
-          .replace(matMatch![0], "")
-          .replace(/(?:matrícula|mat|matr)\s*[:.]?/gi, "")
-          .replace(/(\d{2}\/\d{2}\/\d{4})/g, "")
-          .replace(/\b(Anexado|Aprovado|Pendente)\b/gi, "")
-          .trim();
-        
-        rest = rest.replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, "").trim();
-
-        const parts = rest.split(/[\-–—]/).map(p => p.trim()).filter(Boolean);
-        for (const p of parts) {
-          const cleaned = p.replace(/\s*\([^)]*\)/g, "").trim();
-          if (/^[A-Za-zÀ-ÿ\s]{4,}$/.test(cleaned) && !/^(atest|licença|licenca|falta|férias|ferias|afastamento|reunião|reuniao|ticket|servidor)/i.test(cleaned)) {
-            nomeExtraido = cleaned;
-            break;
-          }
-        }
-        if (!nomeExtraido && parts.length > 0) {
-          const lastPart = parts[parts.length - 1].replace(/\s*\([^)]*\)/g, "").trim();
-          if (/^[A-Za-zÀ-ÿ\s]+$/.test(lastPart) && lastPart.length >= 3) {
-            nomeExtraido = lastPart;
-          }
-        }
-      } else {
-        // No matricula digits found in line - check if line contains a name from srvByNameMap
-        for (const [normName, srv] of srvByNameMap.entries()) {
-          if (linha.toLowerCase().includes(normName)) {
-            matricula = srv.matricula;
-            nomeExtraido = srv.nome;
-            break;
-          }
-        }
-      }
-
-      // Resolve against registered servidores (canonical source)
-      const normMat = normalizeMatricula(matricula);
-      let officialServer = normMat ? srvByMatMap.get(normMat) : undefined;
-
-      if (!officialServer && nomeExtraido) {
-        officialServer = srvByNameMap.get(nomeExtraido.trim().toLowerCase());
-      }
-
-      const finalMatricula = officialServer ? officialServer.matricula : (matricula || "");
-      const finalNome = officialServer ? officialServer.nome : (nomeExtraido || "");
-
-      if (!finalMatricula) return;
-
-      // Ignore if server is registered as cedido
-      const normFinalMat = normalizeMatricula(finalMatricula);
-      if ((normMat && cedidosNormSet.has(normMat)) || (normFinalMat && cedidosNormSet.has(normFinalMat))) {
-        cedidosIgnoradosCount++;
-        return;
-      }
-
-      // Clean occurrence type (tipo)
-      let tipo = linha;
-
-      // 1. Remove matricula
-      if (finalMatricula) {
-        const cleanMat = finalMatricula.replace(/\D/g, "");
-        if (cleanMat.length >= 4) {
-          tipo = tipo.replace(new RegExp(`\\b${cleanMat}\\b`, "gi"), "");
-        }
-      }
-
-      // 2. Remove full server name if it appears in the line
-      if (finalNome && finalNome.trim().length > 2) {
-        const normNome = finalNome.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const normTipo = tipo.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const idx = normTipo.toLowerCase().indexOf(normNome.toLowerCase());
-        if (idx !== -1) {
-          tipo = tipo.substring(0, idx) + tipo.substring(idx + normNome.length);
-        }
-      }
-
-      // 3. Remove standalone dates, status tags, and extra dashes/punctuation
-      tipo = tipo.replace(/(\d{1,2}\/\d{1,2}\/\d{2,4})/g, "")
-                 .replace(/(\d{1,2}\/\d{2,4})/g, "")
-                 .replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\b/gi, "")
-                 .replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "")
-                 .trim();
-      
-      const tipoLimpo = cleanTipoName(tipo) || "Atestado";
-
-      if (!map[finalMatricula]) {
-        map[finalMatricula] = { matricula: finalMatricula, nome: finalNome || `Servidor (${finalMatricula})`, tipos: [], ocorrencias: [] };
-      } else if (officialServer) {
-        map[finalMatricula].nome = officialServer.nome;
-      }
-
-      const matchPrevDate = idx > 0 ? (linhas[idx - 1].match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/) || linhas[idx - 1].match(/(\d{1,2}\/\d{2,4})/)) : null;
-      const dataAnterior = matchPrevDate ? matchPrevDate[0] : "";
-      // Período completo (primeiro e último dia) quando o SISREF traz as duas datas
-      const periodo = extrairPeriodoSisref(linhas, idx, data || dataAnterior);
-      map[finalMatricula].ocorrencias.push({
-        tipo: tipoLimpo,
-        data: periodo.data,
-        ...(periodo.dataInicio ? { dataInicio: periodo.dataInicio } : {}),
-        ...(periodo.dias ? { dias: periodo.dias } : {}),
-        checked: false
-      });
-
-      if (!map[finalMatricula].tipos.includes(tipoLimpo)) {
-        map[finalMatricula].tipos.push(tipoLimpo);
-      }
-    });
-
-    const parsedArr = Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    const { lista: parsedArr, cedidosIgnorados: cedidosIgnoradosCount } = lerTextoSisref(avulsaTxt, state.servidores || [], state.config?.matriculasCedidos || []);
     if (parsedArr.length === 0) {
       onToast("Não foi possível identificar os dados. Verifique o texto.", "err");
       return;
@@ -474,80 +334,30 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
     }
   };
 
-  const iniciarFilaConferencia = () => {
-    const cedidosNormSet = new Set((state.config?.matriculasCedidos || []).map(m => normalizeMatricula(m)).filter(Boolean));
-    const selectedServers = avulsaResultados
-      .filter((_, i) => avulsaSelected[i])
-      .filter(s => !cedidosNormSet.has(normalizeMatricula(s.matricula)))
-      .map(s => {
-        const official = getOfficialServer(s.matricula, s.nome, state.servidores);
-        return {
-          ...s,
-          matricula: official.matricula,
-          nome: official.nome
-        };
-      });
-
+  const iniciarFilaConferencia = (modo: "substituir" | "anexar" = "substituir") => {
+    const selectedServers = servidoresSelecionados(avulsaResultados, avulsaSelected, state);
     if (selectedServers.length === 0) {
       onToast("Selecione pelo menos um servidor para a fila", "err");
       return;
     }
-
-    // Save back to general state under current queue
-    updateState(prev => {
-      const activeQueueName = prev.filaAvulsa.ativa || "Padrão";
-      const updatedListas = { ...prev.filaAvulsa.listas };
-      updatedListas[activeQueueName] = {
-        fila: selectedServers,
-        idx: 0
-      };
-
-      return {
-        filaAvulsa: {
-          ...prev.filaAvulsa,
-          listas: updatedListas
-        }
-      };
-    });
-
+    const prog = progressoFilaAtiva(state);
+    if (modo === "substituir" && prog.feitos > 0 && !confirm(`A fila "${prog.nome}" já tem ${prog.feitos} de ${prog.total} servidores conferidos. Substituir faz ela recomeçar do zero. Continuar?`)) return;
+    updateState(prev => colocarNaFilaAtiva(prev, selectedServers, modo));
     setAvulsaResultados([]);
     setAvulsaTxt("");
-    onToast(`${selectedServers.length} servidores adicionados à fila ativa`, "ok");
+    onToast(`${selectedServers.length} servidores ${modo === "anexar" ? "anexados à" : "carregados na"} fila ativa`, "ok");
   };
 
   // Completa os dias dos afastamentos na fila ativa, sem mexer no progresso nem nas marcações
   const atualizarDiasFilaAtiva = () => {
-    const chave = (mat: string, tipo: string, data: string) => `${normalizeMatricula(mat)}|${(tipo || "").trim().toLowerCase()}|${(data || "").trim()}`;
-    const periodos = new Map<string, { dataInicio: string; dias?: string[] }>();
-    avulsaResultados.forEach(s => (s.ocorrencias || []).forEach((o: any) => {
-      if (o.dataInicio) periodos.set(chave(s.matricula, o.tipo, o.data), { dataInicio: o.dataInicio, dias: o.dias });
-    }));
-    if (periodos.size === 0) {
+    const { comPeriodo, atualizar } = contarDiasParaAtualizar(state, avulsaResultados);
+    if (comPeriodo === 0) {
       onToast("O texto colado não tem afastamentos de mais de um dia para atualizar.", "info");
       return;
     }
-    const precisa = (o: any, p?: { dataInicio: string; dias?: string[] }) =>
-      !!p && (o.dataInicio !== p.dataInicio || JSON.stringify(o.dias || null) !== JSON.stringify(p.dias || null));
-    const filaAtual = state.filaAvulsa?.listas?.[state.filaAvulsa?.ativa || "Padrão"]?.fila || [];
-    const atualizadas = filaAtual.reduce((n: number, srv: any) => n + (srv.ocorrencias || []).filter((o: any) =>
-      precisa(o, periodos.get(chave(srv.matricula, o.tipo, o.data)))).length, 0);
-    updateState(prev => {
-      const fa = prev.filaAvulsa;
-      const nome = fa?.ativa || "Padrão";
-      const q = fa?.listas?.[nome];
-      if (!q) return {};
-      const fila = (q.fila || []).map((srv: any) => ({
-        ...srv,
-        ocorrencias: (srv.ocorrencias || []).map((o: any) => {
-          const p = periodos.get(chave(srv.matricula, o.tipo, o.data));
-          if (p && precisa(o, p)) return { ...o, dataInicio: p.dataInicio, ...(p.dias ? { dias: p.dias } : {}) };
-          return o;
-        })
-      }));
-      return { filaAvulsa: { ...fa, listas: { ...fa.listas, [nome]: { ...q, fila } } } };
-    });
-    onToast(atualizadas > 0 ? `Dias atualizados em ${atualizadas} ocorrência(s) da fila ativa.` : "Nenhuma ocorrência da fila ativa precisava de atualização.", atualizadas > 0 ? "ok" : "info");
-    if (atualizadas > 0) { setAvulsaResultados([]); setAvulsaTxt(""); }
+    updateState(prev => atualizarDiasNaFilaAtiva(prev, avulsaResultados));
+    onToast(atualizar > 0 ? `Dias atualizados em ${atualizar} ocorrência(s) da fila ativa.` : "Nenhuma ocorrência da fila ativa precisava de atualização.", atualizar > 0 ? "ok" : "info");
+    if (atualizar > 0) { setAvulsaResultados([]); setAvulsaTxt(""); }
   };
 
   const currentQueue = state.filaAvulsa.listas[state.filaAvulsa.ativa || "Padrão"] || { fila: [], idx: 0 };
@@ -644,7 +454,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
       });
 
       onToast("Servidor verificado!", "ok");
-    }, qtdCalculada);
+    }, qtdCalculada, finalOcs);
   };
 
   const marcarAvulsaPendente = () => {
@@ -715,18 +525,18 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
       };
     });
 
-    onToast("Servidor reinserido na fila", "ok");
+    onToast("Servidor de volta: é o próximo da fila", "ok");
   };
 
   const removerPendencia = (idx: number) => {
-    if (!confirm("Deseja realmente remover esta pendência?")) return;
+    if (!confirm("Marcar esta pendência como resolvida e tirá-la da lista?")) return;
     updateState(prev => ({
       filaAvulsa: {
         ...prev.filaAvulsa,
         pendencias: prev.filaAvulsa.pendencias.filter((_, i) => i !== idx)
       }
     }));
-    onToast("Pendência removida", "info");
+    onToast("Pendência resolvida", "ok");
   };
 
   const encerrarFilaAvulsa = () => {
@@ -1285,41 +1095,50 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
             </div>
           </div>
 
-          {/* Expanded Pendencias Card */}
-          {showPendencias && state.filaAvulsa.pendencias.length > 0 && (
-            <div className="bg-[var(--surface)] border-t-4 border-[var(--red)] border-x border-b border-[var(--border)] rounded-2xl p-6 shadow-sm flex flex-col gap-4">
-              <div className="text-sm font-bold text-[var(--red)] uppercase tracking-wider">
-                Fila de Pendências Pendentes
-              </div>
-              <div className="divide-y divide-[var(--border)] max-h-60 overflow-y-auto border border-[var(--border)] rounded-xl bg-[var(--bg)]/10">
-                {state.filaAvulsa.pendencias.map((p, idx) => (
-                  <div key={idx} className="p-4 flex items-center justify-between hover:bg-[var(--bg)]/20">
-                    <div className="min-w-0 flex-1 pr-4">
-                      <div className="font-bold text-sm text-[var(--text)]">{p.nome}</div>
-                      <div className="text-xs text-[var(--text2)] font-mono mt-0.5">
-                        {p.matricula} · {p.ocorrencias.length} ocorrência(s)
+          {/* Pendências: sempre à vista quando existem */}
+          {state.filaAvulsa.pendencias.length > 0 && (
+            <div className="bg-[var(--surface)] border border-red-500/40 rounded-2xl shadow-sm overflow-hidden">
+              <button type="button" onClick={() => setShowPendencias(!showPendencias)} className="w-full px-4 py-3 flex items-center justify-between gap-2 bg-red-500/10 text-left">
+                <span className="text-xs font-black text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                  <AlertOctagon size={15} /> {state.filaAvulsa.pendencias.length} servidor(es) pulado(s) aguardando resolução
+                </span>
+                <span className="text-[11px] font-bold text-red-700 dark:text-red-300">{showPendencias ? "Recolher" : "Ver e resolver"}</span>
+              </button>
+              {showPendencias && (
+                <div className="divide-y divide-[var(--border)] max-h-96 overflow-y-auto">
+                  {state.filaAvulsa.pendencias.map((p, idx) => (
+                    <div key={idx} className="px-4 py-3 flex flex-wrap items-start gap-x-3 gap-y-2">
+                      <div className="min-w-0 flex-1 basis-[260px]">
+                        <div className="font-bold text-sm text-[var(--text)]">{p.nome}</div>
+                        <button type="button" onClick={() => { navigator.clipboard?.writeText(p.matricula); onToast(`Matrícula ${p.matricula} copiada`, "ok"); }} className="text-[11px] font-mono text-[var(--blue-mid)] hover:underline">{p.matricula}</button>
+                        <span className="text-[11px] text-[var(--text2)]"> · pulado em {p.dataHora}</span>
+                        <div className="mt-1 flex flex-col gap-0.5">
+                          {(p.ocorrencias || []).map((o, i) => (
+                            <div key={i} className="text-[11px] text-[var(--text2)]"><b className="text-[var(--text)]">{o.tipo}</b> — {textoDiasOcorrencia(o)}</div>
+                          ))}
+                        </div>
+                        <div className="text-xs font-bold text-red-600 dark:text-red-400 mt-1">Motivo: {p.motivo}</div>
                       </div>
-                      <div className="text-xs font-bold text-[var(--red)] mt-2 italic">
-                        Motivo: {p.motivo}
+                      <div className="flex gap-1.5 ml-auto">
+                        <button 
+                          onClick={() => resolverPendencia(idx)}
+                          className="px-3 py-1.5 text-xs font-bold bg-[var(--blue-light)] text-[var(--blue-mid)] rounded-lg flex items-center gap-1"
+                          title="Coloca o servidor de volta como o próximo da fila"
+                        >
+                          <CornerUpLeft size={12} /> Voltar para a fila
+                        </button>
+                        <button 
+                          onClick={() => removerPendencia(idx)}
+                          className="px-3 py-1.5 text-xs font-bold border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 rounded-lg"
+                          title="Já resolvi por fora: tirar da lista de pendências"
+                        >
+                          Resolvido
+                        </button>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => resolverPendencia(idx)}
-                        className="px-3 py-1.5 text-xs font-bold bg-[var(--blue-light)] text-[var(--blue-mid)] border border-[rgba(59,130,246,0.2)] rounded-lg hover:bg-[var(--blue-mid)] hover:text-white transition flex items-center gap-0.5"
-                      >
-                        <CornerUpLeft size={12} /> Reatar
-                      </button>
-                      <button 
-                        onClick={() => removerPendencia(idx)}
-                        className="px-3 py-1.5 text-xs font-bold bg-[var(--surface)] border border-[var(--red)] text-[var(--red)] hover:bg-[var(--red-light)] rounded-lg"
-                      >
-                        Excluir
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -1417,12 +1236,22 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                     })}
                   </div>
                   <div className="p-4 bg-[var(--bg)] border-t border-[var(--border)]">
-                    <button 
-                      onClick={iniciarFilaConferencia}
-                      className="w-full py-3 text-sm font-bold bg-[var(--blue)] hover:bg-[var(--blue-mid)] text-white rounded-xl flex items-center justify-center gap-2 shadow-sm"
-                    >
-                      Carregar {avulsaResultados.filter((_, i) => avulsaSelected[i]).length} servidores na fila ativa <CheckSquare size={16} />
-                    </button>
+                    <div className="flex gap-2 flex-wrap">
+                      <button 
+                        onClick={() => iniciarFilaConferencia("substituir")}
+                        className="flex-1 min-w-[180px] py-3 text-sm font-bold bg-[var(--blue)] hover:bg-[var(--blue-mid)] text-white rounded-xl flex items-center justify-center gap-2 shadow-sm"
+                        title="Troca a fila ativa por estes servidores (recomeça do primeiro)"
+                      >
+                        Substituir fila ativa ({avulsaResultados.filter((_, i) => avulsaSelected[i]).length}) <CheckSquare size={16} />
+                      </button>
+                      <button 
+                        onClick={() => iniciarFilaConferencia("anexar")}
+                        className="flex-1 min-w-[180px] py-3 text-sm font-bold border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] rounded-xl flex items-center justify-center gap-2"
+                        title="Acrescenta no fim da fila ativa, mantendo o progresso"
+                      >
+                        Anexar ao fim da fila
+                      </button>
+                    </div>
                     <button
                       type="button"
                       onClick={atualizarDiasFilaAtiva}

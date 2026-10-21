@@ -75,6 +75,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
     setor: string;
     defaultQtd: number;
     onConfirm: (qtd: number) => void;
+    ocorrencias?: any[];
   } | null>(null);
 
   const [inputVal, setInputVal] = useState("");
@@ -158,7 +159,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
     setInputVal("");
   };
 
-  const triggerModalOpen = (nome: string, mat: string, setor: string, onConfirm: (qtd: number) => void, defaultQtd: number = 0) => {
+  const triggerModalOpen = (nome: string, mat: string, setor: string, onConfirm: (qtd: number) => void, defaultQtd: number = 0, ocorrencias?: any[]) => {
     setInputVal(String(defaultQtd || 0));
     setLaunchModal({
       show: true,
@@ -166,7 +167,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
       mat,
       setor,
       defaultQtd,
-      onConfirm
+      onConfirm,
+      ocorrencias
     });
   };
 
@@ -667,7 +669,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
             <span className="text-xs font-semibold text-[var(--blue-mid)] font-mono block mt-1">
               Matrícula: {launchModal.mat} {launchModal.setor ? `· ${launchModal.setor}` : ""}
             </span>
-            <RecentLaunchWarning historico={state.historico || []} mat={launchModal.mat} />
+            <RecentLaunchWarning historico={state.historico || []} mat={launchModal.mat} ocorrencias={launchModal.ocorrencias} />
             
             <div className="mt-5">
               <label className="text-xs font-bold text-[var(--text2)] block mb-1.5">

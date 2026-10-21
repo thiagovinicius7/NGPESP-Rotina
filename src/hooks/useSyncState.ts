@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { marcarBackupFeito } from "../lib/backupLembrete.js";
 import { AppState } from "../types.js";
 import { mergeProdutividade, mergeFilaAvulsa, mergeHistorico, saveLocalSnapshot } from "../lib/utils";
 import { 
@@ -775,6 +776,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
+      marcarBackupFeito();
       onToast("Backup baixado com sucesso!", "ok");
     } catch (e) {
       onToast("Erro ao exportar arquivo de backup", "err");

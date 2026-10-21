@@ -10,6 +10,7 @@ import {
   Cloud, FileDown, FileUp, Star
 } from "lucide-react";
 import ProdutividadePanel from "./ProdutividadePanel.js";
+import { marcarBackupFeito, diasDesdeBackup, precisaLembrarBackup, baixarBackup } from "../lib/backupLembrete.js";
 import VidaFuncionalPanel from "./VidaFuncionalPanel.js";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { getSnapshotsFromIDB } from "../lib/idbStorage.js";
@@ -196,6 +197,7 @@ export default function RotinaPanel({
       a.download = `NGPESP_copia_automatica_${new Date(ultima.timestamp).toISOString().slice(0, 16).replace(":", "h")}.json`;
       document.body.appendChild(a);
       a.click();
+      marcarBackupFeito();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       onToast(`Cópia de ${ultima.dateFormatted} baixada (${ultima.summary}).`, "ok");
@@ -541,16 +543,7 @@ export default function RotinaPanel({
   };
 
   const handleBackupDownload = () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const dt = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `sisref_backup_${dt}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    baixarBackup(state);
     onToast("Backup baixado para a máquina local", "ok");
   };
 
@@ -1216,6 +1209,14 @@ export default function RotinaPanel({
             </div>
           </div>
 
+          {precisaLembrarBackup() && (
+            <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 flex items-center justify-between gap-3 flex-wrap">
+              <span className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                {diasDesdeBackup() === null ? "Ainda não há backup baixado neste computador." : `Último backup baixado há ${diasDesdeBackup()} dias.`} Vale baixar uma cópia agora.
+              </span>
+              <button type="button" onClick={handleBackupDownload} className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold">Baixar backup agora</button>
+            </div>
+          )}
           {/* 3. CÓPIA AUTOMÁTICA DESTE COMPUTADOR (SEGURANÇA) */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
             <div className="flex items-center justify-between gap-2">

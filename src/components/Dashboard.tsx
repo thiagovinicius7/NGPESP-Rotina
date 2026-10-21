@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { periodoAfastamento } from "../lib/vidaFuncional.js";
+import { periodoAfastamento, eventosDoDia } from "../lib/vidaFuncional.js";
+import { diasDesdeBackup, precisaLembrarBackup, baixarBackup } from "../lib/backupLembrete.js";
 import { AppState } from "../types.js";
 import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
 import { 
@@ -224,110 +225,112 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
     onToast("Abrindo painel SIGRH...", "info");
   };
 
+  // ---------- MEU DIA ----------
+  const fmtData = (iso?: string) => (iso ? iso.split("-").reverse().join("/") : "");
+  const eventosHoje = eventosDoDia(state, hoje);
+  const ehEscalaHoje = [1, 3].includes(currentTime.getDay());
+  const faltamNaFila = Math.max(0, servidoresNaFila - filaIdx);
+  const diaProdHoje: any = Object.entries(state.produtividade || {}).find(([k]) => toYmdDate(k) === hoje)?.[1] || {};
+  const qtdN = (a: any) => parseInt(String(a?.qtd ?? ""), 10) || 0;
+  const prodHoje = {
+    manha: (diaProdHoje.manha || []).length,
+    tarde: (diaProdHoje.tarde || []).length,
+    atividades: (diaProdHoje.manha || []).length + (diaProdHoje.tarde || []).length,
+    itens: [...(diaProdHoje.manha || []), ...(diaProdHoje.tarde || [])].reduce((s: number, a: any) => s + qtdN(a), 0)
+  };
+  const conferidosHoje = (state.historico || []).filter(h => h?.ts && toYmdDate(h.ts) === hoje).length;
+  const ehBalcao = (a: any) => a && (a.origem === "balcao" || a.sistema === "Balcão");
+  const contarBalcao = (prefixo: string) => Object.entries<any>(state.produtividade || {}).reduce((n, [k, d]) => {
+    if (!toYmdDate(k).startsWith(prefixo)) return n;
+    return n + [...(d?.manha || []), ...(d?.tarde || [])].filter(ehBalcao).length;
+  }, 0) + Object.entries<string>(state.balcaoAtendimentos || {}).reduce((n, [k, t]) => k.startsWith(prefixo) ? n + String(t || "").split("\n").filter(l => l.trim()).length : n, 0);
+  const balcaoHoje = contarBalcao(hoje);
+  const balcaoMes = contarBalcao(hoje.slice(0, 7));
+  const lerLS = (k: string) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+  const balcaoAtivo = !!lerLS("ngpesp_balcao_ativo");
+  const rascunhosHoje = (() => { try { return Object.values<any>(JSON.parse(lerLS("ngpesp_prod_rascunhos") || "{}")).filter(r => r?.data === hoje).length; } catch (_) { return 0; } })();
+  const diasBackup = diasDesdeBackup();
+  const [lembrarBackup, setLembrarBackup] = useState(precisaLembrarBackup());
+
   return (
-    <div className="space-y-8 pb-12 animate-fade-in">
-      {/* Hero */}
-      <div className="bg-gradient-to-br from-[var(--blue-mid)] to-indigo-700 text-white rounded-3xl p-10 flex flex-col md:flex-row items-center justify-between shadow-lg">
+    <div className="space-y-6 pb-12 animate-fade-in">
+      {/* MEU DIA */}
+      <div className="flex items-end justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-5xl font-black tracking-tighter">NGPESP Rotina</h1>
-          <p className="text-xl mt-2 opacity-90">Gestão Operacional • Hospital Regional de Samambaia</p>
+          <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider">Meu dia</div>
+          <h1 className="text-2xl lg:text-3xl font-black text-[var(--text)] capitalize">{diaSemana}, {currentTime.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}</h1>
         </div>
-        <div className="text-right mt-6 md:mt-0">
-          <div className="text-6xl font-mono font-black tabular-nums">{horaFormatada}</div>
-          <div className="text-lg capitalize opacity-90">{diaSemana}</div>
-        </div>
+        <div className="text-3xl font-mono font-black tabular-nums text-[var(--text)]">{horaFormatada}</div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <div className="bento-card p-6 flex flex-col justify-between">
-          <div>
-            <Users size={32} className="text-blue-500 mb-3" />
-            <div className="text-5xl font-black text-[var(--text)]">{totalServidores}</div>
-            <div className="text-[var(--text2)]">Servidores</div>
-          </div>
-          {state.config?.ultimoUpdateServidores && (
-            <button 
-              onClick={() => setShowCompareModal(true)}
-              className="w-full text-left text-[10px] text-[var(--text2)] hover:text-[var(--blue-mid)] hover:bg-slate-50 dark:hover:bg-slate-900/40 p-1.5 -mx-1.5 rounded-lg mt-2 font-mono border-t border-[var(--border)] flex items-center justify-between transition-all cursor-pointer group"
-              title="Clique para comparar com o último extrator importado"
-            >
-              <span className="truncate">Ref: {state.config.ultimoUpdateServidores}</span>
-              {absentServers.length > 0 ? (
-                <span className="bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 px-1.5 py-0.5 rounded-full text-[8px] font-bold flex-shrink-0 ml-1">
-                  {absentServers.length} ausentes
-                </span>
-              ) : (
-                <span className="opacity-0 group-hover:opacity-100 transition-opacity font-bold text-[8px] text-[var(--blue-mid)] flex-shrink-0 ml-1">
-                  Ver detalhes →
-                </span>
-              )}
-            </button>
+      {lembrarBackup && (
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <span className="text-xs font-bold text-amber-800 dark:text-amber-200">
+            {diasBackup === null ? "Você ainda não baixou um backup neste computador." : `Seu último backup foi baixado há ${diasBackup} dias.`} Leva um segundo e protege seus dados.
+          </span>
+          <button type="button" onClick={() => { baixarBackup(state); setLembrarBackup(false); onToast("Backup baixado.", "ok"); }} className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold">Baixar backup agora</button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {/* Hoje */}
+        <button type="button" onClick={irParaVidaFuncional} className="text-left bento-card p-5 flex flex-col gap-2 hover:border-emerald-400">
+          <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1"><CalendarCheck size={13} /> Hoje</div>
+          {eventosHoje.length > 0 ? (
+            <div className="text-base font-black text-emerald-600 dark:text-emerald-400 leading-snug">{eventosHoje.map(e => e.texto).join(" · ")}</div>
+          ) : (
+            <div className={`text-base font-black ${ehEscalaHoje ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--text)]"}`}>{ehEscalaHoje ? "Dia de escala" : "Expediente normal"}</div>
           )}
-        </div>
-
-        <div className="bento-card p-6">
-          <Building2 size={32} className="text-teal-500 mb-3" />
-          <div className="text-5xl font-black text-[var(--text)]">{totalSetores}</div>
-          <div className="text-[var(--text2)]">Setores Ativos</div>
-        </div>
-
-        <div className="bento-card p-6 relative overflow-hidden">
-          <TrendingUp size={32} className="text-green-500 mb-3" />
-          <div className="text-5xl font-black text-[var(--text)]">{totalLancamentos}</div>
-          <div className="text-[var(--text2)]">Lançamentos Totais</div>
-          <div className="absolute bottom-4 right-4 text-xs bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 px-3 py-1 rounded-full font-bold">
-            +{lancamentosHoje} hoje
+          <div className="text-[11px] font-semibold text-[var(--text2)]">
+            {ehEscalaHoje ? "7h–12h / 13h–18h" : "Fora da escala regular"}
+            {proximaFeria ? ` · próximas férias em ${fmtData(proximaFeria.inicio)}` : ""}
           </div>
-        </div>
+        </button>
 
-        {/* Fila Avulsa Progress (Replaces the old startup block) */}
-        <div className="bento-card p-6 flex flex-col justify-between bg-gradient-to-br from-indigo-50/50 to-white dark:from-indigo-950/20">
-          <div>
-            <div className="flex justify-between items-start mb-3">
-              <ListTodo size={32} className="text-indigo-600 dark:text-indigo-400" />
-              <span className="text-[10px] font-bold px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded-full">
-                Fila: {filaNome}
-              </span>
-            </div>
-            <div className="text-4xl font-black text-[var(--text)]">{filaIdx}/{servidoresNaFila}</div>
-            <div className="text-xs text-[var(--text2)] font-medium mt-1">Fila Avulsa Conferida</div>
-            
-            {/* Progress Bar */}
-            <div className="w-full bg-gray-200 dark:bg-gray-800 h-2 rounded-full mt-3 overflow-hidden">
-              <div 
-                className="bg-indigo-600 h-full rounded-full transition-all duration-500" 
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-right font-semibold text-indigo-600 dark:text-indigo-400 mt-1">
-              {progressPct}% concluído
-            </div>
+        {/* Fila */}
+        <div className="bento-card p-5 flex flex-col gap-2">
+          <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1 justify-between">
+            <span className="flex items-center gap-1"><ListTodo size={13} /> Fila "{filaNome}"</span>
+            {pendenciasAvulsa > 0 && <button type="button" onClick={resolverPendenciasAvulsa} className="px-1.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 normal-case">{pendenciasAvulsa} pendência(s)</button>}
           </div>
-          <div className="mt-3 flex gap-2">
-            <button 
-              onClick={iniciarConferenciaAvulsaRapida}
-              className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-xs"
-              title="Abrir no painel SISREF"
-            >
-              <PlayCircle size={15} /> Continuar
+          <div className="text-base font-black text-[var(--text)]">
+            {servidoresNaFila > 0 ? (faltamNaFila > 0 ? `Faltam ${faltamNaFila} de ${servidoresNaFila}` : "Fila concluída") : "Fila vazia"}
+          </div>
+          <div className="w-full bg-[var(--bg)] h-1.5 rounded-full overflow-hidden"><div className="bg-indigo-600 h-full rounded-full" style={{ width: `${progressPct}%` }} /></div>
+          <div className="flex gap-2 mt-1">
+            <button onClick={iniciarConferenciaAvulsaRapida} className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
+              <PlayCircle size={14} /> Continuar
             </button>
-            <button 
-              onClick={() => {
-                try {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("app", "lancamento");
-                  window.open(url.toString(), "LancadorSisrefApp", "width=1180,height=840,menubar=no,toolbar=no");
-                } catch (_) {}
-              }}
-              className="px-3 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition-all"
-              title="Abrir App de Lançamento Dedicado em Janela Separada"
+            <button
+              onClick={() => { try { const url = new URL(window.location.href); url.searchParams.set("app", "lancamento"); window.open(url.toString(), "LancadorSisrefApp", "width=1180,height=840,menubar=no,toolbar=no"); } catch (_) {} }}
+              className="px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+              title="Abrir o lançador em janela separada"
             >
-              <Zap size={14} className="fill-current text-amber-300" />
-              <span>App</span>
+              <Zap size={13} className="fill-current text-amber-300" /> Lançador
             </button>
           </div>
         </div>
+
+        {/* Produtividade */}
+        <button type="button" onClick={() => setActiveTab('produtividade')} className="text-left bento-card p-5 flex flex-col gap-2 hover:border-[var(--blue-mid)]">
+          <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1"><TrendingUp size={13} /> Produtividade de hoje</div>
+          <div className="text-base font-black text-[var(--text)]">{prodHoje.atividades} atividade(s) · <span className="text-[var(--blue-mid)]">{prodHoje.itens} itens</span></div>
+          <div className="text-[11px] font-semibold text-[var(--text2)]">
+            Manhã: {prodHoje.manha} · Tarde: {prodHoje.tarde}{conferidosHoje > 0 ? ` · ${conferidosHoje} servidor(es) conferido(s)` : ""}
+          </div>
+          {rascunhosHoje > 0 && <div className="text-[11px] font-bold text-amber-600 dark:text-amber-400">{rascunhosHoje} atividade(s) ainda não salva(s)</div>}
+        </button>
+
+        {/* Balcão */}
+        <button type="button" onClick={() => setActiveTab('balcao')} className="text-left bento-card p-5 flex flex-col gap-2 hover:border-teal-400">
+          <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1"><Users size={13} /> Balcão</div>
+          {balcaoAtivo ? (
+            <div className="text-base font-black text-emerald-600 dark:text-emerald-400">Em atendimento agora</div>
+          ) : (
+            <div className="text-base font-black text-[var(--text)]">{balcaoHoje} atendimento(s) hoje</div>
+          )}
+          <div className="text-[11px] font-semibold text-[var(--text2)]">{balcaoMes} no mês</div>
+        </button>
       </div>
 
       {/* Ações Rápidas + Busca */}
@@ -335,9 +338,15 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
         {/* Busca por Servidor */}
         <div className="lg:col-span-7 space-y-6">
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-3xl p-6 shadow-xs">
-            <h2 className="text-lg font-black mb-4 flex items-center gap-2">
-              <Search size={20} className="text-[var(--blue-mid)]" /> Pesquisa de Servidores
-            </h2>
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-4">
+              <h2 className="text-lg font-black flex items-center gap-2">
+                <Search size={20} className="text-[var(--blue-mid)]" /> Pesquisa de Servidores
+              </h2>
+              <button type="button" onClick={() => state.config?.ultimoUpdateServidores && setShowCompareModal(true)} className="text-[11px] font-bold text-[var(--text2)] hover:text-[var(--blue-mid)] flex items-center gap-1.5" title={state.config?.ultimoUpdateServidores ? "Comparar com o último extrator importado" : undefined}>
+                {totalServidores} servidores · {totalSetores} setores
+                {absentServers.length > 0 && <span className="px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300">{absentServers.length} ausentes</span>}
+              </button>
+            </div>
             <div className="flex items-center gap-4 bg-[var(--bg)]/10 border border-[var(--border2)] rounded-2xl p-4">
               <Search size={22} className="text-[var(--text2)]" />
               <input 

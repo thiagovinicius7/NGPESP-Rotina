@@ -1,3 +1,4 @@
+import { lerTextoSisref, servidoresSelecionados, colocarNaFilaAtiva, progressoFilaAtiva, contarDiasParaAtualizar, atualizarDiasNaFilaAtiva } from "../lib/sisrefImport.js";
 import RecentLaunchWarning from "./RecentLaunchWarning.js";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
@@ -546,142 +547,11 @@ export default function LancamentoApp({
 
   // Parse SISREF Text (Import)
   const parsearSisrefText = (txtToParse: string) => {
-    const txt = txtToParse.trim();
-    if (!txt) {
+    if (!txtToParse.trim()) {
       onToast("Cole o texto copiado do SISREF.", "err");
       return;
     }
-
-    const srvByMatMap = new Map<string, Server>();
-    const srvByNameMap = new Map<string, Server>();
-    (state.servidores || []).forEach(s => {
-      if (s.matricula) {
-        const nm = normalizeMatricula(s.matricula);
-        if (nm) srvByMatMap.set(nm, s);
-      }
-      if (s.nome) {
-        srvByNameMap.set(s.nome.trim().toLowerCase(), s);
-      }
-    });
-
-    const cedidosNormSet = new Set((state.config?.matriculasCedidos || []).map(m => normalizeMatricula(m)).filter(Boolean));
-    let cedidosIgnoradosCount = 0;
-
-    const map: Record<string, QueueServer> = {};
-    const linhas = txt.split(/\n/);
-
-    linhas.forEach((linha, idx) => {
-      if (!linha.trim()) return;
-
-      const dataMatch = linha.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/) || linha.match(/(\d{1,2}\/\d{2,4})/) || linha.match(/(\d{4}-\d{1,2}(?:-\d{1,2})?)/);
-      const data = dataMatch ? dataMatch[0] : "";
-
-      const matMatch = linha.match(/\b(\d{6,9}[A-Z0-9]?)\b/i) || linha.match(/(?:matrícula|mat|matr)\s*[:.]?\s*(\d{6,9}[A-Z0-9]?)/i);
-      let matricula = matMatch ? matMatch[1].trim() : "";
-      let nomeExtraido = "";
-
-      if (matricula) {
-        let rest = linha
-          .replace(matMatch![0], "")
-          .replace(/(?:matrícula|mat|matr)\s*[:.]?/gi, "")
-          .replace(/(\d{2}\/\d{2}\/\d{4})/g, "")
-          .replace(/\b(Anexado|Aprovado|Pendente)\b/gi, "")
-          .trim();
-        
-        rest = rest.replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, "").trim();
-
-        const parts = rest.split(/[\-–—]/).map(p => p.trim()).filter(Boolean);
-        for (const p of parts) {
-          const cleaned = p.replace(/\s*\([^)]*\)/g, "").trim();
-          if (/^[A-Za-zÀ-ÿ\s]{4,}$/.test(cleaned) && !/^(atest|licença|licenca|falta|férias|ferias|afastamento|reunião|reuniao|ticket|servidor)/i.test(cleaned)) {
-            nomeExtraido = cleaned;
-            break;
-          }
-        }
-        if (!nomeExtraido && parts.length > 0) {
-          const lastPart = parts[parts.length - 1].replace(/\s*\([^)]*\)/g, "").trim();
-          if (/^[A-Za-zÀ-ÿ\s]+$/.test(lastPart) && lastPart.length >= 3) {
-            nomeExtraido = lastPart;
-          }
-        }
-      } else {
-        for (const [normName, srv] of srvByNameMap.entries()) {
-          if (linha.toLowerCase().includes(normName)) {
-            matricula = srv.matricula;
-            nomeExtraido = srv.nome;
-            break;
-          }
-        }
-      }
-
-      const normMat = normalizeMatricula(matricula);
-      let officialServer = normMat ? srvByMatMap.get(normMat) : undefined;
-
-      if (!officialServer && nomeExtraido) {
-        officialServer = srvByNameMap.get(nomeExtraido.trim().toLowerCase());
-      }
-
-      const finalMatricula = officialServer ? officialServer.matricula : (matricula || "");
-      const finalNome = officialServer ? officialServer.nome : (nomeExtraido || "");
-
-      if (!finalMatricula) return;
-
-      const normFinalMat = normalizeMatricula(finalMatricula);
-      if ((normMat && cedidosNormSet.has(normMat)) || (normFinalMat && cedidosNormSet.has(normFinalMat))) {
-        cedidosIgnoradosCount++;
-        return;
-      }
-
-      let tipo = linha;
-
-      if (finalMatricula) {
-        const cleanMat = finalMatricula.replace(/\D/g, "");
-        if (cleanMat.length >= 4) {
-          tipo = tipo.replace(new RegExp(`\\b${cleanMat}\\b`, "gi"), "");
-        }
-      }
-
-      if (finalNome && finalNome.trim().length > 2) {
-        const normNome = finalNome.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const normTipo = tipo.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const idx = normTipo.toLowerCase().indexOf(normNome.toLowerCase());
-        if (idx !== -1) {
-          tipo = tipo.substring(0, idx) + tipo.substring(idx + normNome.length);
-        }
-      }
-
-      tipo = tipo.replace(/(\d{1,2}\/\d{1,2}\/\d{2,4})/g, "")
-                 .replace(/(\d{1,2}\/\d{2,4})/g, "")
-                 .replace(/\b(Anexado|Aprovado|Pendente|Concluído|Processado|Ok)\b/gi, "")
-                 .replace(/^[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+|[\s\-\u2010-\u2015\u2212\uFE63\uFF0D:]+$/g, "")
-                 .trim();
-      
-      const tipoLimpo = cleanTipoName(tipo) || "Atestado";
-
-      if (!map[finalMatricula]) {
-        map[finalMatricula] = { matricula: finalMatricula, nome: finalNome || `Servidor (${finalMatricula})`, tipos: [], ocorrencias: [] };
-      } else if (officialServer) {
-        map[finalMatricula].nome = officialServer.nome;
-      }
-
-      const matchPrevDate = idx > 0 ? (linhas[idx - 1].match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/) || linhas[idx - 1].match(/(\d{1,2}\/\d{2,4})/)) : null;
-      const dataAnterior = matchPrevDate ? matchPrevDate[0] : "";
-      // Período completo (primeiro e último dia) quando o SISREF traz as duas datas
-      const periodo = extrairPeriodoSisref(linhas, idx, data || dataAnterior);
-      map[finalMatricula].ocorrencias.push({
-        tipo: tipoLimpo,
-        data: periodo.data,
-        ...(periodo.dataInicio ? { dataInicio: periodo.dataInicio } : {}),
-        ...(periodo.dias ? { dias: periodo.dias } : {}),
-        checked: false
-      });
-
-      if (!map[finalMatricula].tipos.includes(tipoLimpo)) {
-        map[finalMatricula].tipos.push(tipoLimpo);
-      }
-    });
-
-    const parsedArr = Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    const { lista: parsedArr, cedidosIgnorados: cedidosIgnoradosCount } = lerTextoSisref(txtToParse, state.servidores || [], state.config?.matriculasCedidos || []);
     if (parsedArr.length === 0) {
       onToast("Nenhum servidor ou ocorrência identificada no texto.", "err");
       return;
@@ -703,83 +573,27 @@ export default function LancamentoApp({
 
   // Preenche os dias do afastamento nas ocorrências da fila ativa, sem mexer no progresso
   const atualizarPeriodosFilaAtiva = () => {
-    const chave = (mat: string, tipo: string, data: string) => `${normalizeMatricula(mat)}|${(tipo || "").trim().toLowerCase()}|${(data || "").trim()}`;
-    const periodos = new Map<string, { dataInicio: string; dias?: string[] }>();
-    importResultados.forEach(s => (s.ocorrencias || []).forEach((o: any) => {
-      if (o.dataInicio) periodos.set(chave(s.matricula, o.tipo, o.data), { dataInicio: o.dataInicio, dias: o.dias });
-    }));
-    if (periodos.size === 0) {
+    const { comPeriodo, atualizar } = contarDiasParaAtualizar(state, importResultados);
+    if (comPeriodo === 0) {
       onToast("O texto colado não tem períodos de mais de um dia para atualizar.", "info");
       return;
     }
-    const precisa = (o: any, p?: { dataInicio: string; dias?: string[] }) =>
-      !!p && (o.dataInicio !== p.dataInicio || JSON.stringify(o.dias || null) !== JSON.stringify(p.dias || null));
-    // Conta antes (a partir do estado atual) para a mensagem
-    const filaAtual = state.filaAvulsa?.listas?.[state.filaAvulsa?.ativa || "Padrão"]?.fila || [];
-    const atualizadas = filaAtual.reduce((n: number, srv: any) => n + (srv.ocorrencias || []).filter((o: any) =>
-      precisa(o, periodos.get(chave(srv.matricula, o.tipo, o.data)))).length, 0);
-    updateState(prev => {
-      const fa = prev.filaAvulsa;
-      const nome = fa?.ativa || "Padrão";
-      const q = fa?.listas?.[nome];
-      if (!q) return {};
-      const fila = (q.fila || []).map((srv: any) => ({
-        ...srv,
-        ocorrencias: (srv.ocorrencias || []).map((o: any) => {
-          const p = periodos.get(chave(srv.matricula, o.tipo, o.data));
-          if (p && precisa(o, p)) return { ...o, dataInicio: p.dataInicio, ...(p.dias ? { dias: p.dias } : {}) };
-          return o;
-        })
-      }));
-      return { filaAvulsa: { ...fa, listas: { ...fa.listas, [nome]: { ...q, fila } } } };
-    });
-    onToast(atualizadas > 0 ? `Dias atualizados em ${atualizadas} ocorrência(s) da fila ativa.` : "Nenhuma ocorrência da fila ativa precisava de atualização.", atualizadas > 0 ? "ok" : "info");
+    updateState(prev => atualizarDiasNaFilaAtiva(prev, importResultados));
+    onToast(atualizar > 0 ? `Dias atualizados em ${atualizar} ocorrência(s) da fila ativa.` : "Nenhuma ocorrência da fila ativa precisava de atualização.", atualizar > 0 ? "ok" : "info");
     setImportResultados([]);
     setImportTxt("");
     setShowImportModal(false);
   };
 
-  // Append or Replace Queue with imported servers
   const aplicarImportacaoFila = (appendMode: boolean = false) => {
-    const cedidosNormSet = new Set((state.config?.matriculasCedidos || []).map(m => normalizeMatricula(m)).filter(Boolean));
-    const selectedServers = importResultados
-      .filter((_, i) => importSelected[i])
-      .filter(s => !cedidosNormSet.has(normalizeMatricula(s.matricula)))
-      .map(s => {
-        const official = getOfficialServer(s.matricula, s.nome, state.servidores);
-        return {
-          ...s,
-          matricula: official.matricula,
-          nome: official.nome
-        };
-      });
-
+    const selectedServers = servidoresSelecionados(importResultados, importSelected, state);
     if (selectedServers.length === 0) {
       onToast("Selecione pelo menos um servidor para adicionar à fila.", "err");
       return;
     }
-
-    updateState(prev => {
-      const qName = prev.filaAvulsa?.ativa || "Padrão";
-      const existingQueue = prev.filaAvulsa?.listas?.[qName] || { fila: [], idx: 0 };
-      
-      const newFila = appendMode ? [...existingQueue.fila, ...selectedServers] : selectedServers;
-      const newIdx = appendMode ? existingQueue.idx : 0;
-
-      const updatedListas = { ...(prev.filaAvulsa?.listas || {}) };
-      updatedListas[qName] = {
-        fila: newFila,
-        idx: newIdx
-      };
-
-      return {
-        filaAvulsa: {
-          ...prev.filaAvulsa,
-          listas: updatedListas
-        }
-      };
-    });
-
+    const prog = progressoFilaAtiva(state);
+    if (!appendMode && prog.feitos > 0 && !confirm(`A fila "${prog.nome}" já tem ${prog.feitos} de ${prog.total} servidores conferidos. Substituir faz ela recomeçar do zero. Continuar?`)) return;
+    updateState(prev => colocarNaFilaAtiva(prev, selectedServers, appendMode ? "anexar" : "substituir"));
     setImportResultados([]);
     setImportTxt("");
     setShowImportModal(false);

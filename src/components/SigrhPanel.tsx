@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
+import { copiarTexto } from "../lib/exportar.js";
 import { AppState, LaunchCode, NatalAnalysis } from "../types.js";
 import { getLocalDateIso } from "../lib/utils.js";
 import { safeLocalStorageSet } from "../lib/idbStorage.js";
 import { 
   Calculator, FileCode, Image as ImageIcon, Gift, Plus, Search, 
   Trash2, FileUp, X, Save, Edit2, ExternalLink, FilePlus2, 
-  History, Clock, AlertTriangle, AlertCircle, CheckCircle, Check
+  History, Clock, AlertTriangle, AlertCircle, CheckCircle, Check,
+  Copy
 } from "lucide-react";
 
 interface SigrhPanelProps {
@@ -13,6 +15,8 @@ interface SigrhPanelProps {
   updateState: (newState: Partial<AppState> | ((prev: AppState) => Partial<AppState>)) => void;
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
 }
+
+const semAcento = (t: string) => (t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 export default function SigrhPanel({ state, updateState, onToast }: SigrhPanelProps) {
   // Calculadora
@@ -352,8 +356,8 @@ export default function SigrhPanel({ state, updateState, onToast }: SigrhPanelPr
             type="text" 
             value={codBusca}
             onChange={(e) => setCodBusca(e.target.value)}
-            placeholder="Pesquisar código ou nome..."
-            className="w-full p-2.5 pl-9 text-xs rounded-xl"
+            placeholder="Pesquisar código ou nome (ex.: licença, 601)..."
+            className="w-full p-2.5 !pl-9 text-xs rounded-xl"
           />
         </div>
 
@@ -424,10 +428,18 @@ export default function SigrhPanel({ state, updateState, onToast }: SigrhPanelPr
             </thead>
             <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)] text-sm font-semibold">
               {state.codigos
-                .filter(c => c.num.includes(codBusca) || c.nome.toLowerCase().includes(codBusca.toLowerCase()))
-                .map((c, i) => (
+                .map((c, i) => ({ c, i }))
+                .filter(({ c }) => {
+                  const q = semAcento(codBusca.trim());
+                  return !q || semAcento(`${c.num} ${c.nome} ${c.periodo || ""}`).includes(q);
+                })
+                .map(({ c, i }) => (
                   <tr key={i} className="hover:bg-[var(--bg)]/10 text-xs">
-                    <td className="p-3 font-mono text-[var(--blue-mid)] font-bold">{c.num}</td>
+                    <td className="p-3">
+                      <button type="button" onClick={async () => { const ok = await copiarTexto(c.num); onToast(ok ? `Código ${c.num} copiado` : "Não foi possível copiar", ok ? "ok" : "err"); }} className="font-mono text-[var(--blue-mid)] font-bold hover:underline flex items-center gap-1" title="Copiar código">
+                        {c.num} <Copy size={10} />
+                      </button>
+                    </td>
                     <td className="p-3 text-[var(--text)]">{c.nome}</td>
                     <td className="p-3">
                       <span className="text-[10px] font-bold bg-[var(--blue-light)] text-[var(--blue-mid)] px-2 py-0.5 rounded-full">

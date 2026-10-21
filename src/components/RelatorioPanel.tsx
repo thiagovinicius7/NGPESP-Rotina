@@ -5,7 +5,7 @@ import ModalColarLancamentosAnteriores from "./ModalColarLancamentosAnteriores.j
 import { AtividadeLancamento, ProdutividadeDia } from "../types.js";
 import { situacaoTurno, labelSituacao, qtdNum } from "../lib/produtividade.js";
 import { copiarTabela, baixarCSV, imprimirTabela } from "../lib/exportar.js";
-import { TrendingUp, PhoneCall } from "lucide-react";
+import { TrendingUp, PhoneCall, Gift } from "lucide-react";
 import { 
   Users, CalendarCheck2, Network, Timer, List, PieChart, 
   Trash2, ChevronRight, Edit2, LineChart, Calendar as CalendarIcon, 
@@ -56,7 +56,7 @@ export interface ServidorSemLancamentoItem {
   totalHistorico: number;
 }
 
-type TipoRelatorio = 'afastamentos' | 'sem-lancamentos' | 'conf' | 'setor' | 'produtividade' | 'balcao';
+type TipoRelatorio = 'afastamentos' | 'sem-lancamentos' | 'conf' | 'setor' | 'produtividade' | 'balcao' | 'natal';
 
 const TIPOS_RELATORIO: { id: TipoRelatorio; titulo: string; desc: string }[] = [
   { id: 'afastamentos', titulo: 'Afastamentos lançados', desc: 'O que foi lançado, por mês' },
@@ -64,7 +64,8 @@ const TIPOS_RELATORIO: { id: TipoRelatorio; titulo: string; desc: string }[] = [
   { id: 'conf', titulo: 'Conferências', desc: 'Servidores conferidos, dia a dia' },
   { id: 'setor', titulo: 'Por setor', desc: 'Conferências agrupadas por lotação' },
   { id: 'produtividade', titulo: 'Produtividade', desc: 'Atividades num período' },
-  { id: 'balcao', titulo: 'Balcão', desc: 'Atendimentos num período' }
+  { id: 'balcao', titulo: 'Balcão', desc: 'Atendimentos num período' },
+  { id: 'natal', titulo: 'Abono natalício', desc: 'Análises deferidas e indeferidas' }
 ];
 
 // Format YYYY-MM to readable Portuguese (e.g. "Outubro de 2025 (10/2025)")
@@ -1509,6 +1510,12 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
     return out.sort((a, b) => (a.iso + a.hora).localeCompare(b.iso + b.hora));
   }, [prodLinhas, state.balcaoAtendimentos, perDe, perAte]);
 
+  // Abono natalício
+  const natalLinhas = useMemo(() => (state.filaAvulsa?.natal || [])
+    .map(n => ({ ...n, iso: toYmdDate(n.data) }))
+    .filter(n => confMes === "todos" || n.iso.startsWith(confMes))
+    .sort((a, b) => b.iso.localeCompare(a.iso)), [state.filaAvulsa?.natal, confMes]);
+
   const fmtData = (iso: string) => iso ? iso.split("-").reverse().join("/") : "";
   const rotuloPeriodo = `${fmtData(perDe <= perAte ? perDe : perAte)} a ${fmtData(perDe <= perAte ? perAte : perDe)}`;
   const rotuloConfMes = confMes === "todos" ? "todos os meses" : formatarMesAnoCurto(confMes);
@@ -1545,6 +1552,10 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
       headers: ["Data", "Turno", "Situação", "Qtd", "Tipo", "Sistema", "Detalhes", "Processos SEI"],
       rows: prodLinhas.map(({ iso, turno, a }) => [fmtData(iso), turno === "manha" ? "Manhã" : "Tarde", labelSituacao(situacaoTurno(diasPeriodo.find(x => x.iso === iso)?.d, turno)), qtdNum(a), a.tipo, a.sistema, a.desc || "", a.processosSei || ""])
     };
+    if (subTab === 'natal') return {
+      titulo: "Abono natalício", sub: `${rotuloConfMes} · ${natalLinhas.length} análise(s)`, arquivo: `abono_natalicio_${confMes}`,
+      headers: ["Data", "Processo SEI", "Resultado", "Motivo"], rows: natalLinhas.map(n => [n.data, n.sei, n.resultado, n.motivo || ""])
+    };
     if (subTab === 'balcao') return {
       titulo: "Atendimentos de balcão", sub: `${rotuloPeriodo} · ${balcaoLinhas.length} atendimento(s)`, arquivo: `balcao_${perDe}_${perAte}`,
       headers: ["Data", "Horário", "Atendimento"], rows: balcaoLinhas.map(b => [fmtData(b.iso), b.hora, b.texto])
@@ -1573,7 +1584,8 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
     'conf': <List size={16} />,
     'setor': <PieChart size={16} />,
     'produtividade': <TrendingUp size={16} />,
-    'balcao': <PhoneCall size={16} />
+    'balcao': <PhoneCall size={16} />,
+    'natal': <Gift size={16} />
   };
   const contagemTipo: Partial<Record<TipoRelatorio, number>> = {
     'sem-lancamentos': statsSemLanc.totalSemLanc
@@ -1584,7 +1596,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
 
       {/* ESCOLHA DO RELATÓRIO */}
       <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 shadow-sm">
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2">
           {TIPOS_RELATORIO.map(t => {
             const ativo = subTab === t.id;
             return (
@@ -2078,7 +2090,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
 
 
       {/* ============ CONFERÊNCIAS / POR SETOR ============ */}
-      {(subTab === 'conf' || subTab === 'setor') && (
+      {(subTab === 'conf' || subTab === 'setor' || subTab === 'natal') && (
         <>
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 lg:p-5 shadow-sm grid grid-cols-2 lg:grid-cols-12 gap-3 items-end">
             <Campo rotulo="Mês" className="col-span-1 lg:col-span-3">
@@ -2092,7 +2104,28 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
             </Campo>
           </div>
 
-          {subTab === 'conf' ? (
+          {subTab === 'natal' ? (
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden">
+              <BarraResultado copiado={copiado} onExportar={exportar}
+                resumo={<><b className="text-[var(--text)] text-sm">{natalLinhas.length}</b> análise(s) ·
+                  <span className="text-emerald-600 dark:text-emerald-400 font-bold">{natalLinhas.filter(n => n.resultado === "DEFERIDO").length} deferida(s)</span> ·
+                  <span className="text-red-600 dark:text-red-400 font-bold">{natalLinhas.filter(n => n.resultado !== "DEFERIDO").length} indeferida(s)</span> · {rotuloConfMes}</>} />
+              <table className="w-full text-xs">
+                <thead className="border-b border-[var(--border)]"><tr><th className={thCls}>Data</th><th className={thCls}>Processo SEI</th><th className={thCls}>Resultado</th><th className={`${thCls} hidden md:table-cell`}>Motivo</th></tr></thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {natalLinhas.map((n, i) => (
+                    <tr key={i} className="hover:bg-[var(--bg)]">
+                      <td className={`${tdCls} font-mono text-[11px] whitespace-nowrap`}>{n.data}</td>
+                      <td className={`${tdCls} font-mono font-bold`}>{n.sei}</td>
+                      <td className={tdCls}><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${n.resultado === "DEFERIDO" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-red-500/10 text-red-600 dark:text-red-400"}`}>{n.resultado}</span></td>
+                      <td className={`${tdCls} hidden md:table-cell text-[var(--text2)]`}>{n.motivo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {natalLinhas.length === 0 && <div className="p-10 text-center text-xs font-bold text-[var(--text2)]">Nenhuma análise de abono natalício neste período. Elas são registradas na aba SIGRH.</div>}
+            </div>
+          ) : subTab === 'conf' ? (
             <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden">
               <BarraResultado copiado={copiado} onExportar={exportar}
                 resumo={<><b className="text-[var(--text)] text-sm">{confFiltradas.length}</b> conferência(s) · <b className="text-[var(--text)]">{confFiltradas.reduce((s, x) => s + lancDe(x.h), 0)}</b> lançamento(s) · {rotuloConfMes}</>} />
