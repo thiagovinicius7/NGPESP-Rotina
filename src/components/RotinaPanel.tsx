@@ -10,15 +10,8 @@ import {
   Cloud, FileDown, FileUp, Star
 } from "lucide-react";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
-import { 
-  syncToGoogleSheets, 
-  loadServersFromBackup, 
-  loadFullStateFromBackup, 
-  searchGoogleDriveForBackup, 
-  extractSpreadsheetId, 
-  DriveBackupFile 
-} from "../lib/googleSheetsSync.js";
-import { getLocalDateIso, toYmdDate, mergeProdutividade, reconstructProdutividadeFromState, getLocalSnapshots, StateSnapshot, mergeFilaAvulsa } from "../lib/utils.js";
+import { getSnapshotsFromIDB } from "../lib/idbStorage.js";
+import { getLocalDateIso, toYmdDate, mergeProdutividade, reconstructProdutividadeFromState, mergeFilaAvulsa } from "../lib/utils.js";
 
 const normalizeMatricula = (m: any): string => {
   if (!m) return "";
@@ -44,10 +37,6 @@ interface RotinaPanelProps {
   onToast: (msg: string, type?: 'ok' | 'err' | 'info') => void;
   forceSync: () => Promise<void>;
   syncing: boolean;
-  googleUser: any;
-  googleToken: string | null;
-  onGoogleLogin: () => Promise<string | null>;
-  onGoogleLogout: () => Promise<void>;
   subTab?: 'importar' | 'vida' | 'produtividade';
   setSubTab?: (t: 'importar' | 'vida' | 'produtividade') => void;
   forcePushThisDeviceToCloud?: () => Promise<void>;
@@ -62,10 +51,6 @@ export default function RotinaPanel({
   onToast, 
   forceSync, 
   syncing,
-  googleUser,
-  googleToken,
-  onGoogleLogin,
-  onGoogleLogout,
   subTab: controlledSubTab,
   setSubTab: setControlledSubTab,
   forcePushThisDeviceToCloud,
@@ -78,11 +63,7 @@ export default function RotinaPanel({
   const subTab = controlledSubTab !== undefined ? controlledSubTab : localSubTab;
   const setSubTab = setControlledSubTab !== undefined ? setControlledSubTab : setLocalSubTab;
 
-  // GAS connection and syncing
-  const [gasUrl, setGasUrl] = useState(state.gasUrl || "");
-  const [testingGAS, setTestingGAS] = useState(false);
-  const [syncingGAS, setSyncingGAS] = useState(false);
-  const [showGasHelp, setShowGasHelp] = useState(false);
+  // Importador de dados
   const [tsvText, setTsvText] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [importType, setImportType] = useState<'servidores' | 'respostas' | 'faq' | 'filaAvulsa' | 'produtividade' | 'balcaoAtendimentos' | 'afastamentos'>('servidores');
@@ -194,272 +175,29 @@ export default function RotinaPanel({
     }
   };
 
-  // Google Sheets Direct API Backup States
-  const [googleSyncStatus, setGoogleSyncStatus] = useState<string>("");
-  const [googleSyncType, setGoogleSyncType] = useState<'info' | 'ok' | 'err' | ''>("");
-  const [isGoogleSyncing, setIsGoogleSyncing] = useState(false);
-  const [manualSheetInput, setManualSheetInput] = useState("");
-  const [foundDriveFiles, setFoundDriveFiles] = useState<DriveBackupFile[]>([]);
-  const [isSearchingDrive, setIsSearchingDrive] = useState(false);
-  const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);
 
-  const handleRestoreSnapshot = (snap: StateSnapshot) => {
-    if (confirm(`Deseja restaurar o backup local salvo em ${snap.dateFormatted}?\n(${snap.summary})`)) {
-      updateState(prev => ({
-        ...snap.state,
-        produtividade: mergeProdutividade(prev.produtividade, snap.state?.produtividade),
-        filaAvulsa: mergeFilaAvulsa(prev.filaAvulsa, snap.state?.filaAvulsa)
-      }));
-      onToast(`Backup local de ${snap.dateFormatted} restaurado com sucesso!`, "ok");
-      setShowSnapshotsModal(false);
-    }
-  };
-
-  const handleRestoreFromLocalStorage = () => {
+  // Baixa a cópia automática mais recente guardada neste navegador (IndexedDB)
+  const handleDownloadLatestLocalCopy = async () => {
     try {
-      const raw = localStorage.getItem("ngpesp_local_state");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        updateState(prev => ({
-          ...parsed,
-          produtividade: mergeProdutividade(prev.produtividade, parsed?.produtividade),
-          filaAvulsa: mergeFilaAvulsa(prev.filaAvulsa, parsed?.filaAvulsa)
-        }));
-        onToast("Dados do armazenamento local do navegador restaurados e mesclados!", "ok");
-      } else {
-        onToast("Nenhum dado anterior encontrado no localStorage deste navegador.", "info");
+      const snaps = await getSnapshotsFromIDB(1);
+      const ultima: any = snaps[0];
+      if (!ultima || !ultima.state) {
+        onToast("Nenhuma cópia automática encontrada neste navegador.", "info");
+        return;
       }
+      const blob = new Blob([JSON.stringify(ultima.state, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `NGPESP_copia_automatica_${new Date(ultima.timestamp).toISOString().slice(0, 16).replace(":", "h")}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      onToast(`Cópia de ${ultima.dateFormatted} baixada (${ultima.summary}).`, "ok");
     } catch (e: any) {
-      onToast("Erro ao ler do localStorage: " + e.message, "err");
+      onToast("Não foi possível ler a cópia automática: " + (e?.message || e), "err");
     }
-  };
-
-  const getValidToken = async (): Promise<string | null> => {
-    if (googleToken) return googleToken;
-    onToast("Iniciando conexão com a conta Google...", "info");
-    const freshToken = await onGoogleLogin();
-    if (!freshToken) {
-      onToast("É necessário autorizar a conta Google para esta operação.", "err");
-    }
-    return freshToken;
-  };
-
-  const handleSearchDriveBackups = async () => {
-    const token = await getValidToken();
-    if (!token) return;
-
-    setIsSearchingDrive(true);
-    setGoogleSyncType("info");
-    setGoogleSyncStatus("Pesquisando planilhas de backup no seu Google Drive...");
-    try {
-      const files = await searchGoogleDriveForBackup(token);
-      setFoundDriveFiles(files);
-      if (files.length === 0) {
-        setGoogleSyncType("info");
-        setGoogleSyncStatus("Nenhuma planilha 'NGPESP' encontrada no seu Google Drive. Você pode criar uma nova ou colar o ID/link manualmente.");
-      } else {
-        setGoogleSyncType("ok");
-        setGoogleSyncStatus(`Encontrada(s) ${files.length} planilha(s) no seu Google Drive.`);
-      }
-    } catch (err: any) {
-      setGoogleSyncType("err");
-      setGoogleSyncStatus(`Erro ao buscar no Drive: ${err.message || err}`);
-    } finally {
-      setIsSearchingDrive(false);
-    }
-  };
-
-  const handleLinkAndRestoreSpreadsheet = async (sheetIdOrUrl: string) => {
-    const sheetId = extractSpreadsheetId(sheetIdOrUrl);
-    if (!sheetId) {
-      onToast("Por favor, informe o ID ou link de uma planilha válida.", "err");
-      return;
-    }
-
-    const token = await getValidToken();
-    if (!token) return;
-
-    setIsGoogleSyncing(true);
-    setGoogleSyncType("info");
-    setGoogleSyncStatus("Carregando dados da planilha do Google Drive...");
-
-    try {
-      const fullData = await loadFullStateFromBackup(token, sheetId, (prog) => {
-        setGoogleSyncStatus(prog.message);
-        setGoogleSyncType(prog.type);
-      });
-
-      updateState(prev => {
-        // 1. Merge Servidores
-        const existingMap = new Map();
-        prev.servidores.forEach(s => {
-          const norm = normalizeMatricula(s.matricula);
-          if (norm) existingMap.set(norm, s);
-        });
-
-        fullData.servidores.forEach(srv => {
-          const norm = normalizeMatricula(srv.matricula);
-          if (norm) {
-            if (existingMap.has(norm)) {
-              const existingSrv = existingMap.get(norm);
-              existingMap.set(norm, { ...existingSrv, ...srv, matricula: existingSrv.matricula });
-            } else {
-              existingMap.set(norm, srv);
-            }
-          }
-        });
-
-        // 2. Merge Historico
-        const histSet = new Set(prev.historico.map(h => `${h.mat}_${h.ts}`));
-        const newHist = [...prev.historico];
-        fullData.historico.forEach(h => {
-          const key = `${h.mat}_${h.ts}`;
-          if (!histSet.has(key)) {
-            histSet.add(key);
-            newHist.push(h);
-          }
-        });
-
-        // 3. Respostas
-        const respMap = new Map(prev.respostas.map(r => [r.nome, r.texto]));
-        (fullData.respostas || []).forEach(r => {
-          if (r.nome) respMap.set(r.nome, r.texto);
-        });
-
-        // 4. Afastamentos
-        const afastSet = new Set(prev.afastamentos.map(a => `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`));
-        const newAfast = [...prev.afastamentos];
-        (fullData.afastamentos || []).forEach(a => {
-          const key = `${a.dia}_${a.mes}_${a.tipo}_${a.sisref}`;
-          if (!afastSet.has(key)) {
-            afastSet.add(key);
-            newAfast.push(a);
-          }
-        });
-
-        // 5. FAQ
-        const faqMap = new Map(prev.faq.map(f => [f.titulo, f.resposta]));
-        (fullData.faq || []).forEach(f => {
-          if (f.titulo) faqMap.set(f.titulo, f.resposta);
-        });
-
-        // 6. Produtividade
-        const newProdutividade = mergeProdutividade(prev.produtividade, fullData.produtividade);
-
-        // 7. Fila Avulsa
-        const newFilaAvulsa = (fullData.filaAvulsa && fullData.filaAvulsa.listas && Object.keys(fullData.filaAvulsa.listas).length)
-          ? fullData.filaAvulsa
-          : prev.filaAvulsa;
-
-        // 8. Codigos
-        const codMap = new Map(prev.codigos.map(c => [c.num, c]));
-        (fullData.codigos || []).forEach(c => { if (c.num) codMap.set(c.num, c); });
-
-        // 9. Processos SEI
-        const seiMap = new Map(prev.sei.map(s => [s.num, s]));
-        (fullData.sei || []).forEach(s => { if (s.num) seiMap.set(s.num, s); });
-
-        // 10. Ferias
-        const newFerias = { ...prev.ferias, ...(fullData.ferias || {}) };
-
-        // 11. Abonos
-        const newAbonos = { ...prev.abonos, ...(fullData.abonos || {}) };
-
-        // 12. Balcao Atendimentos
-        const newBalcao = { ...prev.balcaoAtendimentos, ...(fullData.balcaoAtendimentos || {}) };
-
-        const importedMatriculas = fullData.servidores.map(srv => normalizeMatricula(srv.matricula)).filter(Boolean);
-        const importedCount = fullData.servidores.length;
-        const dateStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-
-        return {
-          servidores: Array.from(existingMap.values()),
-          historico: newHist,
-          respostas: Array.from(respMap.entries()).map(([nome, texto]) => ({ nome, texto })),
-          afastamentos: newAfast,
-          faq: Array.from(faqMap.entries()).map(([titulo, resposta]) => ({ titulo, resposta })),
-          produtividade: newProdutividade,
-          filaAvulsa: newFilaAvulsa,
-          codigos: Array.from(codMap.values()),
-          sei: Array.from(seiMap.values()),
-          ferias: newFerias,
-          abonos: newAbonos,
-          balcaoAtendimentos: newBalcao,
-          config: {
-            ...prev.config,
-            ...(fullData.config || {}),
-            spreadsheetId: sheetId,
-            backupEnabled: true,
-            ultimoUpdateServidores: importedCount ? `${dateStr} (${importedCount} servidores)` : prev.config.ultimoUpdateServidores,
-            lastImportedMatriculas: importedMatriculas.length ? importedMatriculas : prev.config.lastImportedMatriculas,
-            lastImportCount: importedCount || prev.config.lastImportCount
-          }
-        };
-      });
-
-      setGoogleSyncType("ok");
-      setGoogleSyncStatus(`Planilha vinculada e ${fullData.servidores.length} servidores sincronizados do backup!`);
-      onToast(`Planilha vinculada com sucesso! ${fullData.servidores.length} servidores restaurados.`, "ok");
-      setManualSheetInput("");
-      setFoundDriveFiles([]);
-    } catch (err: any) {
-      setGoogleSyncType("err");
-      setGoogleSyncStatus(`Erro ao vincular planilha: ${err.message || err}`);
-      onToast(`Erro ao vincular planilha: ${err.message || err}`, "err");
-    } finally {
-      setIsGoogleSyncing(false);
-    }
-  };
-
-  const handleDirectBackupSync = async () => {
-    const token = await getValidToken();
-    if (!token) return;
-
-    setIsGoogleSyncing(true);
-    setGoogleSyncType("info");
-    setGoogleSyncStatus("Iniciando backup...");
-    try {
-      const currentId = state.config.spreadsheetId || null;
-      const sheetId = await syncToGoogleSheets(token, state, currentId, (prog) => {
-        setGoogleSyncStatus(prog.message);
-        setGoogleSyncType(prog.type);
-      });
-      
-      // Update state with spreadsheetId if new or empty
-      if (sheetId !== currentId) {
-        updateState(prev => ({
-          config: {
-            ...prev.config,
-            spreadsheetId: sheetId,
-            backupEnabled: true
-          }
-        }));
-      }
-      onToast("Backup sincronizado com sucesso no Google Sheets!", "ok");
-    } catch (err: any) {
-      setGoogleSyncType("err");
-      setGoogleSyncStatus(`Erro ao salvar backup: ${err.message || err}`);
-      onToast("Erro na sincronização do Google Sheets", "err");
-    } finally {
-      setIsGoogleSyncing(false);
-    }
-  };
-
-  const handleRestoreFromGoogleBackup = async () => {
-    const sheetId = state.config.spreadsheetId;
-    if (!sheetId) {
-      onToast("Nenhuma planilha de backup configurada.", "err");
-      return;
-    }
-    
-    const token = await getValidToken();
-    if (!token) return;
-
-    if (!confirm("Isso irá mesclar os dados da planilha de backup no Google Drive com seus dados locais. Deseja prosseguir?")) {
-      return;
-    }
-    
-    await handleLinkAndRestoreSpreadsheet(sheetId);
   };
 
   // Vida Funcional
@@ -475,10 +213,6 @@ export default function RotinaPanel({
   const [cfgSistemas, setCfgSistemas] = useState("");
   const [histFiltroMes, setHistFiltroMes] = useState(getLocalDateIso().slice(0, 7));
   const [expandedHistDia, setExpandedHistDia] = useState<string | null>(null);
-
-  useEffect(() => {
-    setGasUrl(state.gasUrl || "");
-  }, [state.gasUrl]);
 
   // GMOV dates renewal computation
   const getGMOVAlert = () => {
@@ -502,80 +236,6 @@ export default function RotinaPanel({
 
   const handleGmovChange = (val: string) => {
     updateState(prev => ({ config: { ...prev.config, gmov_data: val } }));
-  };
-
-  // Pull all state from Google Apps Script Web App
-  const pullFromGAS = async () => {
-    if (!gasUrl.trim()) {
-      onToast("Por favor, configure a URL do Apps Script primeiro.", "err");
-      return;
-    }
-    setSyncingGAS(true);
-    updateState({ gasUrl: gasUrl.trim() });
-
-    try {
-      const res = await fetch("/api/gas-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gasUrl: gasUrl.trim(), action: "pull" })
-      });
-      if (res.ok) {
-        const body = await res.json();
-        if (body.status === "success" && body.data) {
-          const remoteState = body.data;
-          updateState(prev => ({
-            ...prev,
-            ...remoteState,
-            servidores: (remoteState.servidores && remoteState.servidores.length > 0) ? remoteState.servidores : prev.servidores,
-            respostas: (remoteState.respostas && remoteState.respostas.length > 0) ? remoteState.respostas : prev.respostas,
-            faq: (remoteState.faq && remoteState.faq.length > 0) ? remoteState.faq : prev.faq,
-          }));
-          onToast(`Dados importados com sucesso! ${remoteState.servidores?.length || 0} servidores e demais dados carregados.`, "ok");
-        } else {
-          onToast(body.message || "Falha ao ler dados da Planilha.", "err");
-        }
-      } else {
-        const body = await res.json().catch(() => ({}));
-        onToast(body.message || "Erro HTTP ao conectar com Apps Script.", "err");
-      }
-    } catch (err: any) {
-      onToast(err.message || "Erro de rede ao conectar com Apps Script.", "err");
-    } finally {
-      setSyncingGAS(false);
-    }
-  };
-
-  // Push local state to Google Apps Script Web App
-  const pushToGAS = async () => {
-    if (!gasUrl.trim()) {
-      onToast("Por favor, configure a URL do Apps Script primeiro.", "err");
-      return;
-    }
-    setSyncingGAS(true);
-    updateState({ gasUrl: gasUrl.trim() });
-
-    try {
-      const res = await fetch("/api/gas-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gasUrl: gasUrl.trim(), action: "push", state })
-      });
-      if (res.ok) {
-        const body = await res.json();
-        if (body.status === "success") {
-          onToast("Dados sincronizados e exportados para a Planilha com sucesso!", "ok");
-        } else {
-          onToast(body.message || "Falha ao enviar dados para a Planilha.", "err");
-        }
-      } else {
-        const body = await res.json().catch(() => ({}));
-        onToast(body.message || "Erro HTTP ao enviar dados.", "err");
-      }
-    } catch (err: any) {
-      onToast(err.message || "Erro de rede ao conectar com Apps Script.", "err");
-    } finally {
-      setSyncingGAS(false);
-    }
   };
 
   // Universal CSV/TSV parser
@@ -897,10 +557,14 @@ export default function RotinaPanel({
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const parsed = JSON.parse(ev.target?.result as string);
-        if (parsed && typeof parsed === "object") {
+        const raw = JSON.parse(ev.target?.result as string);
+        // Aceita o backup (.json) e também o arquivo de cópia automática com { state: ... }
+        const parsed = raw && typeof raw === "object" && raw.state && raw.state.servidores ? raw.state : raw;
+        if (parsed && typeof parsed === "object" && Array.isArray(parsed.servidores)) {
+          const resumo = `${parsed.servidores.length} servidores, ${(parsed.historico || []).length} registros de histórico`;
+          if (!confirm(`Restaurar este backup?\n(${resumo})\n\nOs dados atuais serão substituídos e enviados para a nuvem.`)) return;
           updateState(parsed);
-          onToast("Backup local restaurado com sucesso!", "ok");
+          onToast("Backup restaurado e enviado para a nuvem!", "ok");
         } else {
           onToast("Arquivo de backup com formato inválido", "err");
         }
@@ -1251,231 +915,6 @@ export default function RotinaPanel({
               </div>
             </div>
 
-            {exportBackupJson && (
-              <div className="mt-4 pt-3 border-t border-emerald-500/20 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-[11px] font-semibold text-[var(--text2)]">
-                  Quer uma cópia em arquivo no seu computador?
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={exportBackupJson}
-                    className="py-1.5 px-3 bg-[var(--surface)] hover:bg-[var(--bg)] border border-[var(--border2)] text-[var(--text)] rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <FileDown size={13} /> Baixar Backup .JSON
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* GOOGLE SHEETS DIRECT API SYNCHRONIZER (SECURE BACKUP) */}
-          <div className="bg-[var(--surface)] border-2 border-[var(--blue-mid)] rounded-2xl p-6 shadow-sm overflow-hidden relative">
-            <div className="absolute top-0 right-0 bg-[var(--blue-mid)] text-white px-3 py-1 rounded-bl-xl text-[10px] font-black uppercase tracking-wider">
-              Backup Seguro
-            </div>
-            <div className="text-xs font-bold text-[var(--text)] uppercase tracking-wider mb-2 flex items-center gap-2">
-              <Database className="text-[var(--blue-mid)]" size={16} /> Backup Direto no Google Sheets
-            </div>
-            <p className="text-xs text-[var(--text2)] mb-4 font-semibold leading-relaxed">
-              Evite perdas! Faça login com o Google para salvar e sincronizar todos os seus servidores, histórico, respostas rápidas e perguntas frequentes diretamente em uma planilha no seu Google Drive.
-            </p>
-
-            {!googleUser ? (
-              <div className="bg-[var(--bg)] border border-[var(--border2)] rounded-xl p-6 flex flex-col items-center justify-center text-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-[var(--blue-mid)]/10 flex items-center justify-center text-[var(--blue-mid)]">
-                  <Key size={24} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-extrabold text-[var(--text)]">Conectar Conta Google</h4>
-                  <p className="text-[10px] text-[var(--text2)] font-semibold mt-1">
-                    É necessária autorização de leitura e escrita para salvar a planilha de backup.
-                  </p>
-                </div>
-                <button
-                  onClick={onGoogleLogin}
-                  className="flex items-center gap-3 px-5 py-2.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-xl shadow-xs text-gray-700 font-bold text-xs transition-all duration-200 cursor-pointer"
-                >
-                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 48 48">
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                    <path fill="none" d="M0 0h48v48H0z"></path>
-                  </svg>
-                  Conectar com o Google
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-4">
-                <div className="flex items-center justify-between p-3 bg-[var(--bg)] border border-[var(--border2)] rounded-xl">
-                  <div className="flex items-center gap-3">
-                    {googleUser.photoURL ? (
-                      <img src={googleUser.photoURL} alt={googleUser.displayName} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full border border-[var(--border2)]" />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-[var(--blue-mid)] text-white font-bold flex items-center justify-center text-xs">
-                        {googleUser.displayName?.[0] || googleUser.email?.[0]}
-                      </div>
-                    )}
-                    <div>
-                      <div className="text-xs font-black text-[var(--text)]">{googleUser.displayName || "Usuário Conectado"}</div>
-                      <div className="text-[10px] text-[var(--text2)] font-semibold">{googleUser.email}</div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={onGoogleLogout}
-                    className="px-3 py-1.5 border border-red-200 text-red-500 hover:bg-red-50 text-[10px] font-bold rounded-lg cursor-pointer transition-all"
-                  >
-                    Desconectar
-                  </button>
-                </div>
-
-                <div className="border border-[var(--border2)] rounded-xl p-4 bg-[var(--bg)]/30">
-                  <div className="text-xs font-bold text-[var(--text)] mb-2 flex items-center gap-1.5">
-                    <span className={`w-2.5 h-2.5 rounded-full ${state.config.spreadsheetId ? 'bg-green-500' : 'bg-amber-500'}`}></span>
-                    {state.config.spreadsheetId ? "Planilha de Backup Ativa" : "Nenhum Backup Criado Ainda"}
-                  </div>
-
-                  {state.config.spreadsheetId ? (
-                    <div className="flex flex-col gap-3">
-                      <div className="p-2.5 bg-[var(--bg)] border border-[var(--border2)] rounded-lg font-mono text-[10px] text-[var(--text2)] break-all select-all flex items-center justify-between">
-                        <span>Spreadsheet ID: {state.config.spreadsheetId}</span>
-                        <button
-                          onClick={() => {
-                            if (confirm("Deseja desvincular esta planilha? Seus dados locais permanecerão salvos.")) {
-                              updateState(prev => ({ config: { ...prev.config, spreadsheetId: "" } }));
-                              onToast("Planilha desvinculada. Você pode buscar ou vincular outra planilha.", "info");
-                            }
-                          }}
-                          className="text-amber-500 hover:text-amber-600 font-bold text-[10px] flex items-center gap-1 cursor-pointer ml-2 flex-shrink-0"
-                          title="Desvincular planilha atual para escolher outra"
-                        >
-                          <Unlink size={12} /> Desvincular
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap gap-2 mt-1">
-                        <button
-                          onClick={handleDirectBackupSync}
-                          disabled={isGoogleSyncing}
-                          className="px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
-                          title="Cria todas as abas faltantes na planilha (Produtividade, Fila Avulsa, etc.) e envia os dados do sistema para lá"
-                        >
-                          <RefreshCw size={14} className={isGoogleSyncing ? "animate-spin" : ""} />
-                          Sincronizar (Enviar Dados para a Planilha)
-                        </button>
-                        <button
-                          onClick={handleRestoreFromGoogleBackup}
-                          disabled={isGoogleSyncing}
-                          className="px-4 py-2 bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] disabled:opacity-50 text-[var(--text)] text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
-                          title="Lê os dados existentes na planilha e traz para o seu navegador"
-                        >
-                          <DownloadCloud size={14} />
-                          Importar (Receber da Planilha)
-                        </button>
-                        <a
-                          href={`https://docs.google.com/spreadsheets/d/${state.config.spreadsheetId}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer no-underline"
-                        >
-                          <FolderOpen size={14} />
-                          Abrir no Google Planilhas
-                        </a>
-                      </div>
-                      <p className="text-[10px] text-[var(--text2)] font-semibold mt-1">
-                        💡 <strong>Dica:</strong> Para criar as abas novas na sua planilha (Produtividade, Fila Avulsa, Códigos, etc.) e enviar seus dados locais para lá, clique em <strong>"Sincronizar (Enviar Dados para a Planilha)"</strong>.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-4">
-                      <p className="text-xs text-[var(--text2)] font-semibold leading-relaxed">
-                        Se você já criou uma planilha de backup anteriormente (ou em outro dispositivo), busque-a abaixo no seu Google Drive ou insira o link/ID da planilha para sincronizar seus dados.
-                      </p>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          onClick={handleSearchDriveBackups}
-                          disabled={isSearchingDrive || isGoogleSyncing}
-                          className="px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Search size={14} className={isSearchingDrive ? "animate-spin" : ""} />
-                          Procurar Minha Planilha no Google Drive
-                        </button>
-
-                        <button
-                          onClick={handleDirectBackupSync}
-                          disabled={isGoogleSyncing}
-                          className="px-4 py-2 bg-[var(--surface)] hover:bg-[var(--border)] border border-[var(--border2)] disabled:opacity-50 text-[var(--text)] text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Plus size={14} className={isGoogleSyncing ? "animate-spin" : ""} />
-                          Criar Nova Planilha do Zero
-                        </button>
-                      </div>
-
-                      {/* Discovered Drive Files List */}
-                      {foundDriveFiles.length > 0 && (
-                        <div className="p-3 bg-[var(--bg)] border border-[var(--blue-mid)] rounded-xl flex flex-col gap-2">
-                          <div className="text-xs font-bold text-[var(--blue-mid)] flex items-center gap-1.5">
-                            <FolderOpen size={14} /> Planilhas Encontradas no Seu Google Drive:
-                          </div>
-                          <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
-                            {foundDriveFiles.map(file => (
-                              <div key={file.id} className="p-2.5 bg-[var(--surface)] border border-[var(--border2)] rounded-lg flex items-center justify-between gap-3 text-xs">
-                                <div className="truncate">
-                                  <div className="font-extrabold text-[var(--text)] truncate">{file.name}</div>
-                                  <div className="text-[10px] text-[var(--text2)] font-mono">
-                                    Modificada em: {new Date(file.modifiedTime).toLocaleString('pt-BR')}
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={() => handleLinkAndRestoreSpreadsheet(file.id)}
-                                  disabled={isGoogleSyncing}
-                                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-bold text-[11px] rounded-lg flex items-center gap-1 cursor-pointer flex-shrink-0"
-                                >
-                                  <LinkIcon size={12} /> Vincular e Restaurar
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Manual Input for Spreadsheet ID or Link */}
-                      <div className="pt-2 border-t border-[var(--border2)] flex flex-col gap-1.5">
-                        <label className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
-                          <LinkIcon size={12} /> Ou cole o link ou ID de uma planilha existente:
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            placeholder="https://docs.google.com/spreadsheets/d/1ABC.../edit ou ID da planilha"
-                            value={manualSheetInput}
-                            onChange={(e) => setManualSheetInput(e.target.value)}
-                            className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs text-[var(--text)] focus:outline-none focus:border-[var(--blue-mid)] font-mono"
-                          />
-                          <button
-                            onClick={() => handleLinkAndRestoreSpreadsheet(manualSheetInput)}
-                            disabled={!manualSheetInput.trim() || isGoogleSyncing}
-                            className="px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-1 cursor-pointer shadow-xs"
-                          >
-                            <LinkIcon size={14} /> Vincular
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {googleSyncStatus && (
-                    <div className="mt-4 p-3 bg-gray-900 border border-gray-800 rounded-lg flex items-center gap-2.5 font-mono text-[10px] leading-relaxed">
-                      {isGoogleSyncing && <RefreshCw size={12} className="text-blue-400 animate-spin flex-shrink-0" />}
-                      <span className={googleSyncType === 'ok' ? 'text-green-400' : googleSyncType === 'err' ? 'text-red-400' : 'text-blue-400'}>
-                        {googleSyncStatus}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* CONFIGURAÇÃO DE SENHA DO SISTEMA */}
@@ -1662,243 +1101,6 @@ export default function RotinaPanel({
             )}
           </div>
           
-          {/* 1. GOOGLE SHEETS ACTIVE SYNCHRONIZER (APPS SCRIPT) */}
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
-            <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-2 flex items-center gap-2">
-              <ServerIcon className="text-[var(--blue-mid)]" size={16} /> Sincronização Ativa com Google Planilhas
-            </div>
-            <p className="text-xs text-[var(--text2)] mb-4 font-semibold leading-relaxed">
-              Integração bidirecional direta via Google Apps Script. Salve e recupere servidores, respostas, dúvidas e todo o estado do sistema na nuvem de forma segura.
-            </p>
-            
-            <div className="flex flex-col md:flex-row gap-3">
-              <input 
-                type="text" 
-                value={gasUrl}
-                onChange={(e) => setGasUrl(e.target.value)}
-                placeholder="https://script.google.com/macros/s/.../exec"
-                className="flex-1 p-3 text-xs rounded-xl font-mono border border-[var(--border2)] bg-[var(--bg)] outline-none"
-              />
-              
-              <div className="flex gap-2">
-                <button 
-                  onClick={pullFromGAS}
-                  disabled={syncingGAS}
-                  className="px-4 py-2 bg-[var(--blue-mid)] hover:bg-[var(--blue)] disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
-                >
-                  <DownloadCloud size={14} /> Importar da Nuvem
-                </button>
-                <button 
-                  onClick={pushToGAS}
-                  disabled={syncingGAS}
-                  className="px-4 py-2 bg-[var(--green-mid)] hover:bg-green-600 disabled:opacity-50 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer"
-                >
-                  <UploadCloud size={14} /> Enviar para Nuvem
-                </button>
-              </div>
-            </div>
-
-            {/* Expander to install GAS on sheets */}
-            <div className="mt-4 border-t border-[var(--border2)] pt-4">
-              <button 
-                onClick={() => setShowGasHelp(!showGasHelp)}
-                className="text-xs font-bold text-[var(--blue-mid)] hover:underline flex items-center gap-1 cursor-pointer"
-              >
-                {showGasHelp ? "▲ Ocultar instruções de configuração" : "▼ Como configurar a planilha com o Apps Script?"}
-              </button>
-              
-              {showGasHelp && (
-                <div className="mt-3 bg-[var(--bg)] border border-[var(--border2)] rounded-xl p-4 text-xs text-[var(--text2)] font-semibold leading-relaxed">
-                  <ol className="list-decimal list-inside space-y-2">
-                    <li>Abra sua planilha do <strong>Google Sheets</strong> de trabalho.</li>
-                    <li>No menu superior, vá em <strong>Extensões &gt; Apps Script</strong>.</li>
-                    <li>Apague todo o código existente e cole o código gerado abaixo:</li>
-                  </ol>
-
-                  {/* Code Block display with Copy trigger */}
-                  <div className="mt-3 relative">
-                    <button 
-                      onClick={() => {
-                        const code = `function doPost(e) {
-  var JSON_SHEET_NAME = "App_State_JSON";
-  var SERVIDORES_SHEET_NAME = "Servidores";
-  var RESPOSTAS_SHEET_NAME = "Respostas";
-  var DUVIDAS_SHEET_NAME = "Duvidas";
-  
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var payload = JSON.parse(e.postData.contents);
-  var action = payload.action;
-  
-  if (action === "pull") {
-    var state = {};
-    
-    // 1. Read from App_State_JSON
-    var jsonSheet = ss.getSheetByName(JSON_SHEET_NAME);
-    if (jsonSheet) {
-      try {
-        var val = jsonSheet.getRange(1, 1).getValue();
-        if (val) state = JSON.parse(val);
-      } catch (err) {}
-    }
-    
-    // 2. Read Servidores
-    var servSheet = ss.getSheetByName(SERVIDORES_SHEET_NAME);
-    if (servSheet) {
-      var rows = servSheet.getDataRange().getValues();
-      var servidores = [];
-      for (var i = 1; i < rows.length; i++) {
-        var row = rows[i];
-        if (!row[0] && !row[1]) continue;
-        servidores.push({
-          matricula: String(row[0] || ""),
-          nome: String(row[1] || ""),
-          cargo: String(row[2] || ""),
-          denominacao: String(row[3] || ""),
-          codLotacao: String(row[4] || ""),
-          lotacao: String(row[5] || ""),
-          admissao: String(row[6] || ""),
-          situacao: String(row[7] || "")
-        });
-      }
-      state.servidores = servidores;
-    }
-    
-    // 3. Read Respostas
-    var respSheet = ss.getSheetByName(RESPOSTAS_SHEET_NAME);
-    if (respSheet) {
-      var rows = respSheet.getDataRange().getValues();
-      var respostas = [];
-      for (var i = 1; i < rows.length; i++) {
-        var row = rows[i];
-        if (!row[0]) continue;
-        respostas.push({
-          nome: String(row[0] || ""),
-          texto: String(row[1] || "")
-        });
-      }
-      state.respostas = respostas;
-    }
-
-    // 4. Read Duvidas
-    var duvSheet = ss.getSheetByName(DUVIDAS_SHEET_NAME);
-    if (duvSheet) {
-      var rows = duvSheet.getDataRange().getValues();
-      var faq = [];
-      for (var i = 1; i < rows.length; i++) {
-        var row = rows[i];
-        if (!row[0]) continue;
-        faq.push({
-          titulo: String(row[0] || ""),
-          resposta: String(row[1] || "")
-        });
-      }
-      state.faq = faq;
-    }
-    
-    return ContentService.createTextOutput(JSON.stringify(state))
-                         .setMimeType(ContentService.MimeType.JSON);
-  }
-  
-  if (action === "push") {
-    var state = payload.state;
-    
-    // 1. Save full state to App_State_JSON
-    var jsonSheet = ss.getSheetByName(JSON_SHEET_NAME);
-    if (!jsonSheet) {
-      jsonSheet = ss.insertSheet(JSON_SHEET_NAME);
-    }
-    jsonSheet.clear();
-    jsonSheet.getRange(1, 1).setValue(JSON.stringify(state));
-    
-    // 2. Save Servidores
-    if (state.servidores && state.servidores.length > 0) {
-      var servSheet = ss.getSheetByName(SERVIDORES_SHEET_NAME);
-      if (!servSheet) {
-        servSheet = ss.insertSheet(SERVIDORES_SHEET_NAME);
-      }
-      servSheet.clear();
-      servSheet.appendRow(["Matrícula", "Nome", "Cargo", "Denominação", "Código Lotação", "Lotação", "Admissão", "Situação"]);
-      var rowsToAppend = state.servidores.map(function(s) {
-        return [s.matricula, s.nome, s.cargo, s.denominacao, s.codLotacao, s.lotacao, s.admissao, s.situacao];
-      });
-      if (rowsToAppend.length > 0) {
-        servSheet.getRange(2, 1, rowsToAppend.length, 8).setValues(rowsToAppend);
-      }
-    }
-    
-    // 3. Save Respostas
-    if (state.respostas && state.respostas.length > 0) {
-      var respSheet = ss.getSheetByName(RESPOSTAS_SHEET_NAME);
-      if (!respSheet) {
-        respSheet = ss.insertSheet(RESPOSTAS_SHEET_NAME);
-      }
-      respSheet.clear();
-      respSheet.appendRow(["Nome", "Texto"]);
-      var rowsToAppend = state.respostas.map(function(r) {
-        return [r.nome, r.texto];
-      });
-      if (rowsToAppend.length > 0) {
-        respSheet.getRange(2, 1, rowsToAppend.length, 2).setValues(rowsToAppend);
-      }
-    }
-
-    // 4. Save Duvidas
-    if (state.faq && state.faq.length > 0) {
-      var duvSheet = ss.getSheetByName(DUVIDAS_SHEET_NAME);
-      if (!duvSheet) {
-        duvSheet = ss.insertSheet(DUVIDAS_SHEET_NAME);
-      }
-      duvSheet.clear();
-      duvSheet.appendRow(["Título", "Resposta"]);
-      var rowsToAppend = state.faq.map(function(d) {
-        return [d.titulo, d.resposta];
-      });
-      if (rowsToAppend.length > 0) {
-        duvSheet.getRange(2, 1, rowsToAppend.length, 2).setValues(rowsToAppend);
-      }
-    }
-    
-    return ContentService.createTextOutput(JSON.stringify({ status: "success" }))
-                         .setMimeType(ContentService.MimeType.JSON);
-  }
-  
-  return ContentService.createTextOutput(JSON.stringify({ error: "Invalid action" }))
-                       .setMimeType(ContentService.MimeType.JSON);
-}
-
-function doGet(e) {
-  return ContentService.createTextOutput("Serviço de Sincronização NGPESP ativo!")
-                       .setMimeType(ContentService.MimeType.TEXT);
-}`;
-                        navigator.clipboard.writeText(code);
-                        onToast("Código copiado para a área de transferência!", "ok");
-                      }}
-                      className="absolute right-3 top-3 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white text-[10px] font-extrabold px-3 py-1.5 rounded-lg shadow-sm"
-                    >
-                      Copiar Código
-                    </button>
-                    <pre className="p-3 bg-gray-900 text-green-400 rounded-xl overflow-x-auto font-mono text-[10px] max-h-48 leading-relaxed">
-{`function doPost(e) {
-  var JSON_SHEET_NAME = "App_State_JSON";
-  var SERVIDORES_SHEET_NAME = "Servidores";
-  var RESPOSTAS_SHEET_NAME = "Respostas";
-  var DUVIDAS_SHEET_NAME = "Duvidas";
-  ... (Clique em Copiar para obter o script completo)
-}`}
-                    </pre>
-                  </div>
-
-                  <ol className="list-decimal list-inside space-y-2 mt-4">
-                    <li>Clique em <strong>Implantar &gt; Nova implantação</strong> no canto superior direito.</li>
-                    <li>Selecione o tipo <strong>App da Web</strong> (ícone de engrenagem).</li>
-                    <li>Configure: Executar como <strong>"Você"</strong> e quem pode acessar como <strong>"Qualquer pessoa" (Anyone)</strong>.</li>
-                    <li>Clique em <strong>Implantar</strong>, autorize as permissões de acesso do Google e copie a <strong>URL do App da Web</strong> gerada!</li>
-                  </ol>
-                </div>
-              )}
-            </div>
-          </div>
-
           {/* 2. UNIVERSAL COPY-PASTE DATA MULTI-IMPORTER */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
             <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -2048,64 +1250,26 @@ function doGet(e) {
             </div>
           </div>
 
-          {/* 3. LOCAL BROWSER SNAPSHOTS AND RECOVERY */}
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
-            <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-2 flex items-center justify-between">
-              <span>Recuperação e Histórico de Backups Locais (Navegador)</span>
-              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full">Automático</span>
+          {/* 3. CÓPIA AUTOMÁTICA DESTE COMPUTADOR (SEGURANÇA) */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-bold text-[var(--text1)] flex items-center gap-2">
+                <History size={16} /> Cópia automática deste computador
+              </span>
+              <span className="text-[10px] font-bold uppercase bg-[var(--surface2)] text-[var(--text2)] px-2 py-0.5 rounded-full">Automático</span>
             </div>
-            <p className="text-xs text-[var(--text2)] mb-4 leading-relaxed font-semibold">
-              O sistema gera automaticamente pontos de restauração no navegador a cada alteração. Se dados como a Fila Avulsa ou Lançamentos sumirem, você pode restaurar qualquer ponto anterior.
+            <p className="text-xs text-[var(--text2)]">
+              Este navegador guarda sozinho uma cópia dos dados a cada alteração. Se algo der errado com a nuvem,
+              baixe a cópia mais recente e use "Restaurar arquivo de backup" logo abaixo (ou envie para análise).
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
-              <button 
-                onClick={() => {
-                  const snaps = getLocalSnapshots();
-                  if (snaps.length === 0) {
-                    onToast("Nenhum histórico de snapshot recente encontrado no navegador ainda.", "info");
-                  } else {
-                    setShowSnapshotsModal(!showSnapshotsModal);
-                  }
-                }}
-                className="py-2.5 px-4 bg-[var(--blue-light)] hover:bg-[var(--blue-mid)] hover:text-white text-[var(--blue-mid)] border border-[var(--blue)] text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition"
-              >
-                <History size={16} /> Ver Snapshots Recentes ({getLocalSnapshots().length})
-              </button>
-              
-              <button 
-                onClick={handleRestoreFromLocalStorage}
-                className="py-2.5 px-4 bg-[var(--surface)] hover:bg-[var(--bg)] border border-[var(--border2)] text-[var(--text)] text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition"
-              >
-                <RefreshCw size={16} /> Restaurar Cópia Salva do Navegador
-              </button>
-            </div>
-
-            {showSnapshotsModal && (
-              <div className="mt-4 p-4 border border-[var(--border2)] bg-[var(--bg)]/30 rounded-xl">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-xs font-bold text-[var(--text)]">Pontos de Restauração Automática Salvos no Navegador:</span>
-                  <button onClick={() => setShowSnapshotsModal(false)} className="text-xs text-gray-500 hover:text-black font-bold">Fechar ✕</button>
-                </div>
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {getLocalSnapshots().map((snap, i) => (
-                    <div key={i} className="p-3 bg-white border border-[var(--border)] rounded-lg flex justify-between items-center text-xs gap-2">
-                      <div>
-                        <div className="font-bold text-[var(--blue-mid)]">{snap.dateFormatted}</div>
-                        <div className="text-[11px] text-[var(--text2)] mt-0.5">{snap.summary}</div>
-                      </div>
-                      <button
-                        onClick={() => handleRestoreSnapshot(snap)}
-                        className="px-3 py-1.5 bg-[var(--blue)] hover:bg-[var(--blue-mid)] text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap"
-                      >
-                        Restaurar Este
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={handleDownloadLatestLocalCopy}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border border-[var(--border)] bg-[var(--surface2)] text-[var(--text1)] hover:opacity-90 cursor-pointer"
+            >
+              <FileDown size={15} /> Baixar cópia automática mais recente
+            </button>
           </div>
-
           {/* 4. JSON STATE BACKUP AND RESTORE */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
             <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-2">

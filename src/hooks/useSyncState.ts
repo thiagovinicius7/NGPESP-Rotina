@@ -52,10 +52,11 @@ function clearPendingOlderThan(ts: number) {
  * Fila ao juntar dados locais com os da nuvem: se este computador tem alterações
  * não enviadas, junta (para não perdê-las); senão a nuvem vale como está
  * (assim listas/itens apagados em outro computador não voltam).
+ * forceMerge: computador que vinha da versão antiga (sem marcas de pendência) — sempre junta.
  */
-function chooseFila(localFila: any, serverFila: any): any {
+function chooseFila(localFila: any, serverFila: any, forceMerge: boolean = false): any {
   if (!serverFila || !serverFila.listas) return localFila;
-  if (hasPendingLocalChanges()) return mergeFilaAvulsa(localFila, serverFila);
+  if (forceMerge || hasPendingLocalChanges()) return mergeFilaAvulsa(localFila, serverFila);
   const ativa = localFila?.ativa && serverFila.listas[localFila.ativa] ? localFila.ativa : serverFila.ativa;
   return { ...serverFila, ativa };
 }
@@ -460,6 +461,10 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     let isMounted = true;
 
     const initialFetch = async () => {
+      // Computador que nunca sincronizou no formato novo (vinha da versão antiga):
+      // pode ter alterações locais não enviadas sem marca de pendência.
+      let vindoDaVersaoAntiga = false;
+      try { vindoDaVersaoAntiga = !localStorage.getItem("ngpesp_v2_base"); } catch (_) {}
       try {
         let cachedState: AppState | null = null;
         try {
@@ -495,7 +500,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             };
           } else {
             // Existing device with data: merge safely without regressing queue progress
-            const mergedFila = chooseFila(cachedState?.filaAvulsa, serverState.filaAvulsa);
+            const mergedFila = chooseFila(cachedState?.filaAvulsa, serverState.filaAvulsa, vindoDaVersaoAntiga);
             const mergedHist = mergeHistorico(cachedState?.historico || [], serverState.historico || []);
             mergedState = {
               ...defaultState,
@@ -536,7 +541,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           if (localHasData && !cloudHasData) {
             console.log("Pushing local data to initialize Firestore cloud");
             await pushStateToFirestore(mergedState, true);
-          } else if (hasPendingLocalChanges() && localHasData) {
+          } else if ((hasPendingLocalChanges() || vindoDaVersaoAntiga) && localHasData) {
             // Alterações feitas aqui que não chegaram à nuvem (ex.: aba fechada antes de enviar)
             isDirtyRef.current = true;
             const ok = await pushStateToFirestore(mergedState);

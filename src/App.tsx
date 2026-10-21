@@ -16,8 +16,6 @@ import RotinaPanel from "./components/RotinaPanel.js";
 import BalcaoPanel from "./components/BalcaoPanel.js";
 import RelatorioPanel from "./components/RelatorioPanel.js";
 import LancamentoApp from "./components/LancamentoApp.js";
-import { loginWithGoogle, logoutFirebase, onAuthChange } from "./lib/firebaseAuth.js";
-import { syncToGoogleSheets, loadFullStateFromBackup, DEFAULT_SPREADSHEET_ID } from "./lib/googleSheetsSync.js";
 import { mergeProdutividade, mergeFilaAvulsa } from "./lib/utils.js";
 
 const normalizeMatricula = (m: any): string => {
@@ -91,83 +89,6 @@ export default function App() {
     exportBackupJson,
     importBackupJson
   } = useSyncState(showToast);
-
-  // Google Authentication State
-  const [googleUser, setGoogleUser] = useState<any>(null);
-  const [googleToken, setGoogleToken] = useState<string | null>(null);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-  
-  // Google Sheets Auto-Sync States
-  const [googleSyncing, setGoogleSyncing] = useState(false);
-  const [googleDirty, setGoogleDirty] = useState(false);
-
-  // Mark Google Sheets as dirty when local state changes
-  useEffect(() => {
-    if (googleToken && state.config.spreadsheetId) {
-      setGoogleDirty(true);
-    }
-  }, [state, googleToken, state.config.spreadsheetId]);
-
-  // Debounced auto-sync to Google Sheets in the background
-  useEffect(() => {
-    if (!googleDirty || !googleToken || !state.config.spreadsheetId || googleSyncing) {
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      setGoogleSyncing(true);
-      try {
-        await syncToGoogleSheets(googleToken, state, state.config.spreadsheetId);
-        setGoogleDirty(false);
-      } catch (err) {
-        console.warn("Background auto-sync failed:", err);
-      } finally {
-        setGoogleSyncing(false);
-      }
-    }, 4000);
-
-    return () => clearTimeout(timer);
-  }, [googleDirty, googleToken, state, googleSyncing]);
-
-  // Listen to Firebase Auth state
-  useEffect(() => {
-    const unsub = onAuthChange((user) => {
-      setGoogleUser(user);
-      if (!user) {
-        setGoogleToken(null);
-      }
-    });
-    return () => unsub();
-  }, []);
-
-  const handleGoogleLogin = async () => {
-    if (isLoggingIn) return null;
-    setIsLoggingIn(true);
-    try {
-      const { user, token } = await loginWithGoogle();
-      setGoogleUser(user);
-      setGoogleToken(token);
-      showToast(`Conectado como ${user.displayName || user.email}!`, "ok");
-      return token;
-    } catch (err: any) {
-      console.error("Login error:", err);
-      showToast("Falha no login com Google. Tente novamente.", "err");
-      return null;
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleGoogleLogout = async () => {
-    try {
-      await logoutFirebase();
-      setGoogleUser(null);
-      setGoogleToken(null);
-      showToast("Desconectado do Google.", "info");
-    } catch (err) {
-      console.error("Logout error:", err);
-    }
-  };
 
   // Password-lock verification state
   const [authenticated, setAuthenticated] = useState<boolean>(() => {
@@ -392,34 +313,6 @@ export default function App() {
               {syncing && <RefreshCw size={12} className="animate-spin" />}
             </button>
 
-            {/* Google Authentication Pill */}
-            {googleUser ? (
-              <button
-                onClick={() => {
-                  setActiveTab('importar');
-                }}
-                className={`hidden sm:flex items-center gap-2 p-1.5 pr-3 rounded-xl transition-all text-xs font-bold cursor-pointer border ${
-                  googleSyncing
-                    ? "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400 animate-pulse"
-                    : googleDirty
-                    ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
-                    : "bg-green-500/10 border-green-500/30 text-green-600 dark:text-green-400"
-                }`}
-                title={`Conectado como ${googleUser.email}.`}
-              >
-                {googleUser.photoURL ? (
-                  <img src={googleUser.photoURL} alt={googleUser.displayName} referrerPolicy="no-referrer" className="w-5 h-5 rounded-full" />
-                ) : (
-                  <div className="w-5 h-5 rounded-full bg-green-600 text-white flex items-center justify-center text-[9px] font-black">
-                    {googleUser.email?.[0]?.toUpperCase()}
-                  </div>
-                )}
-                <span className="hidden md:inline">
-                  {googleSyncing ? "Salvando..." : googleDirty ? "Pendente" : "Planilha OK"}
-                </span>
-              </button>
-            ) : null}
-
             {/* Theme trigger button cycle */}
             <button 
               onClick={toggleTheme}
@@ -543,10 +436,6 @@ export default function App() {
               onToast={showToast} 
               forceSync={forceSync} 
               syncing={syncing} 
-              googleUser={googleUser}
-              googleToken={googleToken}
-              onGoogleLogin={handleGoogleLogin}
-              onGoogleLogout={handleGoogleLogout}
               subTab={activeTab}
               setSubTab={(t) => setActiveTab(t as any)}
               forcePushThisDeviceToCloud={forcePushThisDeviceToCloud}
