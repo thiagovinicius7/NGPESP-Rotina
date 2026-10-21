@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { periodoAfastamento } from "../lib/vidaFuncional.js";
 import { AppState } from "../types.js";
 import { getLocalDateIso, toYmdDate } from "../lib/utils.js";
 import { 
@@ -169,9 +170,8 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
 
   const activeAfastamento = afastamentos.filter(a => {
     if (!a) return false;
-    const matchDay = String(a.dia || "").padStart(2, "0") === currentDayStr;
-    const matchMonth = String(a.mes || "").padStart(2, "0") === currentMonthStr || String(a.mes || "").toLowerCase().includes(currentMonthStr);
-    return matchDay && matchMonth;
+    const p = periodoAfastamento(a);
+    return !!p && hoje >= p.inicio && hoje <= p.fim;
   });
 
   // Only filter servers if the search term is NOT empty

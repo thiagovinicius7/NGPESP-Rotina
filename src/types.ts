@@ -35,10 +35,14 @@ export interface SeiProcess {
 }
 
 export interface Absence {
-  dia: string;
-  mes: string;
+  dia: string;      // dia do início (compatibilidade)
+  mes: string;      // AAAA-MM do início (compatibilidade; registros antigos podem ter outro formato)
   tipo: string;
-  sisref: string;
+  sisref: string;   // "sim" | "nao" | "pendente" | "naoPrecisa"
+  inicio?: string;  // AAAA-MM-DD
+  fim?: string;     // AAAA-MM-DD
+  turno?: "dia" | "manha" | "tarde";
+  obs?: string;
 }
 
 export interface PeriodoFerias {

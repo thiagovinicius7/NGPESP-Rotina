@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AppState, AtividadeLancamento, ProdutividadeDia } from "../types.js";
 import { getLocalDateIso, toYmdDate, reconstructProdutividadeFromState } from "../lib/utils.js";
+import { eventosDoDia } from "../lib/vidaFuncional.js";
 import {
   SITUACOES, Turno, labelSituacao, situacaoTurno, situacaoGeral, diaVazio,
   novoIdAtividade, chaveAtividade, qtdNum
@@ -225,6 +226,22 @@ export default function ProdutividadePanel({ state, updateState, onToast, dataIn
     updateState(prev => ({ filaAvulsa: { ...prev.filaAvulsa, configProd: { tipos: t, sistemas: s } } }));
     setCfgOpen(false);
     onToast("Configuração salva.", "ok");
+  };
+
+  // O que a Vida Funcional registra para este dia (férias, abono, afastamento)
+  const eventosVida = eventosDoDia(state, prodData);
+  const vidaAlvo = (() => {
+    let m = situacaoTurno(dia, "manha"), t = situacaoTurno(dia, "tarde");
+    eventosVida.forEach(e => {
+      if (!e.turno || e.turno === "manha") m = e.situacao;
+      if (!e.turno || e.turno === "tarde") t = e.situacao;
+    });
+    return { m, t };
+  })();
+  const precisaAplicarVida = eventosVida.length > 0 && (vidaAlvo.m !== situacaoTurno(dia, "manha") || vidaAlvo.t !== situacaoTurno(dia, "tarde"));
+  const aplicarVida = () => {
+    alterarDia(d => ({ ...d, situacaoManha: vidaAlvo.m, situacaoTarde: vidaAlvo.t, situacao: situacaoGeral(vidaAlvo.m, vidaAlvo.t), sitEm: Date.now() }));
+    onToast("Situação do dia atualizada.", "ok");
   };
 
   // ---------- números ----------
@@ -473,6 +490,17 @@ export default function ProdutividadePanel({ state, updateState, onToast, dataIn
           </button>
         </div>
       </div>
+
+      {eventosVida.length > 0 && (
+        <div className="text-xs font-bold px-4 py-2.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200 flex items-center justify-between gap-2 flex-wrap">
+          <span>Na Vida Funcional: {eventosVida.map(e => e.texto).join(" · ")}</span>
+          {precisaAplicarVida && (
+            <button type="button" onClick={aplicarVida} className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold">
+              Marcar o dia assim
+            </button>
+          )}
+        </div>
+      )}
 
       {pendentesOutros.length > 0 && (
         <div className="text-xs font-bold px-4 py-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 flex items-center gap-2 flex-wrap">
