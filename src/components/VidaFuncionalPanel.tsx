@@ -453,24 +453,28 @@ export default function VidaFuncionalPanel({ state, updateState, onToast }: Prop
             const sr = rotuloSisref(a.sisref);
             const n = p ? diasEntre(p.inicio, p.fim) : 0;
             return (
-              <div key={idx} className="flex items-center gap-3 py-2.5">
-                <div className="w-28 flex-shrink-0">
-                  <div className="text-sm font-black text-[var(--text)] font-mono">{p ? fmtBR(p.inicio) : `${a.dia}/${a.mes}`}</div>
-                  {p && n > 1 && <div className="text-[10px] font-bold text-[var(--text2)]">até {fmtBR(p.fim)} · {n} dias</div>}
-                  {a.turno && a.turno !== "dia" && <div className="text-[10px] font-bold text-[var(--text2)]">{a.turno === "manha" ? "só manhã" : "só tarde"}</div>}
+              <div key={idx} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5">
+                <div className="flex items-start gap-3 min-w-0 flex-1 basis-[260px]">
+                  <div className="w-24 flex-shrink-0">
+                    <div className="text-sm font-black text-[var(--text)] font-mono">{p ? fmtBR(p.inicio) : `${a.dia}/${a.mes}`}</div>
+                    {p && n > 1 && <div className="text-[10px] font-bold text-[var(--text2)]">até {fmtBR(p.fim)} · {n} dias</div>}
+                    {a.turno && a.turno !== "dia" && <div className="text-[10px] font-bold text-[var(--text2)]">{a.turno === "manha" ? "só manhã" : "só tarde"}</div>}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-[var(--text)] break-words">{a.tipo}</div>
+                    {a.obs && <div className="text-[11px] text-[var(--text2)] break-words">{a.obs}</div>}
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-bold text-[var(--text)] break-words">{a.tipo}</div>
-                  {a.obs && <div className="text-[11px] text-[var(--text2)] break-words">{a.obs}</div>}
+                <div className="flex items-center gap-1 ml-auto">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${sr.cls}`}>{sr.txt}</span>
+                  {a.sisref !== "sim" && a.sisref !== "naoPrecisa" && (
+                    <button type="button" onClick={() => marcarLancado(idx)} className="px-2 py-1 text-[10px] font-bold rounded-lg border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 whitespace-nowrap" title="Marcar como lançado no SISREF">
+                      <Check size={11} className="inline -mt-0.5" /> Lancei
+                    </button>
+                  )}
+                  {BotaoEditar({ onClick: () => editarAfas(a, idx) })}
+                  <BotaoExcluir onConfirm={() => excluirAfas(idx)} />
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${sr.cls}`}>{sr.txt}</span>
-                {a.sisref !== "sim" && a.sisref !== "naoPrecisa" && (
-                  <button type="button" onClick={() => marcarLancado(idx)} className="px-2 py-1 text-[10px] font-bold rounded-lg border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 whitespace-nowrap" title="Marcar como lançado no SISREF">
-                    <Check size={11} className="inline -mt-0.5" /> Lancei
-                  </button>
-                )}
-                {BotaoEditar({ onClick: () => editarAfas(a, idx) })}
-                <BotaoExcluir onConfirm={() => excluirAfas(idx)} />
               </div>
             );
           })}

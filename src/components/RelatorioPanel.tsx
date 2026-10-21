@@ -1591,7 +1591,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
               <button key={t.id} type="button" onClick={() => setSubTab(t.id)}
                 className={`text-left p-3 rounded-xl border transition ${ativo ? "border-[var(--blue-mid)] bg-[var(--blue-light)] ring-1 ring-[var(--blue-mid)]/30" : "border-[var(--border)] hover:bg-[var(--bg)]"}`}>
                 <div className={`flex items-center gap-1.5 text-xs font-black ${ativo ? "text-[var(--blue-mid)]" : "text-[var(--text)]"}`}>
-                  {iconeTipo[t.id]} <span className="truncate">{t.titulo}</span>
+                  {iconeTipo[t.id]} <span className="leading-tight">{t.titulo}</span>
                   {contagemTipo[t.id] ? <span className="ml-auto px-1.5 rounded-full text-[10px] bg-[var(--red)]/15 text-[var(--red)]">{contagemTipo[t.id]}</span> : null}
                 </div>
                 <div className="text-[10px] font-semibold text-[var(--text2)] mt-0.5 leading-tight">{t.desc}</div>
@@ -1667,15 +1667,15 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
               </table>
             ) : agruparAfast === 'servidor' ? (
               <table className="w-full text-xs">
-                <thead className="border-b border-[var(--border)]"><tr><th className={thCls}>Servidor</th><th className={thCls}>Afastamentos (data)</th><th className={`${thCls} hidden md:table-cell`}>Lançado em</th></tr></thead>
+                <thead className="border-b border-[var(--border)] hidden md:table-header-group"><tr><th className={thCls}>Servidor</th><th className={thCls}>Afastamentos (data)</th><th className={`${thCls} hidden md:table-cell`}>Lançado em</th></tr></thead>
                 <tbody className="divide-y divide-[var(--border)]">
                   {afastPorServidor.slice(0, limiteAfast).map(g => (
-                    <tr key={g.matricula + g.nome} className="hover:bg-[var(--bg)]">
-                      <td className={`${tdCls} w-[38%]`}>
+                    <tr key={g.matricula + g.nome} className="hover:bg-[var(--bg)] block md:table-row py-1 md:py-0">
+                      <td className={`${tdCls} block md:table-cell md:w-[38%] !pb-1 md:!pb-2`}>
                         <div className="font-bold text-[var(--text)] text-[13px]">{g.nome}</div>
                         <div className="text-[11px] text-[var(--text2)] font-mono">{g.matricula}<span className="font-sans"> · {g.setor}</span></div>
                       </td>
-                      <td className={tdCls}>
+                      <td className={`${tdCls} block md:table-cell !pt-0 md:!pt-2`}>
                         <div className="flex flex-col gap-1">
                           {Array.from(g.itens.reduce((m, it) => {
                             const k = `${it.dataOcorrencia}|${it.tipo}`;
