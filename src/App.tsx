@@ -16,6 +16,7 @@ import RotinaPanel from "./components/RotinaPanel.js";
 import BalcaoPanel from "./components/BalcaoPanel.js";
 import RelatorioPanel from "./components/RelatorioPanel.js";
 import LancamentoApp from "./components/LancamentoApp.js";
+import RecentLaunchWarning from "./components/RecentLaunchWarning.js";
 import { mergeProdutividade, mergeFilaAvulsa } from "./lib/utils.js";
 import { loginWithGoogle, logout, onUserChange, isAllowedUser } from "./lib/auth.js";
 import type { User } from "firebase/auth";
@@ -88,6 +89,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
     syncing, 
     isStaticMode, 
     cloudSynced,
+    cloudError,
+    retryCloudNow,
     exportBackupJson,
     importBackupJson
   } = useSyncState(showToast);
@@ -332,6 +335,28 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </div>
       </header>
+
+      {/* AVISO: A NUVEM NÃO ESTÁ SALVANDO */}
+      {cloudError && (
+        <div className="sticky top-[57px] z-30 bg-amber-500 text-black px-4 py-2.5 text-xs font-bold flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center shadow-md">
+          <span className="flex items-center gap-1.5">
+            <AlertTriangle size={15} />
+            {cloudError === "limite"
+              ? "A nuvem atingiu o limite diário de gravações."
+              : cloudError === "sem-internet"
+              ? "Sem internet."
+              : "Não foi possível salvar na nuvem."}
+            {" "}Seus dados estão guardados só neste computador — o app tenta de novo sozinho.
+          </span>
+          <button
+            type="button"
+            onClick={retryCloudNow}
+            className="px-3 py-1 rounded-lg bg-black/80 text-white hover:bg-black cursor-pointer"
+          >
+            Tentar agora
+          </button>
+        </div>
+      )}
 
       {/* 2. MAIN GRID LAYOUT CONTROLLER */}
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 flex-1 flex flex-col lg:flex-row gap-6">
@@ -636,6 +661,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
             <span className="text-xs font-semibold text-[var(--blue-mid)] font-mono block mt-1">
               Matrícula: {launchModal.mat} {launchModal.setor ? `· ${launchModal.setor}` : ""}
             </span>
+            <RecentLaunchWarning historico={state.historico || []} mat={launchModal.mat} />
             
             <div className="mt-5">
               <label className="text-xs font-bold text-[var(--text2)] block mb-1.5">

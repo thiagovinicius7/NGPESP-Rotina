@@ -54,6 +54,23 @@ function clearPendingOlderThan(ts: number) {
  * (assim listas/itens apagados em outro computador não voltam).
  * forceMerge: computador que vinha da versão antiga (sem marcas de pendência) — sempre junta.
  */
+/**
+ * Histórico vindo da nuvem: a nuvem guarda os dias mais recentes (até ~2000 registros).
+ * Dentro desse período a nuvem vale como está (o que foi apagado em outro computador
+ * não volta); registros locais mais antigos que o período da nuvem são mantidos.
+ */
+export function historicoFromCloud(local: any[] = [], cloud: any[] = []): any[] {
+  if (!Array.isArray(cloud) || cloud.length === 0) return [];
+  const dias = cloud.map(h => String(h?.ts || "").slice(0, 10)).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  if (dias.length === 0) return cloud;
+  const maisAntigo = dias.reduce((a, b) => (a < b ? a : b));
+  const antigosLocais = (local || []).filter(h => {
+    const d = String(h?.ts || "").slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(d) && d < maisAntigo;
+  });
+  return [...cloud, ...antigosLocais].slice(0, 5000);
+}
+
 function chooseFila(localFila: any, serverFila: any, forceMerge: boolean = false): any {
   if (!serverFila || !serverFila.listas) return localFila;
   if (forceMerge || hasPendingLocalChanges()) return mergeFilaAvulsa(localFila, serverFila);
@@ -125,6 +142,15 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
 
   const [syncing, setSyncing] = useState(false);
   const [cloudSynced, setCloudSynced] = useState(false);
+  // Motivo de a nuvem não estar salvando (null = tudo certo)
+  const [cloudError, setCloudError] = useState<null | "limite" | "sem-internet" | "erro">(null);
+  const reportCloudFailure = () => {
+    setCloudError(
+      firestoreQuotaExceeded ? "limite"
+        : (typeof navigator !== "undefined" && navigator.onLine === false) ? "sem-internet"
+        : "erro"
+    );
+  };
   const [isStaticMode, setIsStaticMode] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
       if (window.location.hostname.endsWith("github.io")) {
@@ -270,7 +296,9 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         }
         clearPendingOlderThan(pushStartedAt);
         setCloudSynced(true);
+        setCloudError(null);
       } else if (!isCloudLoaded()) {
+        reportCloudFailure();
         // A nuvem não carregou ao abrir o app. Usa a última versão da nuvem conhecida por este
         // navegador para saber o que foi editado aqui; os dados locais NÃO são alterados.
         // Sem base guardado (ex.: primeiro dia da versão nova), carrega a nuvem e junta.
@@ -281,7 +309,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             pushStateToCloudRef.current(latestStateRef.current);
           }, loaded ? 3000 : 60 * 1000);
         }
-      } else if (!pushTimeoutRef.current) {
+      } else if (reportCloudFailure(), !pushTimeoutRef.current) {
         // Falhou: tenta de novo mais tarde (os dados continuam salvos neste computador)
         const delay = firestoreQuotaExceeded ? 10 * 60 * 1000 : 30 * 1000;
         pushTimeoutRef.current = setTimeout(() => {
@@ -302,7 +330,17 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       }
     } catch (e) {
       console.warn("Failed to push state to cloud:", e);
+      reportCloudFailure();
     }
+  };
+
+  /** Tenta enviar agora (botão da faixa de aviso). */
+  const retryCloudNow = () => {
+    if (pushTimeoutRef.current) {
+      clearTimeout(pushTimeoutRef.current);
+      pushTimeoutRef.current = null;
+    }
+    pushStateToCloudRef.current(latestStateRef.current);
   };
 
   // Se a aba for escondida/fechada com um envio pendente, envia na hora
@@ -320,11 +358,19 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flushPending();
     };
+    // Voltou a internet: se há algo não enviado, envia
+    const onOnline = () => {
+      if (isDirtyRef.current || hasPendingLocalChanges()) {
+        setTimeout(() => pushStateToCloudRef.current(latestStateRef.current), 1500);
+      }
+    };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", flushPending);
+    window.addEventListener("online", onOnline);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", flushPending);
+      window.removeEventListener("online", onOnline);
     };
   }, []);
 
@@ -397,8 +443,11 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
       }
 
       if (serverState) {
+        const juntar = hasPendingLocalChanges();
         const mergedFila = chooseFila(stateRef.current.filaAvulsa, serverState.filaAvulsa);
-        const mergedHist = mergeHistorico(stateRef.current.historico || [], serverState.historico || []);
+        const mergedHist = juntar
+          ? mergeHistorico(stateRef.current.historico || [], serverState.historico || [])
+          : historicoFromCloud(stateRef.current.historico || [], serverState.historico || []);
         const mergedState: AppState = {
           ...defaultState,
           ...serverState,
@@ -406,9 +455,13 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           historico: mergedHist,
           respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (stateRef.current.respostas || []),
           faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (stateRef.current.faq || []),
-          produtividade: mergeProdutividade(stateRef.current.produtividade || {}, serverState.produtividade || {}),
+          produtividade: juntar
+            ? mergeProdutividade(stateRef.current.produtividade || {}, serverState.produtividade || {})
+            : (serverState.produtividade || {}),
           filaAvulsa: mergedFila,
-          balcaoAtendimentos: { ...(stateRef.current.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
+          balcaoAtendimentos: juntar
+            ? { ...(stateRef.current.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) }
+            : (serverState.balcaoAtendimentos || {}),
           config: { ...(stateRef.current.config || {}), ...(serverState.config || {}) }
         };
 
@@ -501,7 +554,11 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
           } else {
             // Existing device with data: merge safely without regressing queue progress
             const mergedFila = chooseFila(cachedState?.filaAvulsa, serverState.filaAvulsa, vindoDaVersaoAntiga);
-            const mergedHist = mergeHistorico(cachedState?.historico || [], serverState.historico || []);
+            // Com alterações locais não enviadas: junta. Sem elas: a nuvem vale como está.
+            const juntar = hasPendingLocalChanges() || vindoDaVersaoAntiga;
+            const mergedHist = juntar
+              ? mergeHistorico(cachedState?.historico || [], serverState.historico || [])
+              : historicoFromCloud(cachedState?.historico || [], serverState.historico || []);
             mergedState = {
               ...defaultState,
               ...serverState,
@@ -509,9 +566,13 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
               historico: mergedHist,
               respostas: (serverState.respostas && serverState.respostas.length > 0) ? serverState.respostas : (cachedState?.respostas || []),
               faq: (serverState.faq && serverState.faq.length > 0) ? serverState.faq : (cachedState?.faq || []),
-              produtividade: mergeProdutividade(cachedState?.produtividade || {}, serverState.produtividade || {}),
+              produtividade: juntar
+                ? mergeProdutividade(cachedState?.produtividade || {}, serverState.produtividade || {})
+                : (serverState.produtividade || {}),
               filaAvulsa: mergedFila,
-              balcaoAtendimentos: { ...(cachedState?.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) },
+              balcaoAtendimentos: juntar
+                ? { ...(cachedState?.balcaoAtendimentos || {}), ...(serverState.balcaoAtendimentos || {}) }
+                : (serverState.balcaoAtendimentos || {}),
               config: { gmov_data: "", ...(cachedState?.config || {}), ...(serverState.config || {}) }
             };
           }
@@ -630,10 +691,10 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
             ? incomingPartial.servidores
             : prev.servidores,
           historico: incomingPartial.historico
-            ? mergeHistorico(prev.historico, incomingPartial.historico)
+            ? historicoFromCloud(prev.historico, incomingPartial.historico)
             : prev.historico,
           produtividade: incomingPartial.produtividade
-            ? mergeProdutividade(prev.produtividade, incomingPartial.produtividade)
+            ? incomingPartial.produtividade
             : prev.produtividade
         };
 
@@ -748,6 +809,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     forcePullFromCloud: async () => { await forcePullFromCloud(false); },
     isStaticMode,
     cloudSynced,
+    cloudError,
+    retryCloudNow,
     exportBackupJson,
     importBackupJson
   };

@@ -1,3 +1,4 @@
+import RecentLaunchWarning from "./RecentLaunchWarning.js";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
 import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial } from "../lib/utils.js";
@@ -2042,6 +2043,7 @@ export default function LancamentoApp({
             <span className="text-xs font-semibold text-[var(--blue-mid)] font-mono block mt-1">
               Matrícula: {confirmModal.mat} {confirmModal.setor ? `· ${confirmModal.setor}` : ""}
             </span>
+            <RecentLaunchWarning historico={state.historico || []} mat={confirmModal.mat} ocorrencias={confirmModal.checkedOcs} />
             
             <div className="mt-5">
               <label className="text-xs font-bold text-[var(--text2)] block mb-1.5">
