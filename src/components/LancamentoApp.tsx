@@ -947,19 +947,14 @@ export default function LancamentoApp({
               </span>
             </button>
 
-            {/* Queue list inspector toggle */}
+            {/* Quick Answers Button */}
             <button
               type="button"
-              onClick={() => setShowQueueListDrawer(true)}
-              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center relative transition-colors cursor-pointer flex-shrink-0"
-              title={`Lista de Servidores (${totalServers})`}
+              onClick={() => setShowRespostasDrawer(true)}
+              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
+              title="Respostas Rápidas de Atendimento"
             >
-              <ListTodo size={15} className="text-blue-500" />
-              {totalServers > 0 && (
-                <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-blue-600 text-white font-mono text-[8px] font-black flex items-center justify-center shadow-2xs">
-                  {totalServers > 99 ? '99+' : totalServers}
-                </span>
-              )}
+              <MessageSquareQuote size={15} className="text-indigo-500" />
             </button>
 
             {/* Pendências Button */}
@@ -1026,14 +1021,19 @@ export default function LancamentoApp({
                 onClick={() => setShowMaisMenu(false)}
                 className={`${showMaisMenu ? "flex" : "hidden"} absolute right-0 top-full mt-2 z-50 p-2 gap-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl lg:flex lg:static lg:mt-0 lg:p-0 lg:border-0 lg:shadow-none lg:bg-transparent items-center`}
               >
-            {/* Quick Answers Button */}
+            {/* Queue list inspector toggle */}
             <button
               type="button"
-              onClick={() => setShowRespostasDrawer(true)}
-              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center transition-colors cursor-pointer flex-shrink-0"
-              title="Respostas Rápidas de Atendimento"
+              onClick={() => setShowQueueListDrawer(true)}
+              className="w-8 h-8 rounded-lg border border-[var(--border2)] bg-[var(--bg)] hover:bg-[var(--border2)] text-[var(--text)] flex items-center justify-center relative transition-colors cursor-pointer flex-shrink-0"
+              title={`Lista de Servidores (${totalServers})`}
             >
-              <MessageSquareQuote size={15} className="text-indigo-500" />
+              <ListTodo size={15} className="text-blue-500" />
+              {totalServers > 0 && (
+                <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-blue-600 text-white font-mono text-[8px] font-black flex items-center justify-center shadow-2xs">
+                  {totalServers > 99 ? '99+' : totalServers}
+                </span>
+              )}
             </button>
             {/* Salvar Atalho na Área de Trabalho Button */}
             <button
