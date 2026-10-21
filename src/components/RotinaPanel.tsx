@@ -917,44 +917,6 @@ export default function RotinaPanel({
 
           </div>
 
-          {/* CONFIGURAÇÃO DE SENHA DO SISTEMA */}
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
-            <div className="text-xs font-bold text-[var(--text)] uppercase tracking-wider mb-2 flex items-center gap-2">
-              <Key className="text-[var(--blue-mid)]" size={16} /> Senha de Segurança do Sistema
-            </div>
-            <p className="text-xs text-[var(--text2)] mb-4 font-semibold leading-relaxed">
-              Defina a senha de acesso necessária para visualizar e operar este painel de conferência.
-            </p>
-
-            <div className="flex flex-col sm:flex-row gap-3 max-w-md">
-              <div className="relative flex-1">
-                <input 
-                  type={showPass ? "text" : "password"} 
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Nova senha de acesso"
-                  className="w-full p-3 text-xs rounded-xl font-mono border border-[var(--border2)] bg-[var(--bg)] outline-none text-[var(--text)] pr-12"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPass(!showPass)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black uppercase text-[var(--text2)] hover:text-[var(--text)] cursor-pointer"
-                >
-                  {showPass ? "Ocultar" : "Mostrar"}
-                </button>
-              </div>
-              <button 
-                onClick={handleUpdatePassword}
-                className="px-5 py-3 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-xs cursor-pointer transition-all"
-              >
-                <Save size={14} /> Atualizar Senha
-              </button>
-            </div>
-            <div className="mt-2 text-[10px] text-[var(--text2)] font-semibold">
-              Status da senha: <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">{state.config.appPassword ? "Configurada e Ativa" : "Padrão do Sistema Ativa"}</span>
-            </div>
-          </div>
-          
           {/* CASOS ESPECIAIS SISREF (SELO DE ATENÇÃO ROTATIVO) */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
             <div className="flex items-center justify-between flex-wrap gap-2 mb-2">

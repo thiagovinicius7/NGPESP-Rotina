@@ -7,6 +7,7 @@ import {
   changedGroups, groupFields, isUnionGroup, V2_VERSION, SlotMap
 } from "./chunkedStore";
 import { mergeHistorico, mergeProdutividade } from "./utils";
+import { getIdTokenOrNull } from "./auth";
 
 // Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -37,6 +38,12 @@ const V2_INDEX_ID = "_index";
 const GC_DELAY_MS = 2 * 60 * 1000;
 
 const REST_BASE = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${dbId}/documents`;
+
+/** Cabeçalho de autenticação (login Google) para as chamadas REST. */
+async function authHeaders(extra: Record<string, string> = {}): Promise<Record<string, string>> {
+  const token = await getIdTokenOrNull();
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
 
 interface V2Index {
   updateTime?: string; // versão do documento no servidor (para gravação condicional)
@@ -171,7 +178,7 @@ async function writeDocViaRest(
     };
     const res = await fetch(url, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: await authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body)
     });
     if (res.status === 429) {
@@ -200,7 +207,7 @@ async function writeDocViaRest(
 async function deleteDocViaRest(coll: string, docId: string): Promise<boolean> {
   try {
     const url = `${REST_BASE}/${coll}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
-    const res = await fetch(url, { method: "DELETE" });
+    const res = await fetch(url, { method: "DELETE", headers: await authHeaders() });
     return res.ok;
   } catch (_) {
     return false;
@@ -213,7 +220,7 @@ async function deleteDocViaRest(coll: string, docId: string): Promise<boolean> {
 async function readDocViaRest(docId: string): Promise<{ data: any; updatedAt: number } | null> {
   try {
     const url = `${REST_BASE}/${V1_COLL}/${docId}?key=${firebaseConfig.apiKey}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: await authHeaders() });
     if (!res.ok) return null;
     const parsed = parseRestDoc(await res.json());
     if (parsed && !parsed.updatedAt) parsed.updatedAt = Date.now();
@@ -228,7 +235,7 @@ async function readDocViaRest(docId: string): Promise<{ data: any; updatedAt: nu
 async function readV1UpdatedAt(docId: string): Promise<number> {
   try {
     const url = `${REST_BASE}/${V1_COLL}/${docId}?mask.fieldPaths=updatedAt&key=${firebaseConfig.apiKey}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: await authHeaders() });
     if (!res.ok) return 0;
     const json = await res.json();
     return Number(json?.fields?.updatedAt?.integerValue || 0);
@@ -246,7 +253,7 @@ async function readV1MaxUpdatedAt(): Promise<number> {
 async function getV2Doc(docId: string): Promise<{ data: any; updatedAt: number; updateTime?: string } | undefined | null> {
   try {
     const url = `${REST_BASE}/${V2_COLL}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: await authHeaders() });
     if (res.status === 404) return undefined;
     if (!res.ok) return null;
     const json = await res.json();

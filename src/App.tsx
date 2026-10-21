@@ -17,6 +17,8 @@ import BalcaoPanel from "./components/BalcaoPanel.js";
 import RelatorioPanel from "./components/RelatorioPanel.js";
 import LancamentoApp from "./components/LancamentoApp.js";
 import { mergeProdutividade, mergeFilaAvulsa } from "./lib/utils.js";
+import { loginWithGoogle, logout, onUserChange, isAllowedUser } from "./lib/auth.js";
+import type { User } from "firebase/auth";
 
 const normalizeMatricula = (m: any): string => {
   if (!m) return "";
@@ -27,7 +29,7 @@ const normalizeMatricula = (m: any): string => {
   return clean.toLowerCase();
 };
 
-export default function App() {
+function MainApp({ onLogout }: { onLogout: () => void }) {
   // App Mode: 'full' (main dashboard) or 'lancamento' (dedicated fast launcher app)
   const [appMode, setAppMode] = useState<'full' | 'lancamento'>(() => {
     if (typeof window !== "undefined") {
@@ -91,9 +93,8 @@ export default function App() {
   } = useSyncState(showToast);
 
   // Password-lock verification state
-  const [authenticated, setAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem("ngpesp_auth") === "true";
-  });
+  // O acesso agora é pelo login Google (ver App abaixo); a tela de senha antiga não é mais usada.
+  const [authenticated, setAuthenticated] = useState<boolean>(true);
   const [enteredPass, setEnteredPass] = useState("");
   const [passError, setPassError] = useState(false);
 
@@ -134,10 +135,7 @@ export default function App() {
   };
 
   const handleLockSystem = () => {
-    setAuthenticated(false);
-    sessionStorage.removeItem("ngpesp_auth");
-    setEnteredPass("");
-    showToast("Sistema bloqueado por segurança.", "info");
+    onLogout();
   };
 
   // Modal confirm helper
@@ -327,7 +325,7 @@ export default function App() {
             <button
               onClick={handleLockSystem}
               className="p-2 border border-red-200 hover:bg-red-500/10 text-red-500 rounded-xl bg-[var(--surface)] transition-all cursor-pointer"
-              title="Bloquear / Sair do Sistema"
+              title="Sair (desconectar a conta Google)"
             >
               <LogOut size={18} />
             </button>
@@ -685,6 +683,97 @@ export default function App() {
         </div>
       )}
 
+    </div>
+  );
+}
+
+
+/**
+ * Porta de entrada: exige login com conta Google autorizada.
+ * Os dados só são carregados depois do login.
+ */
+export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const unsub = onUserChange(u => {
+      setUser(u);
+      setChecking(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const handleLogin = async () => {
+    setError("");
+    setLoggingIn(true);
+    try {
+      const u = await loginWithGoogle();
+      if (!isAllowedUser(u)) {
+        setError(`A conta ${u.email} não tem acesso a este sistema.`);
+        await logout();
+      }
+    } catch (e: any) {
+      if (e?.code !== "auth/popup-closed-by-user" && e?.code !== "auth/cancelled-popup-request") {
+        setError("Não foi possível entrar com o Google. Tente novamente.");
+      }
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  if (user && isAllowedUser(user)) {
+    return <MainApp onLogout={() => { logout(); }} />;
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[var(--bg)] p-4 font-sans">
+      <div className="bg-[var(--surface)] border border-[var(--border)] w-full max-w-md rounded-3xl p-8 shadow-2xl">
+        <div className="flex flex-col items-center text-center">
+          <div className="w-16 h-16 bg-[var(--blue-mid)] rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-lg mb-4">
+            NG
+          </div>
+          <h1 className="text-xl font-black text-[var(--text)] tracking-tight">NGPESP Rotina & Fila</h1>
+          <p className="text-xs text-[var(--text2)] font-semibold mt-1 max-w-xs">
+            Módulo de Gestão Funcional, SISREF, Balcão e Produtividade
+          </p>
+        </div>
+
+        <div className="mt-8 space-y-4">
+          {checking ? (
+            <p className="text-center text-xs text-[var(--text2)] font-semibold">Verificando acesso...</p>
+          ) : (
+            <>
+              {user && !isAllowedUser(user) && (
+                <div className="text-xs text-red-500 font-bold text-center">
+                  A conta {user.email} não tem acesso a este sistema.
+                  <button onClick={() => logout()} className="block mx-auto mt-2 underline cursor-pointer">Usar outra conta</button>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleLogin}
+                disabled={loggingIn}
+                className="w-full py-3.5 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white font-bold text-sm rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                <ShieldCheck size={18} /> {loggingIn ? "Abrindo o Google..." : "Entrar com Google"}
+              </button>
+              {error && (
+                <div className="flex items-center justify-center gap-1.5 text-xs text-red-500 font-bold">
+                  <AlertTriangle size={14} /> {error}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="mt-8 pt-6 border-t border-[var(--border2)] flex items-center justify-between text-[11px] text-[var(--text2)] font-semibold">
+          <span>Acesso restrito</span>
+          <span className="font-mono text-[var(--blue-mid)]">v5.0</span>
+        </div>
+      </div>
     </div>
   );
 }
