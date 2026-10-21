@@ -78,6 +78,7 @@ export interface QueueOcorrencia {
   tipo: string;
   data: string;        // último dia (fato gerador)
   dataInicio?: string; // primeiro dia, quando o afastamento tem mais de um dia
+  dias?: string[]; // todos os dias listados no SISREF (pode ter intervalos)
   checked: boolean;
   dataLancamento?: string;
 }

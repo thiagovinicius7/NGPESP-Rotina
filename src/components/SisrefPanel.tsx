@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial, extrairPeriodoSisref, diasNoPeriodo } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial, extrairPeriodoSisref, textoDiasOcorrencia } from "../lib/utils.js";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { 
   Building2, ListTodo, MessageSquareQuote, Search, UserCheck, 
@@ -446,6 +446,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
         tipo: tipoLimpo,
         data: periodo.data,
         ...(periodo.dataInicio ? { dataInicio: periodo.dataInicio } : {}),
+        ...(periodo.dias ? { dias: periodo.dias } : {}),
         checked: false
       });
 
@@ -512,6 +513,41 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
     setAvulsaResultados([]);
     setAvulsaTxt("");
     onToast(`${selectedServers.length} servidores adicionados à fila ativa`, "ok");
+  };
+
+  // Completa os dias dos afastamentos na fila ativa, sem mexer no progresso nem nas marcações
+  const atualizarDiasFilaAtiva = () => {
+    const chave = (mat: string, tipo: string, data: string) => `${normalizeMatricula(mat)}|${(tipo || "").trim().toLowerCase()}|${(data || "").trim()}`;
+    const periodos = new Map<string, { dataInicio: string; dias?: string[] }>();
+    avulsaResultados.forEach(s => (s.ocorrencias || []).forEach((o: any) => {
+      if (o.dataInicio) periodos.set(chave(s.matricula, o.tipo, o.data), { dataInicio: o.dataInicio, dias: o.dias });
+    }));
+    if (periodos.size === 0) {
+      onToast("O texto colado não tem afastamentos de mais de um dia para atualizar.", "info");
+      return;
+    }
+    const precisa = (o: any, p?: { dataInicio: string; dias?: string[] }) =>
+      !!p && (o.dataInicio !== p.dataInicio || JSON.stringify(o.dias || null) !== JSON.stringify(p.dias || null));
+    const filaAtual = state.filaAvulsa?.listas?.[state.filaAvulsa?.ativa || "Padrão"]?.fila || [];
+    const atualizadas = filaAtual.reduce((n: number, srv: any) => n + (srv.ocorrencias || []).filter((o: any) =>
+      precisa(o, periodos.get(chave(srv.matricula, o.tipo, o.data)))).length, 0);
+    updateState(prev => {
+      const fa = prev.filaAvulsa;
+      const nome = fa?.ativa || "Padrão";
+      const q = fa?.listas?.[nome];
+      if (!q) return {};
+      const fila = (q.fila || []).map((srv: any) => ({
+        ...srv,
+        ocorrencias: (srv.ocorrencias || []).map((o: any) => {
+          const p = periodos.get(chave(srv.matricula, o.tipo, o.data));
+          if (p && precisa(o, p)) return { ...o, dataInicio: p.dataInicio, ...(p.dias ? { dias: p.dias } : {}) };
+          return o;
+        })
+      }));
+      return { filaAvulsa: { ...fa, listas: { ...fa.listas, [nome]: { ...q, fila } } } };
+    });
+    onToast(atualizadas > 0 ? `Dias atualizados em ${atualizadas} ocorrência(s) da fila ativa.` : "Nenhuma ocorrência da fila ativa precisava de atualização.", atualizadas > 0 ? "ok" : "info");
+    if (atualizadas > 0) { setAvulsaResultados([]); setAvulsaTxt(""); }
   };
 
   const currentQueue = state.filaAvulsa.listas[state.filaAvulsa.ativa || "Padrão"] || { fila: [], idx: 0 };
@@ -1387,6 +1423,14 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                     >
                       Carregar {avulsaResultados.filter((_, i) => avulsaSelected[i]).length} servidores na fila ativa <CheckSquare size={16} />
                     </button>
+                    <button
+                      type="button"
+                      onClick={atualizarDiasFilaAtiva}
+                      className="w-full mt-2 py-2 text-xs font-bold bg-emerald-600/10 border border-emerald-500/40 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 rounded-xl"
+                      title="Não troca a fila nem o progresso: só completa os dias dos afastamentos"
+                    >
+                      Só atualizar os dias na fila ativa (mantém o progresso)
+                    </button>
                   </div>
                 </div>
               )}
@@ -1516,7 +1560,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
                               </div>
                               {oc.data ? (
                                 <span className="text-xs font-semibold text-[var(--blue-mid)] font-mono block mt-0.5">
-                                  Data: {oc.data}
+                                  {textoDiasOcorrencia(oc)}
                                 </span>
                               ) : (
                                 <span className="text-xs font-bold text-[var(--red)] block mt-0.5">

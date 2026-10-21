@@ -1,7 +1,7 @@
 import RecentLaunchWarning from "./RecentLaunchWarning.js";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
-import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial, extrairPeriodoSisref, diasNoPeriodo } from "../lib/utils.js";
+import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial, extrairPeriodoSisref, textoDiasOcorrencia } from "../lib/utils.js";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
 import { 
   Zap, CheckCheck, Copy, AlertOctagon, CornerUpLeft, Plus, Trash2, 
@@ -672,6 +672,7 @@ export default function LancamentoApp({
         tipo: tipoLimpo,
         data: periodo.data,
         ...(periodo.dataInicio ? { dataInicio: periodo.dataInicio } : {}),
+        ...(periodo.dias ? { dias: periodo.dias } : {}),
         checked: false
       });
 
@@ -700,23 +701,23 @@ export default function LancamentoApp({
     }
   };
 
-  // Preenche o período (primeiro dia) nas ocorrências da fila ativa, sem mexer no progresso
+  // Preenche os dias do afastamento nas ocorrências da fila ativa, sem mexer no progresso
   const atualizarPeriodosFilaAtiva = () => {
     const chave = (mat: string, tipo: string, data: string) => `${normalizeMatricula(mat)}|${(tipo || "").trim().toLowerCase()}|${(data || "").trim()}`;
-    const inicios = new Map<string, string>();
+    const periodos = new Map<string, { dataInicio: string; dias?: string[] }>();
     importResultados.forEach(s => (s.ocorrencias || []).forEach((o: any) => {
-      if (o.dataInicio) inicios.set(chave(s.matricula, o.tipo, o.data), o.dataInicio);
+      if (o.dataInicio) periodos.set(chave(s.matricula, o.tipo, o.data), { dataInicio: o.dataInicio, dias: o.dias });
     }));
-    if (inicios.size === 0) {
+    if (periodos.size === 0) {
       onToast("O texto colado não tem períodos de mais de um dia para atualizar.", "info");
       return;
     }
+    const precisa = (o: any, p?: { dataInicio: string; dias?: string[] }) =>
+      !!p && (o.dataInicio !== p.dataInicio || JSON.stringify(o.dias || null) !== JSON.stringify(p.dias || null));
     // Conta antes (a partir do estado atual) para a mensagem
     const filaAtual = state.filaAvulsa?.listas?.[state.filaAvulsa?.ativa || "Padrão"]?.fila || [];
-    const atualizadas = filaAtual.reduce((n: number, srv: any) => n + (srv.ocorrencias || []).filter((o: any) => {
-      const ini = inicios.get(chave(srv.matricula, o.tipo, o.data));
-      return ini && o.dataInicio !== ini;
-    }).length, 0);
+    const atualizadas = filaAtual.reduce((n: number, srv: any) => n + (srv.ocorrencias || []).filter((o: any) =>
+      precisa(o, periodos.get(chave(srv.matricula, o.tipo, o.data)))).length, 0);
     updateState(prev => {
       const fa = prev.filaAvulsa;
       const nome = fa?.ativa || "Padrão";
@@ -725,14 +726,14 @@ export default function LancamentoApp({
       const fila = (q.fila || []).map((srv: any) => ({
         ...srv,
         ocorrencias: (srv.ocorrencias || []).map((o: any) => {
-          const ini = inicios.get(chave(srv.matricula, o.tipo, o.data));
-          if (ini && o.dataInicio !== ini) return { ...o, dataInicio: ini };
+          const p = periodos.get(chave(srv.matricula, o.tipo, o.data));
+          if (p && precisa(o, p)) return { ...o, dataInicio: p.dataInicio, ...(p.dias ? { dias: p.dias } : {}) };
           return o;
         })
       }));
       return { filaAvulsa: { ...fa, listas: { ...fa.listas, [nome]: { ...q, fila } } } };
     });
-    onToast(atualizadas > 0 ? `Períodos atualizados em ${atualizadas} ocorrência(s) da fila ativa.` : "Nenhuma ocorrência da fila ativa corresponde ao texto colado.", atualizadas > 0 ? "ok" : "info");
+    onToast(atualizadas > 0 ? `Dias atualizados em ${atualizadas} ocorrência(s) da fila ativa.` : "Nenhuma ocorrência da fila ativa precisava de atualização.", atualizadas > 0 ? "ok" : "info");
     setImportResultados([]);
     setImportTxt("");
     setShowImportModal(false);
@@ -1462,9 +1463,7 @@ export default function LancamentoApp({
                         </div>
                         {oc.data ? (
                           <div className="text-[11px] font-mono font-bold text-blue-600 dark:text-blue-400 mt-1">
-                            {oc.dataInicio
-                              ? <>Período: {oc.dataInicio} a {oc.data}{diasNoPeriodo(oc.dataInicio, oc.data) ? ` · ${diasNoPeriodo(oc.dataInicio, oc.data)} dias` : ""}</>
-                              : <>Data: {oc.data}</>}
+                            {textoDiasOcorrencia(oc)}
                           </div>
                         ) : (
                           <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400 mt-1">
@@ -1696,9 +1695,9 @@ export default function LancamentoApp({
                     type="button"
                     onClick={atualizarPeriodosFilaAtiva}
                     className="w-full py-2 bg-emerald-600/10 border border-emerald-500/40 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 font-bold text-xs rounded-xl cursor-pointer"
-                    title="Não altera a fila nem o progresso: só completa o primeiro dia dos afastamentos"
+                    title="Não altera a fila nem o progresso: só completa os dias dos afastamentos"
                   >
-                    Só atualizar os períodos da fila ativa (mantém o progresso)
+                    Só atualizar os dias na fila ativa (mantém o progresso)
                   </button>
                 </div>
               </div>

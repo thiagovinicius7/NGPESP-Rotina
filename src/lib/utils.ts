@@ -639,14 +639,15 @@ export function getOccurrenceRuleAlert(tipo: string, dataOcorrencia?: string): O
 
 
 /**
- * Período de uma ocorrência no texto copiado do SISREF.
- * No SISREF cada registro vem em várias linhas: a folha (MM/AAAA), as datas
- * (uma por linha: primeiro e último dia) e depois a linha com ocorrência e servidor.
- * Junta as datas completas da própria linha e das linhas só-com-data logo acima.
- * Retorna data = último dia (mantém o "fato gerador" usado no resto do app)
- * e dataInicio = primeiro dia, quando o período tem mais de um dia.
+ * Dias de uma ocorrência no texto copiado do SISREF.
+ * No SISREF cada registro vem em várias linhas: a folha (MM/AAAA), a coluna "Dias"
+ * (uma data por linha — cada dia do afastamento, podendo ter intervalos) e depois
+ * a linha com ocorrência e servidor. Junta as datas completas da própria linha e das
+ * linhas só-com-data logo acima, em ordem.
+ * Retorna data = último dia (mantém o "fato gerador" usado no resto do app),
+ * dataInicio = primeiro dia e dias = todos os dias (quando há mais de um).
  */
-export function extrairPeriodoSisref(linhas: string[], idx: number, fallback: string = ""): { data: string; dataInicio?: string } {
+export function extrairPeriodoSisref(linhas: string[], idx: number, fallback: string = ""): { data: string; dataInicio?: string; dias?: string[] } {
   const FULL = /^\d{1,2}\/\d{1,2}\/\d{4}$/;
   const datas: string[] = [...((linhas[idx] || "").match(/\d{1,2}\/\d{1,2}\/\d{4}/g) || [])];
   for (let j = idx - 1; j >= 0; j--) {
@@ -656,20 +657,55 @@ export function extrairPeriodoSisref(linhas: string[], idx: number, fallback: st
     break; // folha (MM/AAAA), cabeçalho ou registro anterior
   }
   if (datas.length === 0) return { data: fallback };
-  const toKey = (d: string) => {
-    const [dd, mm, yy] = d.split("/");
-    return `${yy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-  };
-  const ord = Array.from(new Set(datas)).sort((a, b) => (toKey(a) < toKey(b) ? -1 : toKey(a) > toKey(b) ? 1 : 0));
-  const inicio = ord[0];
-  const fim = ord[ord.length - 1];
-  return inicio !== fim ? { data: fim, dataInicio: inicio } : { data: fim };
+  const norm = (d: string) => { const [dd, mm, yy] = d.split("/"); return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yy}`; };
+  const ord = Array.from(new Set(datas.map(norm))).sort((a, b) => (dataKey(a) < dataKey(b) ? -1 : dataKey(a) > dataKey(b) ? 1 : 0));
+  if (ord.length === 1) return { data: ord[0] };
+  return { data: ord[ord.length - 1], dataInicio: ord[0], dias: ord };
+}
+
+function dataKey(d: string): string {
+  const [dd, mm, yy] = d.split("/");
+  return `${yy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+}
+
+function dataUTC(d: string): number {
+  const [dd, mm, yy] = d.split("/").map(Number);
+  return Date.UTC(yy, mm - 1, dd);
 }
 
 /** Quantidade de dias (inclusive) entre duas datas DD/MM/AAAA; null se inválido. */
 export function diasNoPeriodo(inicio?: string, fim?: string): number | null {
   if (!inicio || !fim) return null;
-  const p = (d: string) => { const [dd, mm, yy] = d.split("/").map(Number); return Date.UTC(yy, mm - 1, dd); };
-  const n = Math.round((p(fim) - p(inicio)) / 86400000) + 1;
+  const n = Math.round((dataUTC(fim) - dataUTC(inicio)) / 86400000) + 1;
   return isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Texto dos dias de uma ocorrência para exibir:
+ *  - um dia:                "Data: 01/07/2026"
+ *  - dias seguidos:         "Período: 07/07/2026 a 09/07/2026 · 3 dias"
+ *  - dias com intervalos:   "Dias: 09/07–11/07, 16/07–18/07 · 6 dias"
+ */
+export function textoDiasOcorrencia(oc: { data?: string; dataInicio?: string; dias?: string[] }): string {
+  const dias = Array.isArray(oc.dias) && oc.dias.length > 1 ? oc.dias : null;
+  if (!dias) {
+    if (oc.dataInicio && oc.data && oc.dataInicio !== oc.data) {
+      const n = diasNoPeriodo(oc.dataInicio, oc.data);
+      return `Período: ${oc.dataInicio} a ${oc.data}${n ? ` · ${n} dias` : ""}`;
+    }
+    return oc.data ? `Data: ${oc.data}` : "";
+  }
+  // agrupa dias consecutivos em faixas
+  const faixas: [string, string][] = [];
+  for (const d of dias) {
+    const ultima = faixas[faixas.length - 1];
+    if (ultima && dataUTC(d) - dataUTC(ultima[1]) === 86400000) ultima[1] = d;
+    else faixas.push([d, d]);
+  }
+  if (faixas.length === 1) {
+    return `Período: ${faixas[0][0]} a ${faixas[0][1]} · ${dias.length} dias`;
+  }
+  const curto = (d: string) => d.slice(0, 5);
+  const partes = faixas.map(([a, b]) => (a === b ? curto(a) : `${curto(a)}–${curto(b)}`));
+  return `Dias: ${partes.join(", ")} · ${dias.length} dias`;
 }
