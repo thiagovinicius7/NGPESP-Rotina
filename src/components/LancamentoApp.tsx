@@ -108,6 +108,14 @@ export default function LancamentoApp({
     checkedOcs: any[];
   } | null>(null);
   const [confirmInputVal, setConfirmInputVal] = useState<string>("1");
+  // Título próprio na aba do navegador / barra de tarefas
+  useEffect(() => {
+    const anterior = document.title;
+    document.title = "⚡ Lançador SISREF — NGPESP";
+    return () => { document.title = anterior; };
+  }, []);
+  const confirmModalOpenRef = useRef(false);
+  useEffect(() => { confirmModalOpenRef.current = !!confirmModal?.show; }, [confirmModal]);
 
   // Listen for PWA beforeinstallprompt event
   useEffect(() => {
@@ -189,13 +197,36 @@ export default function LancamentoApp({
     : 0;
 
   // Copy Matrícula Helper
-  const copiarMatricula = useCallback((mat: string) => {
+  const copiarMatricula = useCallback(async (mat: string) => {
     if (!mat) return;
     const formatted = formatMatricula(mat);
-    navigator.clipboard.writeText(formatted);
-    setCopiedRecently(true);
-    setTimeout(() => setCopiedRecently(false), 1500);
-    onToast(`Matrícula copiada: ${formatted}`, 'info');
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(formatted);
+      ok = true;
+    } catch (_) {
+      // Plano B (quando a janela acabou de receber o foco, a API pode recusar)
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = formatted;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ok = document.execCommand("copy");
+        ta.remove();
+      } catch (_) {
+        ok = false;
+      }
+    }
+    if (ok) {
+      setCopiedRecently(true);
+      setTimeout(() => setCopiedRecently(false), 1500);
+      onToast(`Matrícula copiada: ${formatted}`, 'info');
+    } else {
+      onToast("Não consegui copiar a matrícula. Clique de novo.", 'err');
+    }
   }, [onToast]);
 
   // Toggle single occurrence check
@@ -712,6 +743,12 @@ export default function LancamentoApp({
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return; // do not hijack inputs
       }
+      // Com a janela de quantidade aberta, os atalhos da fila ficam desligados
+      if (confirmModalOpenRef.current) return;
+      // Enter/Espaço com um botão em foco já acionam o próprio botão: não confirmar lançamento junto
+      if ((e.key === 'Enter' || e.key === ' ') && target && (target.tagName === 'BUTTON' || target.tagName === 'A' || target.tagName === 'SELECT' || target.getAttribute('role') === 'button')) {
+        return;
+      }
 
       if (e.key === 'c' || e.key === 'C') {
         if (currentQueueServer) {
@@ -841,20 +878,20 @@ export default function LancamentoApp({
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex flex-col font-sans transition-colors duration-200">
       {/* APP TOP BAR - ULTRA RESPONSIVE FOR SPLIT SCREEN */}
-      <header className="bg-[var(--surface)]/95 border-b border-[var(--border)] sticky top-0 z-40 shadow-xs backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex items-center justify-between gap-2">
+      <header className="bg-[var(--surface)]/95 border-b border-[var(--border)] border-t-4 border-t-emerald-500 sticky top-0 z-40 shadow-xs backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex items-center justify-between gap-2 flex-wrap">
           {/* Logo & Queue Switcher Compact */}
-          <div className="flex items-center gap-2 min-w-0 flex-shrink-1">
-            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-xs flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shadow-xs flex-shrink-0">
               <Zap size={16} className="fill-current" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <h1 className="font-black text-xs sm:text-sm tracking-tight text-[var(--text)] truncate">
-                  SISREF Fila
+                <h1 className="font-black text-xs sm:text-sm tracking-tight text-[var(--text)] truncate hidden lg:block">
+                  Lançador SISREF
                 </h1>
-                <span className="hidden xs:inline-block text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 uppercase">
-                  Foco
+                <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-500 text-white uppercase tracking-wider">
+                  Lançador
                 </span>
               </div>
             </div>
@@ -883,7 +920,7 @@ export default function LancamentoApp({
           </div>
 
           {/* Quick Action Buttons - Square, Compact and Single-Row */}
-          <div className="flex items-center gap-1 flex-nowrap overflow-x-auto no-scrollbar flex-shrink-0">
+          <div className="flex items-center gap-1 flex-wrap justify-end min-w-0 ml-auto">
             {/* Casos Especiais Button */}
             <button
               type="button"
@@ -896,7 +933,7 @@ export default function LancamentoApp({
               title={`Gerenciar Casos Especiais SISREF (${casosEspeciaisList.length})`}
             >
               <Star size={14} className="fill-current text-amber-500" />
-              <span className="hidden sm:inline">Casos Especiais</span>
+              <span className="hidden xl:inline">Casos Especiais</span>
               <span className="px-1 min-w-[14px] h-[14px] rounded-full bg-amber-500 text-white font-mono text-[9px] font-black flex items-center justify-center">
                 {casosEspeciaisList.length}
               </span>
@@ -1134,7 +1171,7 @@ export default function LancamentoApp({
       </section>
 
       {/* MAIN LAUNCH CANVAS */}
-      <main className="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 flex flex-col justify-start">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-2 lg:px-6 py-2 lg:py-6 flex flex-col justify-start">
         {totalServers === 0 ? (
           /* EMPTY QUEUE STATE -> PROMPT TO PASTE SISREF */
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-8 shadow-sm text-center max-w-2xl mx-auto w-full my-auto">
@@ -1189,9 +1226,9 @@ export default function LancamentoApp({
           </div>
         ) : (
           /* ACTIVE SERVER LAUNCH CARD (HERO FOCUS WORKSPACE) */
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden flex flex-col my-2 transition-all">
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm flex flex-col my-1 lg:my-2 transition-all">
             {/* Card Header & Position */}
-            <div className="px-4 py-3 sm:px-6 sm:py-3.5 border-b border-[var(--border2)] bg-[var(--bg)]/70 flex items-center justify-between gap-3">
+            <div className="px-3 py-2 lg:px-6 lg:py-3.5 rounded-t-2xl border-b border-[var(--border2)] bg-[var(--bg)]/70 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 sm:gap-3 flex-wrap min-w-0">
                 <span className="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-mono font-black text-xs shadow-2xs flex-shrink-0">
                   {currentQueue.idx + 1} de {totalServers}
@@ -1226,14 +1263,14 @@ export default function LancamentoApp({
             </div>
 
             {/* Server Details & Matrícula Hero Section */}
-            <div className="p-5 sm:p-7 border-b border-[var(--border2)]">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="p-3 lg:p-7 border-b border-[var(--border2)]">
+              <div className="flex flex-row flex-wrap items-center justify-between gap-2 lg:gap-4">
                 {/* Name and Official Info */}
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs font-black text-[var(--blue-mid)] uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <div className="text-xs font-black text-[var(--blue-mid)] uppercase tracking-wider mb-1 flex items-center gap-1.5 max-lg:hidden">
                     <Sparkles size={13} /> Servidor Selecionado
                   </div>
-                  <h3 className="text-xl sm:text-2xl font-black text-[var(--text)] tracking-tight truncate" title={officialServer?.nome}>
+                  <h3 className="text-lg lg:text-2xl font-black text-[var(--text)] tracking-tight leading-tight lg:truncate" title={officialServer?.nome}>
                     {officialServer?.nome || "Servidor"}
                   </h3>
                   {officialServer && (
@@ -1248,21 +1285,22 @@ export default function LancamentoApp({
 
                 {/* Big Copyable Matrícula Pill */}
                 <div className="flex items-center gap-2 flex-shrink-0 self-start md:self-auto">
-                  <div 
-                    onClick={() => officialServer && copiarMatricula(officialServer.matricula)}
-                    className="p-3 sm:px-4 sm:py-3 bg-blue-50 dark:bg-blue-950/40 border-2 border-blue-500/40 hover:border-blue-600 rounded-xl flex items-center gap-3 cursor-pointer transition-all shadow-xs group"
+                  <button
+                    type="button"
+                    onClick={(e) => { e.currentTarget.blur(); officialServer && copiarMatricula(officialServer.matricula); }}
+                    className="text-left p-2 lg:px-4 lg:py-3 bg-blue-50 dark:bg-blue-950/40 border-2 border-blue-500/40 hover:border-blue-600 rounded-xl flex items-center gap-2 lg:gap-3 cursor-pointer transition-all shadow-xs group"
                     title="Clique ou pressione 'C' para copiar a matrícula"
                   >
                     <div>
                       <div className="text-[9px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest">Matrícula (C)</div>
-                      <div className="text-lg sm:text-xl font-mono font-black text-blue-700 dark:text-blue-300">
+                      <div className="text-base lg:text-xl font-mono font-black text-blue-700 dark:text-blue-300">
                         {officialServer?.matricula || "—"}
                       </div>
                     </div>
                     <div className={`p-2 rounded-lg ${copiedRecently ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white group-hover:scale-105'} transition-all`}>
                       {copiedRecently ? <Check size={16} /> : <Copy size={16} />}
                     </div>
-                  </div>
+                  </button>
                 </div>
               </div>
 
@@ -1304,7 +1342,7 @@ export default function LancamentoApp({
             </div>
 
             {/* Occurrences Checklist Matrix */}
-            <div className="p-5 sm:p-7 bg-[var(--bg)]/30 flex-1 flex flex-col gap-3">
+            <div className="p-3 lg:p-7 bg-[var(--bg)]/30 flex-1 flex flex-col gap-2 lg:gap-3">
               <div className="flex items-center justify-between mb-1">
                 <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1.5">
                   <CheckSquare size={14} className="text-blue-500" />
@@ -1320,14 +1358,14 @@ export default function LancamentoApp({
               </div>
 
               {/* Checkboxes Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 lg:gap-2.5">
                 {currentQueueServer.ocorrencias.map((oc, i) => {
                   const isChecked = !!oc.checked;
                   const ruleAlert = getOccurrenceRuleAlert(oc.tipo, oc.data);
                   return (
                     <label
                       key={i}
-                      className={`p-3.5 rounded-xl border flex items-start gap-3 cursor-pointer transition-all select-none ${
+                      className={`p-2.5 lg:p-3.5 rounded-xl border flex items-start gap-2 lg:gap-3 cursor-pointer transition-all select-none ${
                         ruleAlert 
                           ? `${ruleAlert.cardBorderClass} ${isChecked ? 'shadow-xs' : ''}`
                           : isChecked 
@@ -1383,12 +1421,12 @@ export default function LancamentoApp({
             </div>
 
             {/* Action Buttons Bar - Optimized for Split Screen and Safe Clicking */}
-            <div className="p-3 sm:p-5 bg-[var(--surface)] border-t border-[var(--border2)] flex flex-col gap-3">
+            <div className="p-2.5 lg:p-5 bg-[var(--surface)] border-t border-[var(--border2)] flex flex-col gap-2 lg:gap-3 sticky bottom-0 z-20 rounded-b-2xl shadow-[0_-6px_16px_rgba(0,0,0,0.18)]">
               {/* Primary Confirm Button with Full Width and High Visual Priority */}
               <button
                 type="button"
                 onClick={confirmarLancamento}
-                className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.99] text-white font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer"
+                className="w-full py-2.5 lg:py-3.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.99] text-white font-black text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-sm hover:shadow-md transition-all cursor-pointer"
                 title="Confirmar Lançamento (Enter ou Espaço)"
               >
                 <CheckCheck size={20} />
@@ -2070,13 +2108,22 @@ export default function LancamentoApp({
               />
             </div>
 
-            <div className="flex gap-3 mt-6">
+            <div className="flex gap-2 mt-6">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="flex-1 py-3 text-xs font-bold border border-[var(--border2)] hover:bg-[var(--bg)] rounded-xl text-[var(--text)] cursor-pointer"
+                title="Fechar sem lançar (Esc)"
+              >
+                Cancelar (Esc)
+              </button>
               <button 
                 type="button"
                 onClick={handleModalSkip}
-                className="flex-1 py-3 text-xs font-bold border border-[var(--border2)] hover:bg-[var(--bg)] rounded-xl text-[var(--text)] cursor-pointer"
+                className="flex-1 py-3 text-xs font-bold border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl text-amber-700 dark:text-amber-300 cursor-pointer"
+                title="Não lança e vai para o próximo servidor"
               >
-                Pular
+                Pular servidor
               </button>
               <button 
                 type="button"
