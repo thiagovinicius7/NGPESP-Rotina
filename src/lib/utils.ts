@@ -1,5 +1,6 @@
 import { AppState, ProdutividadeDia, CasoEspecialItem } from "../types";
 import { saveSnapshotToIDB, safeLocalStorageSet } from "./idbStorage.js";
+import { juntarDiaProdutividade } from "./produtividade.js";
 
 /**
  * Standardizes server matricula by trimming, removing non-alphanumeric chars,
@@ -134,37 +135,7 @@ export function mergeProdutividade(
 
   for (const [date, dayData] of Object.entries(p2)) {
     if (!dayData) continue;
-    if (!merged[date]) {
-      merged[date] = dayData;
-    } else {
-      const manha1 = Array.isArray(merged[date].manha) ? merged[date].manha : [];
-      const manha2 = Array.isArray(dayData.manha) ? dayData.manha : [];
-      const tarde1 = Array.isArray(merged[date].tarde) ? merged[date].tarde : [];
-      const tarde2 = Array.isArray(dayData.tarde) ? dayData.tarde : [];
-
-      const manhaMap = new Map();
-      [...manha1, ...manha2].forEach(item => {
-        if (item) {
-          const key = `${item.tipo}_${item.sistema}_${item.qtd}_${item.desc || ''}_${item.processosSei || ''}`;
-          manhaMap.set(key, item);
-        }
-      });
-
-      const tardeMap = new Map();
-      [...tarde1, ...tarde2].forEach(item => {
-        if (item) {
-          const key = `${item.tipo}_${item.sistema}_${item.qtd}_${item.desc || ''}_${item.processosSei || ''}`;
-          tardeMap.set(key, item);
-        }
-      });
-
-      merged[date] = {
-        situacao: dayData.situacao || merged[date].situacao || "normal",
-        sitObs: dayData.sitObs || merged[date].sitObs || "",
-        manha: Array.from(manhaMap.values()),
-        tarde: Array.from(tardeMap.values())
-      };
-    }
+    merged[date] = merged[date] ? juntarDiaProdutividade(merged[date], dayData) : dayData;
   }
   return merged;
 }
@@ -180,8 +151,8 @@ export function reconstructProdutividadeFromState(
   const getOrCreateDay = (dateIso: string): ProdutividadeDia => {
     if (!reconstructed[dateIso]) {
       reconstructed[dateIso] = {
-        situacao: "Trabalho Normal",
-        sitObs: "Reconstruído automaticamente a partir dos lançamentos",
+        situacao: "normal",
+        sitObs: "",
         manha: [],
         tarde: []
       };

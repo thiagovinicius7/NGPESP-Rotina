@@ -58,13 +58,22 @@ export interface AtividadeLancamento {
   sistema: string;
   desc: string;
   processosSei?: string;
+  id?: string;            // identificador estável (atividades salvas a partir de out/2026)
+  atualizadoEm?: number;  // quando foi salva/editada pela última vez (ms)
+  origem?: "balcao";      // atendimento registrado pela tela do balcão
+  inicio?: string;        // HH:MM (atendimento de balcão)
+  fim?: string;           // HH:MM (atendimento de balcão)
 }
 
 export interface ProdutividadeDia {
-  situacao: string;
+  situacao: string;       // situação geral (compatibilidade); "parcial" quando manhã ≠ tarde
   sitObs: string;
   manha: AtividadeLancamento[];
   tarde: AtividadeLancamento[];
+  situacaoManha?: string;
+  situacaoTarde?: string;
+  sitEm?: number;         // quando a situação foi alterada pela última vez (ms)
+  removidos?: string[];   // atividades excluídas (para não voltarem ao juntar com outro computador)
 }
 
 export interface NatalAnalysis {

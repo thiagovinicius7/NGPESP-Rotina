@@ -2,6 +2,10 @@ import React, { useState, useEffect, useMemo } from "react";
 import { AppState, HistoryEntry, QueueServer, LancamentoAnteriorItem } from "../types.js";
 import { getLocalDateIso, toYmdDate, cleanTipoName, getSaoPauloHour, normalizeMatricula } from "../lib/utils.js";
 import ModalColarLancamentosAnteriores from "./ModalColarLancamentosAnteriores.js";
+import { AtividadeLancamento, ProdutividadeDia } from "../types.js";
+import { situacaoTurno, labelSituacao, qtdNum } from "../lib/produtividade.js";
+import { copiarTabela, baixarCSV, imprimirTabela } from "../lib/exportar.js";
+import { TrendingUp, PhoneCall } from "lucide-react";
 import { 
   Users, CalendarCheck2, Network, Timer, List, PieChart, 
   Trash2, ChevronRight, Edit2, LineChart, Calendar as CalendarIcon, 
@@ -52,6 +56,17 @@ export interface ServidorSemLancamentoItem {
   totalHistorico: number;
 }
 
+type TipoRelatorio = 'afastamentos' | 'sem-lancamentos' | 'conf' | 'setor' | 'produtividade' | 'balcao';
+
+const TIPOS_RELATORIO: { id: TipoRelatorio; titulo: string; desc: string }[] = [
+  { id: 'afastamentos', titulo: 'Afastamentos lançados', desc: 'O que foi lançado, por mês' },
+  { id: 'sem-lancamentos', titulo: 'Sem lançamento', desc: 'Servidores sem nada desde um mês' },
+  { id: 'conf', titulo: 'Conferências', desc: 'Servidores conferidos, dia a dia' },
+  { id: 'setor', titulo: 'Por setor', desc: 'Conferências agrupadas por lotação' },
+  { id: 'produtividade', titulo: 'Produtividade', desc: 'Atividades num período' },
+  { id: 'balcao', titulo: 'Balcão', desc: 'Atendimentos num período' }
+];
+
 // Format YYYY-MM to readable Portuguese (e.g. "Outubro de 2025 (10/2025)")
 function formatarMesAnoExtenso(yyyyMm: string): string {
   if (!yyyyMm || !yyyyMm.includes("-")) return yyyyMm || "";
@@ -72,8 +87,74 @@ function formatarMesAnoCurto(yyyyMm: string): string {
   return `${m}/${y}`;
 }
 
+// ---------- peças visuais da tela de relatórios ----------
+const inputCls = "w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]";
+
+function Campo({ rotulo, children, className = "" }: { rotulo: string; children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`flex flex-col gap-1 min-w-0 ${className}`}>
+      <span className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider">{rotulo}</span>
+      {children}
+    </div>
+  );
+}
+
+function Segmentos<T extends string>({ valor, opcoes, onChange }: { valor: T; opcoes: { id: T; label: string }[]; onChange: (v: T) => void }) {
+  return (
+    <div className="flex p-0.5 bg-[var(--bg)] border border-[var(--border2)] rounded-xl">
+      {opcoes.map(o => (
+        <button key={o.id} type="button" onClick={() => onChange(o.id)}
+          className={`flex-1 px-2.5 py-1.5 text-[11px] font-bold rounded-lg whitespace-nowrap transition ${valor === o.id ? "bg-[var(--surface)] text-[var(--blue-mid)] shadow-xs" : "text-[var(--text2)] hover:text-[var(--text)]"}`}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BarraResultado({ resumo, copiado, onExportar, extra }: { resumo: React.ReactNode; copiado: boolean; onExportar: (c: "copiar" | "csv" | "imprimir") => void; extra?: React.ReactNode }) {
+  const btn = "px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1";
+  return (
+    <div className="flex items-center justify-between gap-2 flex-wrap px-4 lg:px-5 py-3 border-b border-[var(--border)] bg-[var(--bg)]/40">
+      <div className="text-xs font-semibold text-[var(--text2)] flex items-center gap-2 flex-wrap">{resumo}</div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {extra}
+        <button type="button" onClick={() => onExportar("copiar")} className={btn} title="Copiar para colar no Excel, Word ou SEI">
+          {copiado ? <Check size={13} className="text-emerald-500" /> : <FileSpreadsheet size={13} className="text-emerald-600" />} {copiado ? "Copiado" : "Copiar"}
+        </button>
+        <button type="button" onClick={() => onExportar("csv")} className={btn} title="Baixar planilha CSV"><Download size={13} /> CSV</button>
+        <button type="button" onClick={() => onExportar("imprimir")} className={btn} title="Imprimir só esta tabela"><Printer size={13} /> Imprimir</button>
+      </div>
+    </div>
+  );
+}
+
+const thCls = "px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-[var(--text2)] text-left";
+const tdCls = "px-3 py-2 align-top";
+
 export default function RelatorioPanel({ state, updateState, onToast, onNavigateToSisref }: RelatorioPanelProps) {
-  const [subTab, setSubTab] = useState<'afastamentos' | 'sem-lancamentos' | 'conf' | 'setor'>('afastamentos');
+  const [subTab, setSubTabRaw] = useState<TipoRelatorio>(() => {
+    try {
+      const v = localStorage.getItem("ngpesp_rel_tipo") as TipoRelatorio | null;
+      return v && TIPOS_RELATORIO.some(t => t.id === v) ? v : 'afastamentos';
+    } catch (_) { return 'afastamentos'; }
+  });
+  const setSubTab = (t: TipoRelatorio) => {
+    setSubTabRaw(t);
+    try { localStorage.setItem("ngpesp_rel_tipo", t); } catch (_) { /* ok */ }
+  };
+  // Afastamentos
+  const [agruparAfast, setAgruparAfast] = useState<'servidor' | 'tipo' | 'lista'>('servidor');
+  const [limiteAfast, setLimiteAfast] = useState(100);
+  // Conferências / setor
+  const [confMes, setConfMes] = useState<string>(() => getLocalDateIso().slice(0, 7));
+  const [confBusca, setConfBusca] = useState("");
+  const [limiteConf, setLimiteConf] = useState(150);
+  // Produtividade / balcão
+  const [perDe, setPerDe] = useState<string>(() => getLocalDateIso().slice(0, 8) + "01");
+  const [perAte, setPerAte] = useState<string>(() => getLocalDateIso());
+  const [prodAgrupar, setProdAgrupar] = useState<'dia' | 'tipo' | 'sistema'>('dia');
+  const [copiado, setCopiado] = useState(false);
   const [expandedSetores, setExpandedSetores] = useState<Record<string, boolean>>({});
   const [anoFiltro, setAnoFiltro] = useState<string>(() => new Date().getFullYear().toString());
 
@@ -363,7 +444,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
     (state.historico || []).forEach((h, hIdx) => {
       if (!h || !h.nome || !h.ts) return;
       const srv = (state.servidores || []).find(s => s.matricula === h.mat);
-      const setor = h.setor || srv?.lotacao || srv?.codLotacao || "Não especificado";
+      const setor = srv?.lotacao || srv?.codLotacao || h.setor || "Não especificado";
       const cargo = srv?.cargo || srv?.denominacao || "";
       const launchIso = h.ts;
       const launchYmd = toYmdDate(launchIso);
@@ -386,7 +467,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
           const parsedOcMonth = parseMonthYear(dataOc) || parseMonthYear(ocStr);
           const mesAnoOc = parsedOcMonth ? parsedOcMonth.yyyyMm : undefined;
 
-          const uniqueKey = `${h.mat}_${cleanTipo}_${dataOc}_${launchYmd}_${ocIdx}`;
+          const uniqueKey = `${normalizeMatricula(h.mat)}_${cleanTipo.toLowerCase()}_${dataOc}_${launchYmd}`;
           if (!seen.has(uniqueKey)) {
             seen.add(uniqueKey);
             list.push({
@@ -451,7 +532,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
               const parsedOcMonth = parseMonthYear(dataOc);
               const mesAnoOc = parsedOcMonth ? parsedOcMonth.yyyyMm : undefined;
 
-              const uniqueKey = `${server.matricula}_${cleanTipo}_${dataOc}_${lYmd}_${ocIdx}`;
+              const uniqueKey = `${normalizeMatricula(server.matricula)}_${cleanTipo.toLowerCase()}_${dataOc}_${lYmd}`;
               if (!seen.has(uniqueKey)) {
                 seen.add(uniqueKey);
                 list.push({
@@ -813,6 +894,8 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
       };
     });
   }, [state.servidores, corteMesAno, criterioSemLanc, launchesByServer, cedidosNormSet]);
+
+  const setoresSemLanc = useMemo(() => Array.from(new Set(relatorioSemLancamentoCompleto.map(s => String(s.setor || "")).filter(Boolean))).sort((a: string, b: string) => a.localeCompare(b, "pt-BR")), [relatorioSemLancamentoCompleto]);
 
   // Global summary statistics
   const statsSemLanc = useMemo(() => {
@@ -1301,468 +1384,350 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
   const totalAcumuladoCat = catStats.reduce((sum, c) => sum + c.acumulado, 0);
   const totalMeses = mesesList.reduce((sum, m) => sum + m.total, 0);
 
+  // ======================= DADOS DA NOVA TELA DE RELATÓRIOS =======================
+  const srvPorMat = useMemo(() => {
+    const m = new Map<string, any>();
+    (state.servidores || []).forEach(s => { if (s?.matricula) m.set(normalizeMatricula(s.matricula), s); });
+    return m;
+  }, [state.servidores]);
+  const lotacaoDe = (mat: string, fallback?: string) => {
+    const s = srvPorMat.get(normalizeMatricula(mat));
+    return s?.lotacao || s?.codLotacao || fallback || "Não especificado";
+  };
+
+  // Afastamentos agrupados
+  const afastPorServidor = useMemo(() => {
+    const m = new Map<string, { matricula: string; nome: string; setor: string; itens: AfastamentoReportItem[] }>();
+    afastamentosFiltrados.forEach(it => {
+      const k = normalizeMatricula(it.matricula) || it.nome;
+      if (!m.has(k)) m.set(k, { matricula: it.matricula, nome: it.nome, setor: it.setor, itens: [] });
+      m.get(k)!.itens.push(it);
+    });
+    const arr = Array.from(m.values());
+    arr.forEach(g => g.itens.sort((a, b) => (toYmdDate(a.dataOcorrencia) || "").localeCompare(toYmdDate(b.dataOcorrencia) || "")));
+    return arr.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [afastamentosFiltrados]);
+
+  const afastPorTipo = useMemo(() => {
+    const m = new Map<string, { tipo: string; qtd: number; servidores: Set<string> }>();
+    afastamentosFiltrados.forEach(it => {
+      if (!m.has(it.tipo)) m.set(it.tipo, { tipo: it.tipo, qtd: 0, servidores: new Set() });
+      const g = m.get(it.tipo)!;
+      g.qtd++;
+      g.servidores.add(normalizeMatricula(it.matricula));
+    });
+    return Array.from(m.values()).sort((a, b) => b.qtd - a.qtd);
+  }, [afastamentosFiltrados]);
+
+  // Conferências do mês escolhido
+  const confFiltradas = useMemo(() => {
+    const q = confBusca.trim().toLowerCase();
+    return (state.historico || [])
+      .map((h, idx) => ({ h, idx }))
+      .filter(({ h }) => h && h.ts && (confMes === "todos" || toYmdDate(h.ts).startsWith(confMes)))
+      .filter(({ h }) => !q || `${h.nome} ${h.mat} ${lotacaoDe(h.mat, h.setor)}`.toLowerCase().includes(q))
+      .sort((a, b) => String(b.h.ts).localeCompare(String(a.h.ts)));
+  }, [state.historico, confMes, confBusca, srvPorMat]);
+
+  const lancDe = (h: HistoryEntry) => Math.max(1, typeof h.qtd === "number" && h.qtd > 0 ? h.qtd : (h.ocorrencias?.length || 1));
+
+  const confPorSetor = useMemo(() => {
+    const m = new Map<string, { setor: string; conf: number; lanc: number; lista: HistoryEntry[] }>();
+    confFiltradas.forEach(({ h }) => {
+      const s = lotacaoDe(h.mat, h.setor);
+      if (!m.has(s)) m.set(s, { setor: s, conf: 0, lanc: 0, lista: [] });
+      const g = m.get(s)!;
+      g.conf++;
+      g.lanc += lancDe(h);
+      g.lista.push(h);
+    });
+    return Array.from(m.values()).sort((a, b) => b.conf - a.conf);
+  }, [confFiltradas]);
+
+  // Produtividade e balcão no período
+  const diasPeriodo = useMemo(() => {
+    const de = perDe <= perAte ? perDe : perAte;
+    const ate = perDe <= perAte ? perAte : perDe;
+    return Object.entries<ProdutividadeDia>(state.produtividade || {})
+      .map(([k, d]) => ({ iso: toYmdDate(k), d }))
+      .filter(x => x.iso >= de && x.iso <= ate)
+      .sort((a, b) => a.iso.localeCompare(b.iso));
+  }, [state.produtividade, perDe, perAte]);
+
+  const prodLinhas = useMemo(() => {
+    const out: { iso: string; turno: "manha" | "tarde"; a: AtividadeLancamento }[] = [];
+    diasPeriodo.forEach(({ iso, d }) => (["manha", "tarde"] as const).forEach(turno => (d?.[turno] || []).forEach(a => out.push({ iso, turno, a }))));
+    return out;
+  }, [diasPeriodo]);
+
+  const prodResumo = useMemo(() => {
+    const turnos: Record<string, number> = {};
+    diasPeriodo.forEach(({ d }) => (["manha", "tarde"] as const).forEach(t => {
+      const s = situacaoTurno(d, t);
+      turnos[s] = (turnos[s] || 0) + 0.5;
+    }));
+    const itens = prodLinhas.reduce((s, x) => s + qtdNum(x.a), 0);
+    return { itens, atividades: prodLinhas.length, dias: diasPeriodo.length, turnos };
+  }, [diasPeriodo, prodLinhas]);
+
+  const prodGrupos = useMemo(() => {
+    const m = new Map<string, { chave: string; rotulo: string; itens: number; atividades: number; detalhe: string[] }>();
+    prodLinhas.forEach(({ iso, a }) => {
+      const k = prodAgrupar === "dia" ? iso : prodAgrupar === "tipo" ? (a.tipo || "—") : (a.sistema || "—");
+      const rot = prodAgrupar === "dia" ? new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }) : k;
+      if (!m.has(k)) m.set(k, { chave: k, rotulo: rot, itens: 0, atividades: 0, detalhe: [] });
+      const g = m.get(k)!;
+      g.itens += qtdNum(a);
+      g.atividades++;
+      const det = prodAgrupar === "dia" ? `${a.tipo} (${a.sistema})` : prodAgrupar === "tipo" ? (a.sistema || "") : (a.tipo || "");
+      if (det && !g.detalhe.includes(det)) g.detalhe.push(det);
+    });
+    // dias sem atividade mas com situação (férias, atestado…) também aparecem no agrupamento por dia
+    if (prodAgrupar === "dia") diasPeriodo.forEach(({ iso }) => {
+      if (!m.has(iso)) m.set(iso, { chave: iso, rotulo: new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }), itens: 0, atividades: 0, detalhe: [] });
+    });
+    const arr = Array.from(m.values());
+    return prodAgrupar === "dia" ? arr.sort((a, b) => a.chave.localeCompare(b.chave)) : arr.sort((a, b) => b.itens - a.itens);
+  }, [prodLinhas, diasPeriodo, prodAgrupar]);
+
+  const situacaoDoDia = (iso: string) => {
+    const d = diasPeriodo.find(x => x.iso === iso)?.d;
+    const m = situacaoTurno(d, "manha"), t = situacaoTurno(d, "tarde");
+    return m === t ? labelSituacao(m) : `M: ${labelSituacao(m)} · T: ${labelSituacao(t)}`;
+  };
+
+  const balcaoLinhas = useMemo(() => {
+    const out: { iso: string; hora: string; texto: string; antigo?: boolean }[] = [];
+    prodLinhas.forEach(({ iso, turno, a }) => {
+      if (a.origem === "balcao" || a.sistema === "Balcão") out.push({ iso, hora: a.inicio ? `${a.inicio}${a.fim ? "–" + a.fim : ""}` : (turno === "manha" ? "Manhã" : "Tarde"), texto: a.desc || "" });
+    });
+    const de = perDe <= perAte ? perDe : perAte, ate = perDe <= perAte ? perAte : perDe;
+    Object.entries<string>(state.balcaoAtendimentos || {}).forEach(([iso, txt]) => {
+      if (iso < de || iso > ate) return;
+      String(txt || "").split("\n").map(l => l.trim()).filter(Boolean).forEach(l => out.push({ iso, hora: "—", texto: l, antigo: true }));
+    });
+    return out.sort((a, b) => (a.iso + a.hora).localeCompare(b.iso + b.hora));
+  }, [prodLinhas, state.balcaoAtendimentos, perDe, perAte]);
+
+  const fmtData = (iso: string) => iso ? iso.split("-").reverse().join("/") : "";
+  const rotuloPeriodo = `${fmtData(perDe <= perAte ? perDe : perAte)} a ${fmtData(perDe <= perAte ? perAte : perDe)}`;
+  const rotuloConfMes = confMes === "todos" ? "todos os meses" : formatarMesAnoCurto(confMes);
+
+  // Dados para copiar / CSV / imprimir, conforme o relatório escolhido
+  const dadosExport = (): { titulo: string; sub: string; arquivo: string; headers: string[]; rows: (string | number)[][] } | null => {
+    if (subTab === 'afastamentos') {
+      if (agruparAfast === 'tipo') return {
+        titulo: "Afastamentos lançados por tipo", sub: labelMesAtivo, arquivo: `afastamentos_por_tipo_${filtroMes}`,
+        headers: ["Tipo", "Quantidade", "Servidores"], rows: afastPorTipo.map(g => [g.tipo, g.qtd, g.servidores.size])
+      };
+      return {
+        titulo: "Afastamentos lançados", sub: `${labelMesAtivo} · ${afastamentosFiltrados.length} afastamento(s) de ${servidoresUnicosFiltrados} servidor(es)`, arquivo: `afastamentos_${filtroMes}`,
+        headers: ["Servidor", "Matrícula", "Lotação", "Afastamento", "Data do afastamento", "Lançado em"],
+        rows: (agruparAfast === 'servidor' ? afastPorServidor.flatMap(g => g.itens) : afastamentosFiltrados).map(it => [it.nome, it.matricula, it.setor, it.tipo, it.dataOcorrencia, it.dataLancamentoFormatada])
+      };
+    }
+    if (subTab === 'sem-lancamentos') return {
+      titulo: "Servidores sem lançamento", sub: `desde ${formatarMesAnoCurto(corteMesAno)} · ${servidoresSemLancFiltrados.length} servidor(es)`, arquivo: `sem_lancamento_${corteMesAno}`,
+      headers: ["Servidor", "Matrícula", "Cargo", "Lotação", "Último registro"],
+      rows: servidoresSemLancFiltrados.map(s => [s.nome, s.matricula, s.cargo, s.setor, s.ultimoLancamento ? `${s.ultimoLancamento.data} (${s.ultimoLancamento.tipo})` : "Nunca lançado"])
+    };
+    if (subTab === 'conf') return {
+      titulo: "Conferências", sub: `${rotuloConfMes} · ${confFiltradas.length} conferência(s)`, arquivo: `conferencias_${confMes}`,
+      headers: ["Data", "Hora", "Servidor", "Matrícula", "Lotação", "Lançamentos", "Ocorrências"],
+      rows: confFiltradas.map(({ h }) => [new Date(h.ts).toLocaleDateString("pt-BR"), new Date(h.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), h.nome, h.mat, lotacaoDe(h.mat, h.setor), lancDe(h), (h.ocorrencias || []).join("; ")])
+    };
+    if (subTab === 'setor') return {
+      titulo: "Conferências por setor", sub: rotuloConfMes, arquivo: `conferencias_por_setor_${confMes}`,
+      headers: ["Setor", "Conferências", "Lançamentos"], rows: confPorSetor.map(g => [g.setor, g.conf, g.lanc])
+    };
+    if (subTab === 'produtividade') return {
+      titulo: "Produtividade", sub: `${rotuloPeriodo} · ${prodResumo.itens} itens em ${prodResumo.atividades} atividade(s)`, arquivo: `produtividade_${perDe}_${perAte}`,
+      headers: ["Data", "Turno", "Situação", "Qtd", "Tipo", "Sistema", "Detalhes", "Processos SEI"],
+      rows: prodLinhas.map(({ iso, turno, a }) => [fmtData(iso), turno === "manha" ? "Manhã" : "Tarde", labelSituacao(situacaoTurno(diasPeriodo.find(x => x.iso === iso)?.d, turno)), qtdNum(a), a.tipo, a.sistema, a.desc || "", a.processosSei || ""])
+    };
+    if (subTab === 'balcao') return {
+      titulo: "Atendimentos de balcão", sub: `${rotuloPeriodo} · ${balcaoLinhas.length} atendimento(s)`, arquivo: `balcao_${perDe}_${perAte}`,
+      headers: ["Data", "Horário", "Atendimento"], rows: balcaoLinhas.map(b => [fmtData(b.iso), b.hora, b.texto])
+    };
+    return null;
+  };
+
+  const exportar = async (como: "copiar" | "csv" | "imprimir") => {
+    const d = dadosExport();
+    if (!d || d.rows.length === 0) { onToast("Nada para exportar com estes filtros.", "info"); return; }
+    if (como === "copiar") {
+      const ok = await copiarTabela(d.headers, d.rows);
+      if (ok) { setCopiado(true); setTimeout(() => setCopiado(false), 2000); }
+      onToast(ok ? `Tabela copiada (${d.rows.length} linhas). Cole no Excel, Word ou SEI.` : "Não foi possível copiar.", ok ? "ok" : "err");
+    } else if (como === "csv") {
+      baixarCSV(d.arquivo, d.headers, d.rows);
+      onToast("Arquivo CSV baixado.", "ok");
+    } else {
+      imprimirTabela(d.titulo, d.sub, d.headers, d.rows);
+    }
+  };
+
+  const iconeTipo: Record<TipoRelatorio, React.ReactNode> = {
+    'afastamentos': <FileText size={16} />,
+    'sem-lancamentos': <UserX size={16} />,
+    'conf': <List size={16} />,
+    'setor': <PieChart size={16} />,
+    'produtividade': <TrendingUp size={16} />,
+    'balcao': <PhoneCall size={16} />
+  };
+  const contagemTipo: Partial<Record<TipoRelatorio, number>> = {
+    'sem-lancamentos': statsSemLanc.totalSemLanc
+  };
+
   return (
-    <div className="flex flex-col gap-6">
-      
-      {/* METRIC CARDS GRID */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-          <div className="text-3xl font-black text-[var(--text)] tracking-tight">
-            {totalServidores}
-          </div>
-          <span className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wide mt-2 flex items-center gap-1">
-            <Users size={12} /> Servidores
-          </span>
-        </div>
+    <div className="flex flex-col gap-4 lg:gap-5">
 
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-          <div className="text-xs font-bold leading-relaxed text-[var(--text)]">
-            <div className="flex items-center gap-1 text-[var(--amber-mid)]">
-              <Sunrise size={12} /> Manhã: <span className="font-bold text-[var(--text)] ml-1">{totalSrvManha} srv / {totalLancManha} lanç</span>
-            </div>
-            <div className="flex items-center gap-1 text-[var(--blue-mid)] mt-1.5">
-              <Sunset size={12} /> Tarde: <span className="font-bold text-[var(--text)] ml-1">{totalSrvTarde} srv / {totalLancTarde} lanç</span>
-            </div>
-          </div>
-          <span className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wide mt-2 flex items-center gap-1">
-            <CalendarCheck2 size={12} /> Conferidos hoje
-          </span>
-        </div>
-
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-          <div className="text-3xl font-black text-[var(--text)] tracking-tight">
-            {totalSetores}
-          </div>
-          <span className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wide mt-2 flex items-center gap-1">
-            <Network size={12} /> Setores
-          </span>
-        </div>
-
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-          <div className="text-sm font-bold text-[var(--text)]">
-            {sessaoCount} <span className="text-xs text-[var(--text2)] font-semibold">srv.</span> / {sessaoLancamentos} <span className="text-xs text-[var(--text2)] font-semibold">lanç.</span>
-          </div>
-          <span className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wide mt-2 flex items-center gap-1">
-            <Timer size={12} /> Nesta sessão
-          </span>
+      {/* ESCOLHA DO RELATÓRIO */}
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 shadow-sm">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2">
+          {TIPOS_RELATORIO.map(t => {
+            const ativo = subTab === t.id;
+            return (
+              <button key={t.id} type="button" onClick={() => setSubTab(t.id)}
+                className={`text-left p-3 rounded-xl border transition ${ativo ? "border-[var(--blue-mid)] bg-[var(--blue-light)] ring-1 ring-[var(--blue-mid)]/30" : "border-[var(--border)] hover:bg-[var(--bg)]"}`}>
+                <div className={`flex items-center gap-1.5 text-xs font-black ${ativo ? "text-[var(--blue-mid)]" : "text-[var(--text)]"}`}>
+                  {iconeTipo[t.id]} <span className="truncate">{t.titulo}</span>
+                  {contagemTipo[t.id] ? <span className="ml-auto px-1.5 rounded-full text-[10px] bg-[var(--red)]/15 text-[var(--red)]">{contagemTipo[t.id]}</span> : null}
+                </div>
+                <div className="text-[10px] font-semibold text-[var(--text2)] mt-0.5 leading-tight">{t.desc}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* RELATÓRIOS NAVIGATION TABS */}
-      <div className="flex p-1 bg-[var(--border)] rounded-xl gap-1 select-none flex-wrap">
-        <button 
-          onClick={() => setSubTab('afastamentos')}
-          className={`flex-1 min-w-[170px] py-3 text-xs md:text-sm font-bold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'afastamentos' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)] hover:text-[var(--text)]'}`}
-        >
-          <FileText size={16} /> Relatório de Afastamentos
-        </button>
-        <button 
-          onClick={() => setSubTab('sem-lancamentos')}
-          className={`flex-1 min-w-[190px] py-3 text-xs md:text-sm font-bold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'sem-lancamentos' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)] hover:text-[var(--text)]'}`}
-        >
-          <UserX size={16} /> Servidores sem Lançamento
-          {statsSemLanc.totalSemLanc > 0 && (
-            <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--red)]/15 text-[var(--red)] font-black">
-              {statsSemLanc.totalSemLanc}
-            </span>
-          )}
-        </button>
-        <button 
-          onClick={() => setSubTab('conf')}
-          className={`flex-1 min-w-[130px] py-3 text-xs md:text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'conf' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)] hover:text-[var(--text)]'}`}
-        >
-          <List size={16} /> Conferências
-        </button>
-        <button 
-          onClick={() => setSubTab('setor')}
-          className={`flex-1 min-w-[110px] py-3 text-xs md:text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${subTab === 'setor' ? 'bg-[var(--surface)] text-[var(--blue-mid)] shadow-sm' : 'text-[var(--text2)] hover:text-[var(--text)]'}`}
-        >
-          <PieChart size={16} /> Por Setor
-        </button>
-      </div>
-
-      {/* TAB 1: RELATÓRIO DE AFASTAMENTOS LANÇADOS NO MÊS */}
+      {/* ============ AFASTAMENTOS LANÇADOS ============ */}
       {subTab === 'afastamentos' && (
-        <div className="flex flex-col gap-5">
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 md:p-6 shadow-sm flex flex-col gap-5">
-          
-          {/* HEADER & FILTERS */}
-          <div className="flex flex-col gap-4 border-b border-[var(--border)] pb-5">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-              <div>
-                <h3 className="text-base font-black text-[var(--text)] flex items-center gap-2">
-                  <FileText className="text-[var(--blue-mid)]" size={20} />
-                  Relatório Mensal de Afastamentos Lançados
-                </h3>
-                <p className="text-xs text-[var(--text2)] font-medium mt-0.5">
-                  Consulte os afastamentos lançados (Licença Médica, Atestado de Comparecimento, etc.) por mês, com nome, matrícula e data da ocorrência.
-                </p>
+        <>
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 lg:p-5 shadow-sm grid grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+            <Campo rotulo="Mês" className="col-span-1 lg:col-span-2">
+              <div className="flex gap-1">
+                <input type="month" value={filtroMes === "todos" ? "" : filtroMes} onChange={e => { setFiltroMes(e.target.value || "todos"); setLimiteAfast(100); }} className={inputCls} />
+                {filtroMes !== "todos" && <button type="button" onClick={() => setFiltroMes("todos")} className="px-2 text-[10px] font-bold rounded-lg border border-[var(--border2)] text-[var(--text2)]" title="Todos os meses">Todos</button>}
               </div>
-
-              {/* ACTION BUTTONS */}
-              <div className="flex flex-wrap items-center gap-2 mt-2 md:mt-0">
-                <button
-                  onClick={copiarTabelaExcel}
-                  className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm"
-                  title="Copiar tabela formatada para colar no Excel, Word ou SEI"
-                >
-                  {copiedFormat === "table" ? <Check size={14} className="text-emerald-500" /> : <FileSpreadsheet size={14} className="text-emerald-600" />}
-                  <span>{copiedFormat === "table" ? "Tabela Copiada!" : "Copiar Tabela"}</span>
-                </button>
-
-                <button
-                  onClick={copiarListaTexto}
-                  className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm"
-                  title="Copiar em formato de texto estruturado para despacho SEI"
-                >
-                  {copiedFormat === "text" ? <Check size={14} className="text-blue-500" /> : <Copy size={14} className="text-[var(--blue-mid)]" />}
-                  <span>{copiedFormat === "text" ? "Texto Copiado!" : "Copiar Texto"}</span>
-                </button>
-
-                <button
-                  onClick={exportarCSV}
-                  className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm"
-                  title="Baixar planilha CSV"
-                >
-                  <Download size={14} className="text-indigo-500" />
-                  <span>Exportar CSV</span>
-                </button>
-
-                <button
-                  onClick={() => setIsModalAnterioresOpen(true)}
-                  className="px-3 py-2 text-xs font-bold rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 flex items-center gap-1.5 transition shadow-sm"
-                  title="Colar ou gerenciar afastamentos e lançamentos feitos antes do sistema"
-                >
-                  <FileSpreadsheet size={14} className="text-amber-600 dark:text-amber-400" />
-                  <span>Lançamentos Anteriores</span>
-                  {lancamentosSalvos.length > 0 && (
-                    <span className="px-1.5 py-0.2 text-[10px] font-black rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                      {lancamentosSalvos.length}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  onClick={imprimirRelatorio}
-                  className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] flex items-center gap-1.5 transition shadow-sm hidden sm:flex"
-                  title="Imprimir relatório"
-                >
-                  <Printer size={14} />
-                  <span>Imprimir</span>
-                </button>
-              </div>
-            </div>
-
-            {/* FILTER CONTROLS BAR */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
-              
-              {/* 1. MÊS */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
-                  <CalendarIcon size={13} className="text-[var(--blue-mid)]" /> Mês de Referência
-                </label>
-                <div className="flex gap-1.5">
-                  <input
-                    type="month"
-                    value={filtroMes === "todos" ? "" : filtroMes}
-                    onChange={(e) => setFiltroMes(e.target.value || "todos")}
-                    className="flex-1 px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-bold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]"
-                  />
-                  {filtroMes !== "todos" ? (
-                    <button
-                      onClick={() => setFiltroMes("todos")}
-                      className="px-2 py-1 text-[11px] font-bold bg-[var(--border)] hover:bg-[var(--border2)] text-[var(--text)] rounded-xl whitespace-nowrap"
-                      title="Exibir todos os meses"
-                    >
-                      Todos
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => setFiltroMes(currentMonthIso)}
-                      className="px-2 py-1 text-[11px] font-bold bg-[var(--blue-mid)] text-white rounded-xl whitespace-nowrap"
-                      title="Voltar ao mês atual"
-                    >
-                      Mês Atual
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* 2. TIPO DE AFASTAMENTO */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
-                  <Filter size={13} className="text-[var(--blue-mid)]" /> Tipo de Afastamento
-                </label>
-                <select
-                  value={filtroTipo}
-                  onChange={(e) => setFiltroTipo(e.target.value)}
-                  className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-bold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]"
-                >
-                  <option value="todos">Todos os Tipos de Afastamento</option>
-                  {tiposDisponiveis.map(tipo => (
-                    <option key={tipo} value={tipo}>{tipo}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 3. BUSCA POR NOME / MATRÍCULA */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
-                  <Search size={13} className="text-[var(--blue-mid)]" /> Buscar Servidor / Matrícula
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={filtroBusca}
-                    onChange={(e) => setFiltroBusca(e.target.value)}
-                    placeholder="Nome, matrícula ou setor..."
-                    className="w-full pl-8 pr-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]"
-                  />
-                  <Search size={13} className="absolute left-2.5 top-2.5 text-[var(--text2)]" />
-                  {filtroBusca && (
-                    <button 
-                      onClick={() => setFiltroBusca("")} 
-                      className="absolute right-2.5 top-2.5 text-xs text-[var(--text2)] hover:text-[var(--text)]"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* 4. CRITÉRIO DE DATA */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1">
-                  <Clock size={13} className="text-[var(--blue-mid)]" /> Critério do Mês
-                </label>
-                <select
-                  value={criterioMes}
-                  onChange={(e) => setCriterioMes(e.target.value as any)}
-                  className="w-full px-3 py-2 bg-[var(--bg)] border border-[var(--border2)] rounded-xl text-xs font-semibold text-[var(--text)] outline-none focus:border-[var(--blue-mid)]"
-                >
-                  <option value="ambos">Lançamento ou Ocorrência (Ambos)</option>
-                  <option value="lancamento">Mês do Lançamento no Sistema</option>
-                  <option value="ocorrencia">Mês do Fato Gerador / Atestado</option>
-                </select>
-              </div>
-
-            </div>
-
-            {/* QUICK STATS CHIPS */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="bg-[var(--blue-mid)]/10 text-[var(--blue-mid)] border border-[var(--blue-mid)]/20 px-2.5 py-1 rounded-lg font-bold">
-                  {afastamentosFiltrados.length} afastamento(s) encontrado(s)
-                </span>
-                <span className="bg-[var(--bg)] text-[var(--text2)] border border-[var(--border)] px-2.5 py-1 rounded-lg font-semibold">
-                  {servidoresUnicosFiltrados} servidor(es) distinto(s)
-                </span>
-                {filtroTipo !== "todos" && (
-                  <span className="bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 px-2.5 py-1 rounded-lg font-bold">
-                    Filtro: {filtroTipo}
-                  </span>
-                )}
-                {filtroMes !== "todos" && (
-                  <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-lg font-bold">
-                    Mês: {labelMesAtivo}
-                  </span>
-                )}
-              </div>
-
-              {(filtroTipo !== "todos" || filtroBusca !== "" || filtroMes !== currentMonthIso) && (
-                <button
-                  onClick={() => {
-                    setFiltroMes(currentMonthIso);
-                    setFiltroTipo("todos");
-                    setFiltroBusca("");
-                  }}
-                  className="text-xs font-bold text-[var(--blue-mid)] hover:underline flex items-center gap-1"
-                >
-                  <RefreshCw size={12} /> Redefinir Filtros
-                </button>
-              )}
-            </div>
-
+            </Campo>
+            <Campo rotulo="Contar pelo mês do" className="col-span-1 lg:col-span-2">
+              <select value={criterioMes} onChange={e => setCriterioMes(e.target.value as any)} className={inputCls}>
+                <option value="ambos">Lançamento ou afastamento</option>
+                <option value="lancamento">Lançamento</option>
+                <option value="ocorrencia">Afastamento</option>
+              </select>
+            </Campo>
+            <Campo rotulo="Tipo" className="col-span-2 lg:col-span-3">
+              <select value={filtroTipo} onChange={e => { setFiltroTipo(e.target.value); setLimiteAfast(100); }} className={inputCls}>
+                <option value="todos">Todos os tipos</option>
+                {tiposDisponiveis.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Campo>
+            <Campo rotulo="Buscar" className="col-span-2 lg:col-span-2">
+              <input type="text" value={filtroBusca} onChange={e => { setFiltroBusca(e.target.value); setLimiteAfast(100); }} placeholder="Nome, matrícula ou setor" className={inputCls} />
+            </Campo>
+            <Campo rotulo="Mostrar" className="col-span-2 lg:col-span-3">
+              <Segmentos valor={agruparAfast} onChange={v => { setAgruparAfast(v); setLimiteAfast(100); }}
+                opcoes={[{ id: 'servidor', label: 'Por servidor' }, { id: 'tipo', label: 'Por tipo' }, { id: 'lista', label: 'Lista' }]} />
+            </Campo>
           </div>
 
-          {/* TABLE OF AFASTAMENTOS */}
-          <div className="border border-[var(--border)] rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr className="bg-[var(--bg)]/60 text-[var(--text2)] font-bold border-b border-[var(--border)]">
-                    <th className="p-3 w-12 text-center">Nº</th>
-                    <th className="p-3">Servidor</th>
-                    <th className="p-3 w-28">Matrícula</th>
-                    <th className="p-3">Lotação / Setor</th>
-                    <th className="p-3">Afastamento Lançado</th>
-                    <th className="p-3 w-36">Data do Afastamento</th>
-                    <th className="p-3 w-36">Data do Lançamento</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
-                  {afastamentosFiltrados.map((item, idx) => (
-                    <tr key={item.id || idx} className="hover:bg-[var(--bg)]/30 transition-colors">
-                      <td className="p-3 text-center font-mono font-bold text-[var(--text2)] text-[11px]">
-                        {idx + 1}
-                      </td>
-                      <td className="p-3 font-bold text-[var(--text)]">
-                        <div className="text-sm">{item.nome}</div>
-                        {item.cargo && <div className="text-[10px] text-[var(--text2)] font-normal mt-0.5">{item.cargo}</div>}
-                      </td>
-                      <td className="p-3 font-mono font-bold text-[var(--blue-mid)]">
-                        {item.matricula}
-                      </td>
-                      <td className="p-3 text-[var(--text2)] font-medium">
-                        {item.setor}
-                      </td>
-                      <td className="p-3">
-                        <span className="inline-block px-2.5 py-1 rounded-lg text-xs font-bold bg-[var(--blue-light)] text-[var(--blue-mid)] border border-[var(--blue-mid)]/20">
-                          {item.tipo}
-                        </span>
-                      </td>
-                      <td className="p-3 font-mono font-bold text-[var(--text)]">
-                        {item.dataOcorrencia || "—"}
-                      </td>
-                      <td className="p-3 font-mono text-[var(--text2)] text-[11px]">
-                        {item.dataLancamentoFormatada || "—"}
-                      </td>
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden">
+            <BarraResultado
+              copiado={copiado}
+              onExportar={exportar}
+              resumo={<>
+                <b className="text-[var(--text)] text-sm">{afastamentosFiltrados.length}</b> afastamento(s) de
+                <b className="text-[var(--text)] text-sm">{servidoresUnicosFiltrados}</b> servidor(es) · {labelMesAtivo}
+                {(filtroTipo !== "todos" || filtroBusca) && (
+                  <button type="button" onClick={() => { setFiltroTipo("todos"); setFiltroBusca(""); }} className="text-[var(--blue-mid)] font-bold hover:underline">limpar filtros</button>
+                )}
+              </>}
+              extra={
+                <button type="button" onClick={() => setIsModalAnterioresOpen(true)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300" title="Lançamentos feitos antes de usar o sistema">
+                  Anteriores ao sistema{lancamentosSalvos.length ? ` (${lancamentosSalvos.length})` : ""}
+                </button>
+              }
+            />
+
+            {agruparAfast === 'tipo' ? (
+              <table className="w-full text-xs">
+                <thead className="border-b border-[var(--border)]"><tr><th className={thCls}>Tipo</th><th className={`${thCls} text-right`}>Afastamentos</th><th className={`${thCls} text-right`}>Servidores</th><th className={thCls}></th></tr></thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {afastPorTipo.map(g => (
+                    <tr key={g.tipo} className="hover:bg-[var(--bg)]">
+                      <td className={`${tdCls} font-bold text-[var(--text)]`}>{g.tipo}</td>
+                      <td className={`${tdCls} text-right font-black text-[var(--blue-mid)]`}>{g.qtd}</td>
+                      <td className={`${tdCls} text-right font-bold`}>{g.servidores.size}</td>
+                      <td className={`${tdCls} text-right`}><button type="button" onClick={() => { setFiltroTipo(g.tipo); setAgruparAfast('servidor'); }} className="text-[11px] font-bold text-[var(--blue-mid)] hover:underline">ver servidores</button></td>
                     </tr>
                   ))}
-
-                  {afastamentosFiltrados.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="p-12 text-center">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <FileText size={32} className="text-[var(--text2)]/40" />
-                          <div className="text-sm font-bold text-[var(--text)]">
-                            Nenhum afastamento encontrado para os filtros selecionados.
-                          </div>
-                          <p className="text-xs text-[var(--text2)] max-w-md">
-                            Tente selecionar outro mês de referência, escolher "Todos os Tipos de Afastamento" ou limpar os termos da busca.
-                          </p>
-                          {(filtroTipo !== "todos" || filtroBusca !== "" || filtroMes !== "todos") && (
-                            <button
-                              onClick={() => {
-                                setFiltroMes("todos");
-                                setFiltroTipo("todos");
-                                setFiltroBusca("");
-                              }}
-                              className="mt-2 px-4 py-2 bg-[var(--blue-mid)] text-white text-xs font-bold rounded-xl shadow-sm hover:opacity-90 transition"
-                            >
-                              Ver Todos os Afastamentos
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
-            </div>
+            ) : agruparAfast === 'servidor' ? (
+              <table className="w-full text-xs">
+                <thead className="border-b border-[var(--border)]"><tr><th className={thCls}>Servidor</th><th className={thCls}>Afastamentos (data)</th><th className={`${thCls} hidden md:table-cell`}>Lançado em</th></tr></thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {afastPorServidor.slice(0, limiteAfast).map(g => (
+                    <tr key={g.matricula + g.nome} className="hover:bg-[var(--bg)]">
+                      <td className={`${tdCls} w-[38%]`}>
+                        <div className="font-bold text-[var(--text)] text-[13px]">{g.nome}</div>
+                        <div className="text-[11px] text-[var(--text2)] font-mono">{g.matricula}<span className="font-sans"> · {g.setor}</span></div>
+                      </td>
+                      <td className={tdCls}>
+                        <div className="flex flex-col gap-1">
+                          {Array.from(g.itens.reduce((m, it) => {
+                            const k = `${it.dataOcorrencia}|${it.tipo}`;
+                            const e = m.get(k) || { it, vezes: 0 };
+                            e.vezes++;
+                            return m.set(k, e);
+                          }, new Map<string, { it: AfastamentoReportItem; vezes: number }>()).values()).map(({ it, vezes }) => (
+                            <div key={it.id} className="flex items-baseline gap-2 flex-wrap">
+                              <span className="font-mono font-bold text-[var(--text)]">{it.dataOcorrencia}</span>
+                              <span className="text-[var(--text2)] font-semibold">{it.tipo}</span>
+                              {vezes > 1 && <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-500/15 text-amber-700 dark:text-amber-300" title="O mesmo afastamento aparece lançado mais de uma vez">lançado {vezes}x</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className={`${tdCls} hidden md:table-cell text-[11px] text-[var(--text2)] font-mono whitespace-nowrap`}>
+                        {Array.from(new Set(g.itens.map(it => it.dataLancamentoIso ? new Date(it.dataLancamentoIso).toLocaleDateString("pt-BR") : "anterior"))).join(", ")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <table className="w-full text-xs">
+                <thead className="border-b border-[var(--border)]"><tr><th className={thCls}>Data</th><th className={thCls}>Servidor</th><th className={thCls}>Afastamento</th><th className={`${thCls} hidden md:table-cell`}>Lançado em</th></tr></thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {afastamentosFiltrados.slice(0, limiteAfast).map(it => (
+                    <tr key={it.id} className="hover:bg-[var(--bg)]">
+                      <td className={`${tdCls} font-mono font-bold whitespace-nowrap`}>{it.dataOcorrencia}</td>
+                      <td className={tdCls}><div className="font-bold text-[var(--text)]">{it.nome}</div><div className="text-[11px] text-[var(--text2)] font-mono">{it.matricula}</div></td>
+                      <td className={`${tdCls} text-[var(--text2)] font-semibold`}>{it.tipo}</td>
+                      <td className={`${tdCls} hidden md:table-cell text-[11px] text-[var(--text2)] font-mono whitespace-nowrap`}>{it.dataLancamentoFormatada}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {agruparAfast !== 'tipo' && (agruparAfast === 'servidor' ? afastPorServidor.length : afastamentosFiltrados.length) > limiteAfast && (
+              <div className="p-3 text-center border-t border-[var(--border)]">
+                <button type="button" onClick={() => setLimiteAfast(l => l + 200)} className="px-4 py-2 text-xs font-bold rounded-lg bg-[var(--blue-light)] text-[var(--blue-mid)]">
+                  Mostrar mais ({(agruparAfast === 'servidor' ? afastPorServidor.length : afastamentosFiltrados.length) - limiteAfast} restantes)
+                </button>
+              </div>
+            )}
+            {afastamentosFiltrados.length === 0 && <div className="p-10 text-center text-xs font-bold text-[var(--text2)]">Nenhum afastamento com estes filtros.</div>}
           </div>
-
-        </div>
-
-        {/* STATIC RELATORIO SECTIONS TABLE INJECT */}
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
-          <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-4 flex items-center gap-1.5">
-            <LineChart size={16} /> Estatísticas por Tipo de Lançamento
-          </div>
-          <div className="border border-[var(--border)] rounded-xl overflow-hidden text-xs">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="bg-[var(--bg)]/40 text-[var(--text2)]">
-                  <th className="p-3 text-left">Tipo de Lançamento</th>
-                  <th className="p-3 text-center w-28">Diário (Hoje)</th>
-                  <th className="p-3 text-center w-28">Acumulado</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)] font-semibold">
-                {catStats.map((c, i) => (
-                  <tr key={i} className="hover:bg-[var(--bg)]/5 text-[var(--text)]">
-                    <td className="p-3 text-sm font-bold">{c.tipo}</td>
-                    <td className="p-3 text-center text-sm font-black text-[var(--blue-mid)]">{c.hoje}</td>
-                    <td className="p-3 text-center text-sm font-black">{c.acumulado}</td>
-                  </tr>
-                ))}
-                {catStats.length > 0 && (
-                  <tr className="bg-[var(--bg)]/20 font-black text-[var(--text)] border-t border-[var(--border)]">
-                    <td className="p-3 text-sm">TOTAL</td>
-                    <td className="p-3 text-center text-sm text-[var(--blue-mid)]">{totalHojeCat}</td>
-                    <td className="p-3 text-center text-sm">{totalAcumuladoCat}</td>
-                  </tr>
-                )}
-                {catStats.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="p-4 text-center text-[var(--text2)]">
-                      Nenhum tipo de lançamento registrado ainda.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* REF DATE GROUP BY MONTH SECTION */}
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
-          <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-            <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1.5">
-              <CalendarIcon size={16} /> Estatísticas por Mês de Referência
-            </div>
-            <select 
-              value={anoFiltro}
-              onChange={(e) => setAnoFiltro(e.target.value)}
-              className="px-2.5 py-1 text-xs font-bold rounded bg-[var(--bg)]"
-            >
-              <option value="todos">Todos os Anos</option>
-              {anos.map(y => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="border border-[var(--border)] rounded-xl overflow-hidden">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="bg-[var(--bg)]/40 text-[var(--text2)] text-xs">
-                  <th className="p-3 text-left">Mês de Referência (Ocorrência)</th>
-                  <th className="p-3 text-center w-36">Lançamentos Efetuados</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)] font-semibold text-xs">
-                {mesesList.map((m, i) => (
-                  <tr key={i} className="hover:bg-[var(--bg)]/5 text-[var(--text)]">
-                    <td className="p-3 text-sm font-bold font-mono">{m.mesAno}</td>
-                    <td className="p-3 text-center text-sm font-black text-[var(--green-mid)]">{m.total}</td>
-                  </tr>
-                ))}
-                {mesesList.length > 0 && (
-                  <tr className="bg-[var(--bg)]/20 font-black text-[var(--text)] border-t border-[var(--border)]">
-                    <td className="p-3 text-sm">TOTAL</td>
-                    <td className="p-3 text-center text-sm text-[var(--green-mid)]">{totalMeses}</td>
-                  </tr>
-                )}
-                {mesesList.length === 0 && (
-                  <tr>
-                    <td colSpan={2} className="p-4 text-center text-[var(--text2)]">
-                      Nenhum lançamento identificado nos meses.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-      </div>
+        </>
       )}
 
-      {/* TAB 2: SERVIDORES SEM LANÇAMENTO */}
+      {/* ============ SERVIDORES SEM LANÇAMENTO ============ */}
       {subTab === 'sem-lancamentos' && (
-        <div className="flex flex-col gap-5">
-
+        <div className="flex flex-col gap-4 lg:gap-5">
           {/* BANNER NOTIFICAÇÃO SE FILA CRIADA */}
           {filaCriadaSucesso && (
             <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-900 dark:text-emerald-200 shadow-sm">
@@ -1788,343 +1753,63 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
             </div>
           )}
 
-          {/* FILTRO PRINCIPAL DE DATA DE CORTE */}
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 md:p-6 shadow-sm flex flex-col gap-5">
-            
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-[var(--border)] pb-5">
-              <div>
-                <h3 className="text-base font-black text-[var(--text)] flex items-center gap-2">
-                  <UserX className="text-[var(--red)]" size={20} />
-                  Servidores sem Lançamento no SISREF
-                </h3>
-                <p className="text-xs text-[var(--text2)] mt-1">
-                  Localiza todos os servidores ativos que não possuem nenhum afastamento ou lançamento registrado a partir da data de corte estipulada.
-                </p>
-              </div>
-
-              {/* CONTROLES DO MÊS DE CORTE E LANÇAMENTOS ANTERIORES */}
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex flex-wrap items-center gap-2 bg-[var(--bg)]/70 p-2 rounded-xl border border-[var(--border)]">
-                  <span className="text-xs font-bold text-[var(--text2)] flex items-center gap-1 pl-1">
-                    <CalendarIcon size={14} /> Data de Corte:
-                  </span>
-                  <input 
-                    type="month" 
-                    value={corteMesAno}
-                    onChange={(e) => {
-                      setCorteMesAno(e.target.value);
-                      setSelectedMatriculasSemLanc({});
-                    }}
-                    className="px-2.5 py-1.5 text-xs font-bold font-mono rounded-lg bg-[var(--surface)] border border-[var(--border)] text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-mid)]"
-                  />
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => {
-                        setCorteMesAno("2025-10");
-                        setSelectedMatriculasSemLanc({});
-                      }}
-                      className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2025-10" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
-                      title="Definir corte para Outubro de 2025"
-                    >
-                      10/2025
-                    </button>
-                    <button
-                      onClick={() => {
-                        setCorteMesAno("2026-01");
-                        setSelectedMatriculasSemLanc({});
-                      }}
-                      className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2026-01" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
-                      title="Definir corte para Janeiro de 2026"
-                    >
-                      01/2026
-                    </button>
-                    <button
-                      onClick={() => {
-                        setCorteMesAno("2026-05");
-                        setSelectedMatriculasSemLanc({});
-                      }}
-                      className={`px-2.5 py-1 text-xs font-black rounded-lg transition ${corteMesAno === "2026-05" ? "bg-[var(--blue-mid)] text-white shadow-sm" : "bg-[var(--surface)] text-[var(--text2)] hover:text-[var(--text)] border border-[var(--border)]"}`}
-                      title="Definir corte para Maio de 2026"
-                    >
-                      05/2026
-                    </button>
-                  </div>
-                </div>
-
-                {/* BOTÃO COLAR LANÇAMENTOS ANTERIORES */}
-                <button
-                  onClick={() => setIsModalAnterioresOpen(true)}
-                  className="px-3.5 py-2.5 text-xs font-bold rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 dark:text-amber-200 flex items-center gap-2 transition shadow-sm"
-                  title="Colar dados de afastamentos antigos para o sistema identificar e dar baixa neste relatório"
-                >
-                  <FileSpreadsheet size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
-                  <span>Colar Lançamentos Anteriores</span>
-                  {lancamentosSalvos.length > 0 && (
-                    <span className="px-1.5 py-0.2 text-[10px] font-black rounded-full bg-amber-500/25 text-amber-900 dark:text-amber-100">
-                      {lancamentosSalvos.length} salvo(s)
-                    </span>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* BANNER / CALLOUT LANÇAMENTOS ANTERIORES */}
-            {lancamentosSalvos.length > 0 ? (
-              <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200">
-                  <FileSpreadsheet size={18} className="text-amber-600 dark:text-amber-400 shrink-0" />
-                  <div>
-                    <span className="font-black">{lancamentosSalvos.length} lançamento(s) anterior(es) ao sistema</span> cadastrado(s). Os servidores com ocorrências a partir de {formatarMesAnoCurto(corteMesAno)} já foram baixados e saíram da lista de pendentes!
-                  </div>
-                </div>
-                <button
-                  onClick={() => setIsModalAnterioresOpen(true)}
-                  className="self-start sm:self-auto px-3 py-1.5 text-xs font-bold text-amber-800 dark:text-amber-200 bg-[var(--surface)] hover:bg-[var(--bg)] rounded-lg border border-amber-500/30 shadow-xs transition shrink-0"
-                >
-                  Gerenciar / Colar Mais
-                </button>
-              </div>
-            ) : (
-              <div className="bg-[var(--bg)]/50 border border-dashed border-[var(--border)] rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-[var(--text2)]">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet size={16} className="text-[var(--blue-mid)] shrink-0" />
-                  <span>Fez lançamentos no SISREF antes de usar o sistema? Cole os dados para o sistema identificar os afastamentos e retirar os servidores deste relatório.</span>
-                </div>
-                <button
-                  onClick={() => setIsModalAnterioresOpen(true)}
-                  className="self-start sm:self-auto px-3 py-1.5 text-xs font-bold bg-[var(--blue-mid)] text-white hover:opacity-90 rounded-lg shrink-0 flex items-center gap-1.5 transition shadow-xs"
-                >
-                  <Plus size={13} /> Colar Lançamentos Anteriores
-                </button>
-              </div>
-            )}
-
-            {/* CRITÉRIO DE DATA & BADGE INFORMATIVO */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-[var(--bg)]/40 p-3 rounded-xl border border-[var(--border)]">
-              <div className="flex items-center gap-2 font-semibold text-[var(--text2)]">
-                <span className="font-bold text-[var(--text)]">Critério de Verificação:</span>
-                <span>Qual data considerar para aferir se o servidor teve lançamento?</span>
-              </div>
-              <div className="flex gap-1 select-none flex-wrap">
-                <button
-                  onClick={() => setCriterioSemLanc('qualquer')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition text-xs ${criterioSemLanc === 'qualquer' ? 'bg-[var(--blue-mid)] text-white shadow-xs' : 'bg-[var(--surface)] text-[var(--text2)] border border-[var(--border)]'}`}
-                  title="Considera tanto a data do fato gerador quanto a data do lançamento no sistema"
-                >
-                  Ambos (Lançamento ou Ocorrência)
-                </button>
-                <button
-                  onClick={() => setCriterioSemLanc('lancamento')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition text-xs ${criterioSemLanc === 'lancamento' ? 'bg-[var(--blue-mid)] text-white shadow-xs' : 'bg-[var(--surface)] text-[var(--text2)] border border-[var(--border)]'}`}
-                  title="Considera a data em que o lançamento foi realizado"
-                >
-                  Apenas Data de Lançamento
-                </button>
-                <button
-                  onClick={() => setCriterioSemLanc('ocorrencia')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition text-xs ${criterioSemLanc === 'ocorrencia' ? 'bg-[var(--blue-mid)] text-white shadow-xs' : 'bg-[var(--surface)] text-[var(--text2)] border border-[var(--border)]'}`}
-                  title="Considera a data de ocorrência do fato gerador"
-                >
-                  Apenas Fato Gerador
-                </button>
-              </div>
-            </div>
-
-            {/* SUMMARY STAT CARDS */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-4 flex flex-col justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wide block">
-                    Sem Lançamento
-                  </span>
-                  <div className="text-2xl lg:text-3xl font-black text-rose-600 dark:text-rose-400 mt-1">
-                    {statsSemLanc.totalSemLanc}
-                  </div>
-                </div>
-                <span className="text-[11px] text-[var(--text2)] font-semibold mt-2">
-                  {Math.round((statsSemLanc.totalSemLanc / (statsSemLanc.totalGeralServidores || 1)) * 100)}% de {statsSemLanc.totalGeralServidores} servidores
-                </span>
-              </div>
-
-              <div className="bg-[var(--bg)]/50 border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-[var(--text2)] uppercase tracking-wide block">
-                    Nunca Lançados
-                  </span>
-                  <div className="text-2xl lg:text-3xl font-black text-[var(--text)] mt-1">
-                    {statsSemLanc.totalNunca}
-                  </div>
-                </div>
-                <span className="text-[11px] text-[var(--text2)] font-semibold mt-2">
-                  Sem registros no histórico geral
-                </span>
-              </div>
-
-              <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 flex flex-col justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-[var(--blue-mid)] uppercase tracking-wide block">
-                    Registro Anterior
-                  </span>
-                  <div className="text-2xl lg:text-3xl font-black text-[var(--blue-mid)] mt-1">
-                    {statsSemLanc.totalComAnterior}
-                  </div>
-                </div>
-                <span className="text-[11px] text-[var(--text2)] font-semibold mt-2">
-                  Lançamento antes de {formatarMesAnoCurto(corteMesAno)}
-                </span>
-              </div>
-
-              <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4 flex flex-col justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide block">
-                    Total na Base
-                  </span>
-                  <div className="text-2xl lg:text-3xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                    {statsSemLanc.totalGeralServidores}
-                  </div>
-                </div>
-                <span className="text-[11px] text-[var(--text2)] font-semibold mt-2">
-                  {statsSemLanc.totalCedidos} cedido(s) identificado(s)
-                </span>
-              </div>
-            </div>
-
-            {/* FILTROS SECUNDÁRIOS: BUSCA, SETOR, CEDIDOS, ORDENAÇÃO */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1 text-xs">
-              
-              <div className="md:col-span-4 relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text2)]" />
-                <input 
-                  type="text"
-                  placeholder="Filtrar por nome, matrícula, cargo ou setor..."
-                  value={filtroBuscaSemLanc}
-                  onChange={(e) => setFiltroBuscaSemLanc(e.target.value)}
-                  className="w-full pl-9 pr-8 py-2 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-semibold text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-mid)]"
-                />
-                {filtroBuscaSemLanc && (
-                  <button
-                    onClick={() => setFiltroBuscaSemLanc("")}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--text2)] hover:text-[var(--text)] font-bold"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-
-              <div className="md:col-span-3">
-                <select
-                  value={filtroSetorSemLanc}
-                  onChange={(e) => setFiltroSetorSemLanc(e.target.value)}
-                  className="w-full py-2 px-3 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-semibold text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-mid)] truncate"
-                >
-                  <option value="todos">Todos os Setores ({setoresUnicos.length})</option>
-                  {setoresUnicos.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="md:col-span-3">
-                <select
-                  value={ordenacaoSemLanc}
-                  onChange={(e) => setOrdenacaoSemLanc(e.target.value as any)}
-                  className="w-full py-2 px-3 bg-[var(--bg)] border border-[var(--border)] rounded-xl text-xs font-semibold text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--blue-mid)]"
-                >
-                  <option value="nome">Ordenar por Nome (A-Z)</option>
-                  <option value="matricula">Ordenar por Matrícula</option>
-                  <option value="setor">Ordenar por Setor</option>
-                  <option value="ultimoAntigo">Mais tempo sem lançamento</option>
-                  <option value="ultimoRecente">Mais recente no histórico</option>
-                </select>
-              </div>
-
-              <div className="md:col-span-2 flex items-center gap-3">
-                <label className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] font-semibold text-[var(--text2)]">
-                  <input
-                    type="checkbox"
-                    checked={ocultarCedidosSemLanc}
-                    onChange={(e) => setOcultarCedidosSemLanc(e.target.checked)}
-                    className="rounded text-[var(--blue-mid)]"
-                  />
-                  <span>Ocultar Cedidos</span>
-                </label>
-              </div>
-
-            </div>
-
-            {/* ACTIONS TOOLBAR: ENVIAR FILA AVULSA & EXPORTAÇÕES */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-[var(--border)]">
-              
-              {/* STATUS DE SELEÇÃO */}
-              <div className="flex items-center gap-2 text-xs">
-                <button
-                  onClick={toggleSelectAllSemLanc}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] hover:bg-[var(--surface)] text-[var(--text)] font-bold transition"
-                >
-                  {todosSelecionados ? <CheckSquare size={14} className="text-[var(--blue-mid)]" /> : <Square size={14} />}
-                  <span>{todosSelecionados ? "Desmarcar Todos" : "Selecionar Todos"}</span>
-                </button>
-                <span className="font-semibold text-[var(--text2)]">
-                  <strong className="text-[var(--text)]">{selecionadosCount}</strong> de {servidoresSemLancFiltrados.length} selecionado(s)
-                </span>
-              </div>
-
-              {/* BOTÕES DE AÇÃO */}
-              <div className="flex flex-wrap items-center gap-2">
-                
-                {/* BOTÃO PRINCIPAL: ENVIAR PARA FILA AVULSA */}
-                <button
-                  onClick={abrirModalFilaAvulsa}
-                  disabled={selecionadosCount === 0}
-                  className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition shadow-sm ${
-                    selecionadosCount > 0 
-                      ? "bg-[var(--blue-mid)] hover:bg-blue-600 text-white cursor-pointer" 
-                      : "bg-[var(--border)] text-[var(--text2)]/60 cursor-not-allowed"
-                  }`}
-                  title="Enviar os servidores selecionados para uma Fila Avulsa no SISREF"
-                >
-                  <Layers size={15} />
-                  <span>Enviar para Fila Avulsa ({selecionadosCount})</span>
-                </button>
-
-                {/* COPIAR EXCEL */}
-                <button
-                  onClick={copiarTabelaExcelSemLanc}
-                  className="px-3 py-2 bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
-                  title="Copiar dados tabulados para colar no Excel, Word ou SEI"
-                >
-                  {copiedFormatSemLanc === "table" ? <Check size={14} className="text-emerald-500" /> : <FileSpreadsheet size={14} />}
-                  <span>{copiedFormatSemLanc === "table" ? "Copiado!" : "Excel"}</span>
-                </button>
-
-                {/* COPIAR LISTA TEXTO */}
-                <button
-                  onClick={copiarListaTextoSemLanc}
-                  className="px-3 py-2 bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
-                  title="Copiar relação textual para despacho SEI"
-                >
-                  {copiedFormatSemLanc === "text" ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                  <span>{copiedFormatSemLanc === "text" ? "Copiado!" : "Texto / SEI"}</span>
-                </button>
-
-                {/* EXPORTAR CSV */}
-                <button
-                  onClick={exportarCsvSemLanc}
-                  className="px-3 py-2 bg-[var(--surface)] hover:bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
-                  title="Baixar arquivo CSV completo"
-                >
-                  <FileDown size={14} />
-                  <span>CSV</span>
-                </button>
-
-              </div>
-
-            </div>
-
+          {/* FILTROS — SEM LANÇAMENTO */}
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 lg:p-5 shadow-sm grid grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+            <Campo rotulo="Sem lançamento desde" className="col-span-1 lg:col-span-2">
+              <input type="month" value={corteMesAno} onChange={e => { if (e.target.value) { setCorteMesAno(e.target.value); setSelectedMatriculasSemLanc({}); } }} className={inputCls} />
+            </Campo>
+            <Campo rotulo="Considerar a data do" className="col-span-1 lg:col-span-2">
+              <select value={criterioSemLanc} onChange={e => setCriterioSemLanc(e.target.value as any)} className={inputCls}>
+                <option value="qualquer">Lançamento ou afastamento</option>
+                <option value="lancamento">Lançamento</option>
+                <option value="ocorrencia">Afastamento</option>
+              </select>
+            </Campo>
+            <Campo rotulo="Setor" className="col-span-2 lg:col-span-3">
+              <select value={filtroSetorSemLanc} onChange={e => setFiltroSetorSemLanc(e.target.value)} className={inputCls}>
+                <option value="todos">Todos os setores</option>
+                {setoresSemLanc.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Campo>
+            <Campo rotulo="Buscar" className="col-span-2 lg:col-span-2">
+              <input type="text" value={filtroBuscaSemLanc} onChange={e => setFiltroBuscaSemLanc(e.target.value)} placeholder="Nome, matrícula, cargo" className={inputCls} />
+            </Campo>
+            <Campo rotulo="Ordenar" className="col-span-1 lg:col-span-2">
+              <select value={ordenacaoSemLanc} onChange={e => setOrdenacaoSemLanc(e.target.value as any)} className={inputCls}>
+                <option value="nome">Nome</option>
+                <option value="matricula">Matrícula</option>
+                <option value="setor">Setor</option>
+                <option value="ultimoAntigo">Mais tempo sem lançamento</option>
+                <option value="ultimoRecente">Lançamento mais recente</option>
+              </select>
+            </Campo>
+            <label className="col-span-1 lg:col-span-1 flex items-center gap-1.5 text-[11px] font-bold text-[var(--text2)] pb-2 cursor-pointer select-none">
+              <input type="checkbox" checked={ocultarCedidosSemLanc} onChange={e => setOcultarCedidosSemLanc(e.target.checked)} /> Sem cedidos
+            </label>
           </div>
 
           {/* TABELA DE SERVIDORES SEM LANÇAMENTO */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden shadow-sm">
+            <BarraResultado
+              copiado={copiado}
+              onExportar={exportar}
+              resumo={<>
+                <b className="text-[var(--red)] text-sm">{servidoresSemLancFiltrados.length}</b> servidor(es) sem lançamento desde {formatarMesAnoCurto(corteMesAno)}
+                <span>· {statsSemLanc.totalNunca} nunca lançado(s) · base de {statsSemLanc.totalGeralServidores}</span>
+              </>}
+              extra={<>
+                <button type="button" onClick={toggleSelectAllSemLanc} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-[var(--border2)] bg-[var(--surface)] flex items-center gap-1">
+                  {todosSelecionados ? <CheckSquare size={13} className="text-[var(--blue-mid)]" /> : <Square size={13} />} {selecionadosCount} selecionado(s)
+                </button>
+                <button type="button" onClick={abrirModalFilaAvulsa} disabled={selecionadosCount === 0}
+                  className={`px-3 py-1.5 text-[11px] font-black rounded-lg flex items-center gap-1 ${selecionadosCount > 0 ? "bg-[var(--blue-mid)] text-white" : "bg-[var(--border)] text-[var(--text2)] cursor-not-allowed"}`}>
+                  <Layers size={13} /> Enviar para fila
+                </button>
+                <button type="button" onClick={() => setIsModalAnterioresOpen(true)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                  Anteriores{lancamentosSalvos.length ? ` (${lancamentosSalvos.length})` : ""}
+                </button>
+              </>}
+            />
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-xs">
                 <thead>
@@ -2391,105 +2076,174 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
         </div>
       )}
 
-      {/* TAB 2: CONFERÊNCIAS RECENTES */}
-      {subTab === 'conf' && (
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden shadow-sm">
-          <div className="p-5 border-b border-[var(--border)] bg-[var(--bg)]/30 flex justify-between items-center">
-            <span className="text-xs font-bold text-[var(--text2)] uppercase">Histórico de Conferências</span>
-            <button 
-              onClick={limparHistoricoGeral}
-              className="text-xs font-semibold text-[var(--red)] hover:underline border border-[var(--red)] px-2.5 py-1.5 rounded-lg bg-white"
-            >
-              Limpar Tudo
-            </button>
+
+      {/* ============ CONFERÊNCIAS / POR SETOR ============ */}
+      {(subTab === 'conf' || subTab === 'setor') && (
+        <>
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 lg:p-5 shadow-sm grid grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+            <Campo rotulo="Mês" className="col-span-1 lg:col-span-3">
+              <div className="flex gap-1">
+                <input type="month" value={confMes === "todos" ? "" : confMes} onChange={e => { setConfMes(e.target.value || "todos"); setLimiteConf(150); }} className={inputCls} />
+                {confMes !== "todos" && <button type="button" onClick={() => setConfMes("todos")} className="px-2 text-[10px] font-bold rounded-lg border border-[var(--border2)] text-[var(--text2)]">Todos</button>}
+              </div>
+            </Campo>
+            <Campo rotulo="Buscar" className="col-span-1 lg:col-span-4">
+              <input type="text" value={confBusca} onChange={e => setConfBusca(e.target.value)} placeholder="Nome, matrícula ou setor" className={inputCls} />
+            </Campo>
           </div>
 
-          <div className="divide-y divide-[var(--border)] max-h-96 overflow-y-auto">
-            {state.historico.map((h, i) => {
-              const d = new Date(h.ts);
-              const hr = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-              const dt = d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-              return (
-                <div key={i} className="p-4 flex items-center justify-between hover:bg-[var(--bg)]/10 text-xs">
-                  <div className="min-w-0 flex-1 pr-4">
-                    <div className="font-bold text-sm text-[var(--text)] truncate">{h.nome}</div>
-                    <div className="text-[11px] text-[var(--text2)] font-mono mt-0.5">{h.mat} · {h.setor}</div>
-                  </div>
-                  <div className="text-center w-16">
-                    <span className="font-black text-sm text-[var(--blue-mid)] block">{h.qtd || 0}</span>
-                    <span className="text-[9px] font-bold text-[var(--text2)] uppercase">Lanç.</span>
-                  </div>
-                  <div className="text-right font-mono text-[var(--text2)] font-semibold w-20">
-                    <div>{dt}</div>
-                    <div className="text-[10px] mt-0.5">{hr}</div>
-                  </div>
-                  <div className="flex gap-1.5 ml-3 flex-shrink-0">
-                    <button onClick={() => editarConferenciaLanc(i)} className="p-1 border bg-white rounded hover:bg-[var(--bg)]"><Edit2 size={11} /></button>
-                    <button onClick={() => excluirConferencia(i)} className="p-1 border bg-white text-[var(--red)] rounded hover:bg-[var(--red-light)]"><Trash2 size={11} /></button>
-                  </div>
+          {subTab === 'conf' ? (
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden">
+              <BarraResultado copiado={copiado} onExportar={exportar}
+                resumo={<><b className="text-[var(--text)] text-sm">{confFiltradas.length}</b> conferência(s) · <b className="text-[var(--text)]">{confFiltradas.reduce((s, x) => s + lancDe(x.h), 0)}</b> lançamento(s) · {rotuloConfMes}</>} />
+              <table className="w-full text-xs">
+                <thead className="border-b border-[var(--border)]"><tr><th className={thCls}>Quando</th><th className={thCls}>Servidor</th><th className={`${thCls} hidden md:table-cell`}>Ocorrências</th><th className={`${thCls} text-right`}>Lanç.</th><th className={thCls}></th></tr></thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {confFiltradas.slice(0, limiteConf).map(({ h, idx }) => (
+                    <tr key={idx} className="hover:bg-[var(--bg)] group">
+                      <td className={`${tdCls} font-mono text-[11px] text-[var(--text2)] whitespace-nowrap`}>
+                        {new Date(h.ts).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}<br />{new Date(h.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                      <td className={tdCls}><div className="font-bold text-[var(--text)]">{h.nome}</div><div className="text-[11px] text-[var(--text2)]"><span className="font-mono">{h.mat}</span> · {lotacaoDe(h.mat, h.setor)}</div></td>
+                      <td className={`${tdCls} hidden md:table-cell text-[11px] text-[var(--text2)]`}>{(h.ocorrencias || []).join(" · ")}</td>
+                      <td className={`${tdCls} text-right font-black text-[var(--blue-mid)]`}>{lancDe(h)}</td>
+                      <td className={`${tdCls} text-right whitespace-nowrap`}>
+                        <button onClick={() => editarConferenciaLanc(idx)} className="p-1.5 rounded text-[var(--text2)] hover:bg-[var(--bg)]" title="Corrigir quantidade"><Edit2 size={12} /></button>
+                        <button onClick={() => excluirConferencia(idx)} className="p-1.5 rounded text-[var(--text2)] opacity-60 hover:opacity-100 hover:text-[var(--red)]" title="Excluir"><Trash2 size={12} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {confFiltradas.length > limiteConf && (
+                <div className="p-3 text-center border-t border-[var(--border)]">
+                  <button type="button" onClick={() => setLimiteConf(l => l + 300)} className="px-4 py-2 text-xs font-bold rounded-lg bg-[var(--blue-light)] text-[var(--blue-mid)]">Mostrar mais ({confFiltradas.length - limiteConf} restantes)</button>
                 </div>
-              );
-            })}
-            {state.historico.length === 0 && (
-              <div className="p-8 text-center text-[var(--text2)] font-semibold text-xs">
-                Nenhuma conferência registrada ainda.
+              )}
+              {confFiltradas.length === 0 && <div className="p-10 text-center text-xs font-bold text-[var(--text2)]">Nenhuma conferência neste mês.</div>}
+            </div>
+          ) : (
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden">
+              <BarraResultado copiado={copiado} onExportar={exportar}
+                resumo={<><b className="text-[var(--text)] text-sm">{confPorSetor.length}</b> setor(es) · {confFiltradas.length} conferência(s) · {rotuloConfMes}</>} />
+              <div className="divide-y divide-[var(--border)]">
+                {confPorSetor.map(g => {
+                  const aberto = !!expandedSetores[g.setor];
+                  const max = confPorSetor[0]?.conf || 1;
+                  return (
+                    <div key={g.setor}>
+                      <button type="button" onClick={() => toggleSectorExpand(g.setor)} className="w-full px-4 lg:px-5 py-2.5 flex items-center gap-3 text-left hover:bg-[var(--bg)]">
+                        <ChevronRight size={14} className={`text-[var(--text2)] transition-transform ${aberto ? "rotate-90" : ""}`} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold text-[var(--text)] truncate">{g.setor}</div>
+                          <div className="h-1.5 mt-1 rounded-full bg-[var(--bg)] overflow-hidden"><div className="h-full bg-[var(--blue-mid)]/60" style={{ width: `${Math.max(4, (g.conf / max) * 100)}%` }} /></div>
+                        </div>
+                        <div className="text-right text-[11px] font-bold text-[var(--text2)] whitespace-nowrap"><b className="text-[var(--text)] text-sm">{g.conf}</b> conf. · {g.lanc} lanç.</div>
+                      </button>
+                      {aberto && (
+                        <div className="px-4 lg:px-5 pb-3 pl-11 flex flex-col gap-1">
+                          {g.lista.map((h, i) => (
+                            <div key={i} className="flex justify-between gap-2 text-[11px] text-[var(--text2)] border-b border-dashed border-[var(--border)] py-1">
+                              <span><b className="text-[var(--text)]">{h.nome}</b> <span className="font-mono">({h.mat})</span></span>
+                              <span className="font-mono whitespace-nowrap">{lancDe(h)} lanç. · {new Date(h.ts).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {confPorSetor.length === 0 && <div className="p-10 text-center text-xs font-bold text-[var(--text2)]">Nenhuma conferência neste mês.</div>}
               </div>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
 
-      {/* TAB 3: POR SETOR */}
-      {subTab === 'setor' && (
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl overflow-hidden shadow-sm">
-          <div className="p-5 border-b border-[var(--border)] bg-[var(--bg)]/30">
-            <span className="text-xs font-bold text-[var(--text2)] uppercase">Conferências Consolidadas por Setor</span>
-          </div>
-
-          <div className="divide-y divide-[var(--border)] max-h-96 overflow-y-auto">
-            {getSectoredConferences().map((s) => {
-              const isExpanded = !!expandedSetores[s.nome];
-              return (
-                <div key={s.nome} className="flex flex-col">
-                  <div 
-                    onClick={() => toggleSectorExpand(s.nome)}
-                    className="p-4 flex items-center justify-between hover:bg-[var(--bg)]/20 cursor-pointer transition text-xs"
-                  >
-                    <div>
-                      <div className="font-bold text-sm text-[var(--text)]">{s.nome}</div>
-                      <div className="text-[11px] text-[var(--text2)] font-semibold mt-1">
-                        {s.totalConf} conferência(s) · {s.totalLanc} lançamento(s)
-                      </div>
-                    </div>
-                    <ChevronRight size={18} className={`text-[var(--text2)] transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                  </div>
-
-                  {isExpanded && (
-                    <div className="bg-[var(--bg)]/5 divide-y divide-[var(--border)] border-t border-[var(--border)]">
-                      {s.list.map((h, subIdx) => (
-                        <div key={subIdx} className="p-3 pl-8 flex justify-between items-center text-[11px] font-semibold text-[var(--text2)]">
-                          <div>
-                            <span className="font-bold text-[var(--text)]">{h.nome}</span>
-                            <span className="font-mono ml-2">({h.mat})</span>
-                          </div>
-                          <div className="flex gap-4 items-center">
-                            {h.qtd > 0 && <span className="bg-[var(--blue-light)] text-[var(--blue-mid)] px-2 py-0.5 rounded font-black">{h.qtd} lanç.</span>}
-                            <span className="font-mono text-[var(--text2)]">{new Date(h.ts).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {getSectoredConferences().length === 0 && (
-              <div className="p-8 text-center text-[var(--text2)] font-semibold text-xs">
-                Nenhuma conferência registrada por setor ainda.
+      {/* ============ PRODUTIVIDADE / BALCÃO ============ */}
+      {(subTab === 'produtividade' || subTab === 'balcao') && (
+        <>
+          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 lg:p-5 shadow-sm grid grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+            <Campo rotulo="De" className="col-span-1 lg:col-span-2"><input type="date" value={perDe} onChange={e => e.target.value && setPerDe(e.target.value)} className={inputCls} /></Campo>
+            <Campo rotulo="Até" className="col-span-1 lg:col-span-2"><input type="date" value={perAte} onChange={e => e.target.value && setPerAte(e.target.value)} className={inputCls} /></Campo>
+            <Campo rotulo="Atalhos" className="col-span-2 lg:col-span-4">
+              <div className="flex gap-1 flex-wrap">
+                {[
+                  { l: "Este mês", de: getLocalDateIso().slice(0, 8) + "01", ate: getLocalDateIso() },
+                  { l: "Mês passado", ...(() => { const d = new Date(); const ini = new Date(d.getFullYear(), d.getMonth() - 1, 1); const fim = new Date(d.getFullYear(), d.getMonth(), 0); return { de: getLocalDateIso(ini), ate: getLocalDateIso(fim) }; })() },
+                  { l: "Este ano", de: getLocalDateIso().slice(0, 4) + "-01-01", ate: getLocalDateIso() }
+                ].map(a => (
+                  <button key={a.l} type="button" onClick={() => { setPerDe(a.de); setPerAte(a.ate); }}
+                    className={`px-2.5 py-2 text-[11px] font-bold rounded-lg border ${perDe === a.de && perAte === a.ate ? "border-[var(--blue-mid)] bg-[var(--blue-light)] text-[var(--blue-mid)]" : "border-[var(--border2)] text-[var(--text2)] hover:bg-[var(--bg)]"}`}>{a.l}</button>
+                ))}
               </div>
+            </Campo>
+            {subTab === 'produtividade' && (
+              <Campo rotulo="Agrupar por" className="col-span-2 lg:col-span-4">
+                <Segmentos valor={prodAgrupar} onChange={setProdAgrupar} opcoes={[{ id: 'dia', label: 'Dia' }, { id: 'tipo', label: 'Tipo' }, { id: 'sistema', label: 'Sistema' }]} />
+              </Campo>
             )}
           </div>
-        </div>
+
+          {subTab === 'produtividade' ? (
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden">
+              <BarraResultado copiado={copiado} onExportar={exportar}
+                resumo={<>
+                  <b className="text-[var(--blue-mid)] text-sm">{prodResumo.itens}</b> itens em <b className="text-[var(--text)]">{prodResumo.atividades}</b> atividade(s) · {prodResumo.dias} dia(s) registrados
+                  {Object.entries(prodResumo.turnos).filter(([s]) => s !== "normal").map(([s, n]) => (
+                    <span key={s} className="px-2 py-0.5 rounded-full bg-[var(--bg)] border border-[var(--border)] font-bold">{labelSituacao(s)}: {n} dia(s)</span>
+                  ))}
+                </>} />
+              <table className="w-full text-xs">
+                <thead className="border-b border-[var(--border)]"><tr>
+                  <th className={thCls}>{prodAgrupar === "dia" ? "Dia" : prodAgrupar === "tipo" ? "Tipo" : "Sistema"}</th>
+                  {prodAgrupar === "dia" && <th className={`${thCls} hidden md:table-cell`}>Situação</th>}
+                  <th className={`${thCls} hidden md:table-cell`}>{prodAgrupar === "dia" ? "Atividades" : prodAgrupar === "tipo" ? "Sistemas" : "Tipos"}</th>
+                  <th className={`${thCls} text-right`}>Ativ.</th><th className={`${thCls} text-right`}>Itens</th>
+                </tr></thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {prodGrupos.map(g => (
+                    <tr key={g.chave} className="hover:bg-[var(--bg)]">
+                      <td className={`${tdCls} font-bold text-[var(--text)] capitalize whitespace-nowrap`}>{g.rotulo}</td>
+                      {prodAgrupar === "dia" && <td className={`${tdCls} hidden md:table-cell text-[11px] font-semibold text-[var(--text2)]`}>{situacaoDoDia(g.chave)}</td>}
+                      <td className={`${tdCls} hidden md:table-cell text-[11px] text-[var(--text2)]`}>{g.detalhe.join(", ")}</td>
+                      <td className={`${tdCls} text-right font-bold`}>{g.atividades}</td>
+                      <td className={`${tdCls} text-right font-black text-[var(--blue-mid)]`}>{g.itens}</td>
+                    </tr>
+                  ))}
+                  {prodGrupos.length > 0 && (
+                    <tr className="bg-[var(--bg)]/60 font-black">
+                      <td className={tdCls}>Total</td>
+                      {prodAgrupar === "dia" && <td className={`${tdCls} hidden md:table-cell`}></td>}
+                      <td className={`${tdCls} hidden md:table-cell`}></td>
+                      <td className={`${tdCls} text-right`}>{prodResumo.atividades}</td>
+                      <td className={`${tdCls} text-right text-[var(--blue-mid)]`}>{prodResumo.itens}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              {prodGrupos.length === 0 && <div className="p-10 text-center text-xs font-bold text-[var(--text2)]">Nenhuma atividade neste período.</div>}
+            </div>
+          ) : (
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden">
+              <BarraResultado copiado={copiado} onExportar={exportar}
+                resumo={<><b className="text-teal-600 dark:text-teal-400 text-sm">{balcaoLinhas.length}</b> atendimento(s) em {new Set(balcaoLinhas.map(b => b.iso)).size} dia(s) · {rotuloPeriodo}</>} />
+              <table className="w-full text-xs">
+                <thead className="border-b border-[var(--border)]"><tr><th className={thCls}>Data</th><th className={thCls}>Horário</th><th className={thCls}>Atendimento</th></tr></thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {balcaoLinhas.map((b, i) => (
+                    <tr key={i} className="hover:bg-[var(--bg)]">
+                      <td className={`${tdCls} font-mono font-bold whitespace-nowrap`}>{fmtData(b.iso)}</td>
+                      <td className={`${tdCls} font-mono text-[11px] text-[var(--text2)] whitespace-nowrap`}>{b.hora}</td>
+                      <td className={`${tdCls} text-[var(--text)] whitespace-pre-wrap break-words`}>{b.texto}{b.antigo && <span className="ml-1 text-[10px] text-[var(--text2)]">(anotação antiga)</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {balcaoLinhas.length === 0 && <div className="p-10 text-center text-xs font-bold text-[var(--text2)]">Nenhum atendimento neste período.</div>}
+            </div>
+          )}
+        </>
       )}
 
       {/* MODAL COLAR LANÇAMENTOS ANTERIORES AO SISTEMA */}

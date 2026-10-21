@@ -44,6 +44,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sisref' | 'sigrh' | 'importar' | 'vida' | 'produtividade' | 'balcao' | 'relatorio'>('dashboard');
   const [sisrefSubTab, setSisrefSubTab] = useState<'setores' | 'avulsa' | 'respostas'>('setores');
+  const [prodDataInicial, setProdDataInicial] = useState<string | undefined>(undefined);
   const [rotinaSubTab, setRotinaSubTab] = useState<'importar' | 'vida' | 'produtividade'>('importar');
   const [sisrefShowPendencias, setSisrefShowPendencias] = useState(false);
   
@@ -465,6 +466,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
               forcePullFromCloud={forcePullFromCloud}
               exportBackupJson={exportBackupJson}
               importBackupJson={importBackupJson}
+              prodDataInicial={prodDataInicial}
             />
           )}
           {activeTab === 'balcao' && (
@@ -472,6 +474,10 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
               state={state} 
               updateState={updateState} 
               onToast={showToast} 
+              onIrProdutividade={(data: string) => {
+                setProdDataInicial(data);
+                setActiveTab('produtividade');
+              }}
             />
           )}
           {activeTab === 'relatorio' && (
