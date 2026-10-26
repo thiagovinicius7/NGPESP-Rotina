@@ -10,6 +10,7 @@ import {
   Cloud, FileDown, FileUp, Star
 } from "lucide-react";
 import ProdutividadePanel from "./ProdutividadePanel.js";
+import CopiasAutomaticas from "./CopiasAutomaticas.js";
 import { marcarBackupFeito, diasDesdeBackup, precisaLembrarBackup, baixarBackup } from "../lib/backupLembrete.js";
 import VidaFuncionalPanel from "./VidaFuncionalPanel.js";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
@@ -1217,26 +1218,8 @@ export default function RotinaPanel({
               <button type="button" onClick={handleBackupDownload} className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold">Baixar backup agora</button>
             </div>
           )}
-          {/* 3. CÓPIA AUTOMÁTICA DESTE COMPUTADOR (SEGURANÇA) */}
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-bold text-[var(--text1)] flex items-center gap-2">
-                <History size={16} /> Cópia automática deste computador
-              </span>
-              <span className="text-[10px] font-bold uppercase bg-[var(--surface2)] text-[var(--text2)] px-2 py-0.5 rounded-full">Automático</span>
-            </div>
-            <p className="text-xs text-[var(--text2)]">
-              Este navegador guarda sozinho uma cópia dos dados a cada alteração. Se algo der errado com a nuvem,
-              baixe a cópia mais recente e use "Restaurar arquivo de backup" logo abaixo (ou envie para análise).
-            </p>
-            <button
-              type="button"
-              onClick={handleDownloadLatestLocalCopy}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border border-[var(--border)] bg-[var(--surface2)] text-[var(--text1)] hover:opacity-90 cursor-pointer"
-            >
-              <FileDown size={15} /> Baixar cópia automática mais recente
-            </button>
-          </div>
+          {/* 3. CÓPIAS AUTOMÁTICAS DESTE COMPUTADOR (por horário) */}
+          <CopiasAutomaticas state={state} updateState={updateState} onToast={onToast} />
           {/* 4. JSON STATE BACKUP AND RESTORE */}
           <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-6 shadow-sm">
             <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider mb-2">

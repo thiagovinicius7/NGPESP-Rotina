@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AppState, AtividadeLancamento, ProdutividadeDia, SessaoBalcao } from "../types.js";
+import { AppState, AtividadeLancamento, ProdutividadeDia, SessaoBalcao, TopicoBalcao } from "../types.js";
+import { getSnapshotsFromIDB } from "../lib/idbStorage.js";
 import { getLocalDateIso, getSaoPauloHour, toYmdDate } from "../lib/utils.js";
 import { diaVazio, novoIdAtividade } from "../lib/produtividade.js";
 import { 
@@ -82,6 +83,51 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
     String(state.balcaoAtendimentos?.[iso] || "").split("\n").map(l => l.trim()).filter(Boolean);
 
   const contarDia = (iso: string) => (porDia.get(iso)?.length || 0) + anotacoesAntigas(iso).length;
+
+  // ---------- recuperar tópicos a partir das cópias automáticas deste computador ----------
+  const [achados, setAchados] = useState<{ inicio: string; topicos: TopicoBalcao[]; visto: string }[] | null>(null);
+  const [procurando, setProcurando] = useState(false);
+  const procurarNasCopias = async () => {
+    setProcurando(true);
+    try {
+      const copias = await getSnapshotsFromIDB(500);
+      // tópicos que já estão salvos (no atendimento aberto ou em atendimentos encerrados)
+      const jaTem = new Set<string>();
+      (sessao?.topicos || []).forEach(t => jaTem.add(t.id));
+      porDia.forEach(l => l.forEach(x => (x.a.topicos || []).forEach(t => jaTem.add(t.id))));
+      const porInicio = new Map<string, { inicio: string; topicos: Map<string, TopicoBalcao>; visto: number }>();
+      copias.forEach(c => {
+        const ses: any = (c.state as any)?.config?.balcaoSessao;
+        if (!ses?.inicio || !Array.isArray(ses.topicos)) return;
+        const g = porInicio.get(ses.inicio) || { inicio: ses.inicio, topicos: new Map(), visto: 0 };
+        ses.topicos.forEach((t: TopicoBalcao) => { if (t?.id && t.texto && !jaTem.has(t.id)) g.topicos.set(t.id, t); });
+        g.visto = Math.max(g.visto, c.timestamp);
+        porInicio.set(ses.inicio, g);
+      });
+      const lista = Array.from(porInicio.values())
+        .filter(g => g.topicos.size > 0)
+        .sort((a, b) => b.inicio.localeCompare(a.inicio))
+        .map(g => ({ inicio: g.inicio, topicos: Array.from(g.topicos.values()).sort((a, b) => a.hora.localeCompare(b.hora)), visto: new Date(g.visto).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) }));
+      setAchados(lista);
+      if (lista.length === 0) onToast("Nenhum tópico perdido encontrado nas cópias deste computador.", "info");
+    } catch (e: any) {
+      onToast("Não foi possível ler as cópias: " + (e?.message || e), "err");
+    } finally {
+      setProcurando(false);
+    }
+  };
+  const recuperarSessao = (g: { inicio: string; topicos: TopicoBalcao[] }) => {
+    gravarSessao(s => {
+      if (s) {
+        const ids = new Set(s.topicos.map(t => t.id));
+        const topicos = [...s.topicos, ...g.topicos.filter(t => !ids.has(t.id))].sort((a, b) => a.hora.localeCompare(b.hora));
+        return { ...s, inicio: s.inicio < g.inicio ? s.inicio : g.inicio, topicos };
+      }
+      return { inicio: g.inicio, topicos: g.topicos };
+    });
+    setAchados(null);
+    onToast(`${g.topicos.length} tópico(s) de volta no atendimento aberto. Confira e encerre quando terminar.`, "ok");
+  };
 
   // ---------- plantão de balcão ----------
   const iniciar = () => {
@@ -223,6 +269,34 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
               </div>
             )}
           </div>
+
+          <div className="flex items-center justify-between gap-2 flex-wrap text-[11px]">
+            <span className="text-[var(--text2)] font-semibold">Sumiram tópicos? Procure nas cópias automáticas deste computador.</span>
+            <button type="button" onClick={procurarNasCopias} disabled={procurando} className="px-2.5 py-1 font-bold rounded-lg border border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 disabled:opacity-50">
+              {procurando ? "Procurando…" : "Recuperar tópicos"}
+            </button>
+          </div>
+          {achados && achados.length > 0 && (
+            <div className="p-3 rounded-xl border-2 border-amber-400/60 bg-amber-500/5 flex flex-col gap-3">
+              {achados.map(g => (
+                <div key={g.inicio} className="flex flex-col gap-1.5">
+                  <div className="text-xs font-black text-[var(--text)]">
+                    Atendimento aberto em {new Date(g.inicio).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {g.topicos.length} tópico(s) que não estão salvos agora
+                    <span className="block text-[10px] font-semibold text-[var(--text2)]">última cópia com eles: {g.visto}</span>
+                  </div>
+                  {g.topicos.map(t => (
+                    <div key={t.id} className="text-sm text-[var(--text)] break-words"><span className="font-mono text-[11px] text-[var(--text2)] mr-1.5">{t.hora}</span>{t.texto}</div>
+                  ))}
+                  <div className="flex gap-2 justify-end">
+                    <button type="button" onClick={() => recuperarSessao(g)} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-600 hover:bg-amber-700 text-white">
+                      {sessao ? "Juntar ao atendimento aberto" : "Reabrir com estes tópicos"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <button type="button" onClick={() => setAchados(null)} className="self-end text-[11px] font-bold text-[var(--text2)]">Fechar</button>
+            </div>
+          )}
 
           {!sessao ? (
             <>
