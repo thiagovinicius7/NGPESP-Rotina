@@ -16,6 +16,7 @@ export interface HistoryEntry {
   qtd: number;
   ts: string;
   ocorrencias?: string[];
+  fila?: string; // fila avulsa (ou setor) em que o lançamento foi feito
 }
 
 export interface FastReply {
@@ -70,6 +71,7 @@ export interface AtividadeLancamento {
   topicos?: TopicoBalcao[]; // assuntos tratados durante o plantão de balcão
   emAndamento?: boolean;    // atendimento de balcão ainda aberto
   inicioIso?: string;       // início exato do atendimento de balcão (ISO)
+  autoSisref?: string;      // atividade preenchida sozinha pelos lançamentos do SISREF (nome da fila)
 }
 
 export interface TopicoBalcao {

@@ -369,6 +369,7 @@ export default function ProdutividadePanel({ state, updateState, onToast, dataIn
               {ehBalcao && <PhoneCall size={10} className="inline mr-0.5 -mt-0.5" />}{a.sistema || "—"}
             </span>
             {a.inicio && <span className="text-[var(--text2)] font-semibold">{a.inicio}{a.fim ? `–${a.fim}` : ""}</span>}
+            {a.autoSisref && <span className="px-1.5 py-0.5 rounded bg-[var(--blue-light)] text-[var(--blue-mid)]" title="Atualizada sozinha a cada lançamento no SISREF">automática</span>}
             <Lock size={10} className="text-[var(--text2)] opacity-50" aria-label="Salva" />
           </div>
           {a.desc ? (

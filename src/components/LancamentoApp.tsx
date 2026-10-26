@@ -1,3 +1,4 @@
+import { atualizarProdutividadeSisref } from "../lib/produtividadeSisref.js";
 import { lerTextoSisref, servidoresSelecionados, colocarNaFilaAtiva, progressoFilaAtiva, contarDiasParaAtualizar, atualizarDiasNaFilaAtiva } from "../lib/sisrefImport.js";
 import { Tema, proximoTema, nomeTema, IconeTema } from "../lib/temas.js";
 import RecentLaunchWarning from "./RecentLaunchWarning.js";
@@ -347,6 +348,7 @@ export default function LancamentoApp({
         mat: confirmModal.mat,
         nome: confirmModal.nome,
         setor: "Avulsa Fila",
+        fila: qName,
         qtd: qtdFinal,
         ts: nowIso,
         ocorrencias: confirmModal.checkedOcs.length > 0 
@@ -356,8 +358,10 @@ export default function LancamentoApp({
               : (currentQueueServer?.tipos || []))
       };
 
+      const historicoNovo = [newLog, ...(prev.historico || [])].slice(0, 5000);
       return {
-        historico: [newLog, ...(prev.historico || [])].slice(0, 5000),
+        ...atualizarProdutividadeSisref(prev, historicoNovo, newLog),
+        historico: historicoNovo,
         filaAvulsa: {
           ...prev.filaAvulsa,
           listas: {

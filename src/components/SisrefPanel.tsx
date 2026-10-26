@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppState, Server, HistoryEntry, QueueServer, QueueOcorrencia } from "../types.js";
+import { atualizarProdutividadeSisref } from "../lib/produtividadeSisref.js";
 import { lerTextoSisref, servidoresSelecionados, colocarNaFilaAtiva, progressoFilaAtiva, contarDiasParaAtualizar, atualizarDiasNaFilaAtiva } from "../lib/sisrefImport.js";
 import { getLocalDateIso, toYmdDate, cleanTipoName, getOccurrenceRuleAlert, findCasoEspecial, extrairPeriodoSisref, textoDiasOcorrencia } from "../lib/utils.js";
 import ModalCasosEspeciais from "./ModalCasosEspeciais.js";
@@ -200,9 +201,10 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
         ts: new Date().toISOString()
       };
 
-      updateState(prev => ({
-        historico: [newEntry, ...prev.historico].slice(0, 5000)
-      }));
+      updateState(prev => {
+        const historico = [newEntry, ...prev.historico].slice(0, 5000);
+        return { historico, ...atualizarProdutividadeSisref(prev, historico, newEntry) };
+      });
 
       setSetorIdx(prev => prev + 1);
       setSetorObs("");
@@ -298,9 +300,10 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
         ts: new Date().toISOString()
       };
 
-      updateState(prev => ({
-        historico: [newEntry, ...prev.historico].slice(0, 5000)
-      }));
+      updateState(prev => {
+        const historico = [newEntry, ...prev.historico].slice(0, 5000);
+        return { historico, ...atualizarProdutividadeSisref(prev, historico, newEntry) };
+      });
 
       setSelectedServer(null);
       setBuscaInp("");
@@ -434,6 +437,7 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
           mat: official.matricula,
           nome: official.nome,
           setor: "Avulsa Fila",
+          fila: activeQueueName,
           qtd: finalQtd,
           ts: nowIso,
           ocorrencias: finalOcs.length > 0 
@@ -441,8 +445,10 @@ const getOfficialServer = (mat: string, fallbackNome: string, servidores: Server
             : (currentQueueServer.tipos || [])
         };
 
+        const historicoNovo = [newLog, ...prev.historico].slice(0, 5000);
         return {
-          historico: [newLog, ...prev.historico].slice(0, 5000),
+          ...atualizarProdutividadeSisref(prev, historicoNovo, newLog),
+          historico: historicoNovo,
           filaAvulsa: {
             ...prev.filaAvulsa,
             listas: {
