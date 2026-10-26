@@ -1457,7 +1457,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
 
   const prodLinhas = useMemo(() => {
     const out: { iso: string; turno: "manha" | "tarde"; a: AtividadeLancamento }[] = [];
-    diasPeriodo.forEach(({ iso, d }) => (["manha", "tarde"] as const).forEach(turno => (d?.[turno] || []).forEach(a => out.push({ iso, turno, a }))));
+    diasPeriodo.forEach(({ iso, d }) => (["manha", "tarde"] as const).forEach(turno => (d?.[turno] || []).forEach(a => { if (!a?.emAndamento) out.push({ iso, turno, a }); })));
     return out;
   }, [diasPeriodo]);
 

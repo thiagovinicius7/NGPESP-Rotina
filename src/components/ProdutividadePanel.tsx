@@ -381,7 +381,9 @@ export default function ProdutividadePanel({ state, updateState, onToast, dataIn
           )}
         </div>
         <div className="flex-shrink-0 flex items-center gap-1">
-          {pedindoExclusao ? (
+          {a.emAndamento ? (
+            <span className="px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-center leading-tight">Em andamento<br />encerre no Balcão</span>
+          ) : pedindoExclusao ? (
             <>
               <span className="text-[11px] font-bold text-red-600 dark:text-red-400 mr-1">Excluir?</span>
               <button type="button" onClick={() => excluirAtividade(turno, a)} className="px-2 py-1 text-[11px] font-bold rounded-lg bg-red-600 text-white">Sim</button>

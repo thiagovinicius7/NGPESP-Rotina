@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import AvisoVersaoNova from "./components/AvisoVersaoNova.js";
 import { Tema, temaValido, proximoTema, nomeTema, IconeTema, aplicarTema } from "./lib/temas.js";
 import { 
   CheckCircle, Database, DownloadCloud, LogOut, Moon, 
@@ -93,6 +94,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
     isStaticMode, 
     cloudSynced,
     cloudError,
+    aguardandoNuvem,
+    salvoNaNuvemEm,
     retryCloudNow,
     exportBackupJson,
     importBackupJson
@@ -168,6 +171,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
   // Dedicated Launch App Mode
   if (appMode === 'lancamento') {
     return (
+      <>
+      <AvisoVersaoNova podeAtualizarSozinho={!aguardandoNuvem} />
       <LancamentoApp 
         state={state} 
         updateState={updateState} 
@@ -188,6 +193,7 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
         syncing={syncing}
         cloudSynced={cloudSynced}
       />
+      </>
     );
   }
 
@@ -262,7 +268,8 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
 
   return (
     <div className="min-h-screen flex flex-col font-sans bg-[var(--bg)] transition-colors duration-300">
-      
+      <AvisoVersaoNova podeAtualizarSozinho={!aguardandoNuvem} />
+
       {/* 1. TOP HEADER NAVIGATION BAR */}
       <header className="sticky top-0 z-40 bg-[var(--surface)] border-b border-[var(--border)] shadow-sm transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -288,15 +295,21 @@ function MainApp({ onLogout }: { onLogout: () => void }) {
             <button
               onClick={() => setShowCloudModal(true)}
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-xs ${
-                cloudSynced
+                cloudError
+                  ? "bg-red-500/10 border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-500/20"
+                  : aguardandoNuvem
+                  ? "bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20"
+                  : cloudSynced
                   ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
                   : "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 animate-pulse"
               }`}
               title="Central de Sincronização em Nuvem Multi-Dispositivo"
             >
               <Cloud size={15} />
-              <span className="hidden sm:inline">Nuvem</span>
-              {syncing && <RefreshCw size={12} className="animate-spin" />}
+              <span className="hidden sm:inline whitespace-nowrap">
+                {cloudError ? "Não salvo na nuvem" : aguardandoNuvem ? "Salvando…" : salvoNaNuvemEm ? `Salvo às ${new Date(salvoNaNuvemEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "Nuvem"}
+              </span>
+              {(syncing || aguardandoNuvem) && !cloudError && <RefreshCw size={12} className="animate-spin" />}
             </button>
 
             {/* Theme trigger button cycle */}

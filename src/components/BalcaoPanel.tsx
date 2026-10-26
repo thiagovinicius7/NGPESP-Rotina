@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AppState, AtividadeLancamento, ProdutividadeDia, SessaoBalcao, TopicoBalcao } from "../types.js";
 import { getSnapshotsFromIDB } from "../lib/idbStorage.js";
+import { sessaoAtual, gravarSessaoNoEstado, encerrarSessaoNoEstado } from "../lib/balcaoSessao.js";
 import { getLocalDateIso, getSaoPauloHour, toYmdDate } from "../lib/utils.js";
 import { diaVazio, novoIdAtividade } from "../lib/produtividade.js";
 import { 
@@ -29,7 +30,7 @@ interface ItemBalcao { data: string; turno: "manha" | "tarde"; a: AtividadeLanca
 
 export default function BalcaoPanel({ state, updateState, onToast, onIrProdutividade }: BalcaoPanelProps) {
   const hoje = getLocalDateIso();
-  const sessao: SessaoBalcao | null = state.config?.balcaoSessao?.inicio ? state.config.balcaoSessao : null;
+  const sessao: SessaoBalcao | null = sessaoAtual(state);
   const [agora, setAgora] = useState(Date.now());
   const [mes, setMes] = useState(hoje.slice(0, 7));
   const [diaSel, setDiaSel] = useState<string>(hoje);
@@ -49,7 +50,23 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
   }, [sessao]);
 
   const gravarSessao = (fn: (s: SessaoBalcao | null) => SessaoBalcao | null) =>
-    updateState(prev => ({ config: { ...prev.config, balcaoSessao: fn(prev.config?.balcaoSessao?.inicio ? prev.config.balcaoSessao : null) } }));
+    updateState(prev => gravarSessaoNoEstado(prev, fn));
+
+  // Atendimento que estava guardado no lugar antigo (configuração): passa para a produtividade
+  useEffect(() => {
+    const antigo = state.config?.balcaoSessao;
+    if (antigo?.inicio) {
+      updateState(prev => {
+        const r = gravarSessaoNoEstado(prev, s => {
+          if (!s) return { inicio: antigo.inicio, topicos: antigo.topicos || [] };
+          const ids = new Set(s.topicos.map(t => t.id));
+          return { ...s, topicos: [...s.topicos, ...(antigo.topicos || []).filter(t => !ids.has(t.id))] };
+        });
+        return { ...r, config: { ...prev.config, balcaoSessao: null } };
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.config?.balcaoSessao?.inicio]);
 
   // Atendimento aberto na versão anterior (só neste navegador): vira o plantão atual
   useEffect(() => {
@@ -70,7 +87,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
     Object.entries<ProdutividadeDia>(state.produtividade || {}).forEach(([k, d]) => {
       const iso = toYmdDate(k);
       (["manha", "tarde"] as const).forEach(turno => (d?.[turno] || []).forEach(a => {
-        if (!ehAtendimentoBalcao(a)) return;
+        if (!ehAtendimentoBalcao(a) || a.emAndamento) return;
         if (!m.has(iso)) m.set(iso, []);
         m.get(iso)!.push({ data: iso, turno, a });
       }));
@@ -97,7 +114,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
       porDia.forEach(l => l.forEach(x => (x.a.topicos || []).forEach(t => jaTem.add(t.id))));
       const porInicio = new Map<string, { inicio: string; topicos: Map<string, TopicoBalcao>; visto: number }>();
       copias.forEach(c => {
-        const ses: any = (c.state as any)?.config?.balcaoSessao;
+        const ses: any = (c.state as any)?.config?.balcaoSessao?.inicio ? (c.state as any).config.balcaoSessao : sessaoAtual(c.state as any);
         if (!ses?.inicio || !Array.isArray(ses.topicos)) return;
         const g = porInicio.get(ses.inicio) || { inicio: ses.inicio, topicos: new Map(), visto: 0 };
         ses.topicos.forEach((t: TopicoBalcao) => { if (t?.id && t.texto && !jaTem.has(t.id)) g.topicos.set(t.id, t); });
@@ -171,25 +188,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
     }
     const data = getLocalDateIso(new Date(sessao.inicio));
     const turno: "manha" | "tarde" = getSaoPauloHour(sessao.inicio) >= 12 ? "tarde" : "manha";
-    const item: AtividadeLancamento = {
-      id: novoIdAtividade(),
-      qtd: 1,
-      tipo: "Atendimento",
-      sistema: "Balcão",
-      desc: topicos.map(t => `${t.hora} — ${t.texto}`).join("\n"),
-      origem: "balcao",
-      inicio: horaSP(sessao.inicio),
-      fim: horaSP(new Date()),
-      topicos: topicos.map(t => ({ ...t })),
-      atualizadoEm: Date.now()
-    };
-    updateState(prev => {
-      const p = { ...(prev.produtividade || {}) };
-      const k = p[data] ? data : (Object.keys(p).find(x => toYmdDate(x) === data) || data);
-      const d: ProdutividadeDia = p[k] ? { ...p[k] } : diaVazio();
-      p[k] = { ...d, [turno]: [...(d[turno] || []), item] };
-      return { produtividade: p, config: { ...prev.config, balcaoSessao: null } };
-    });
+    updateState(prev => encerrarSessaoNoEstado(prev, topicos.map(t => ({ ...t }))));
     setNovoTopico("");
     setMes(data.slice(0, 7));
     setDiaSel(data);

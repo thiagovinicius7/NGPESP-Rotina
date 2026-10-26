@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { sessaoAtual } from "../lib/balcaoSessao.js";
 import { periodoAfastamento, eventosDoDia } from "../lib/vidaFuncional.js";
 import { diasDesdeBackup, precisaLembrarBackup, baixarBackup } from "../lib/backupLembrete.js";
 import { AppState } from "../types.js";
@@ -239,7 +240,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
     itens: [...(diaProdHoje.manha || []), ...(diaProdHoje.tarde || [])].reduce((s: number, a: any) => s + qtdN(a), 0)
   };
   const conferidosHoje = (state.historico || []).filter(h => h?.ts && toYmdDate(h.ts) === hoje).length;
-  const ehBalcao = (a: any) => a && (a.origem === "balcao" || a.sistema === "Balcão");
+  const ehBalcao = (a: any) => a && !a.emAndamento && (a.origem === "balcao" || a.sistema === "Balcão");
   const contarBalcao = (prefixo: string) => Object.entries<any>(state.produtividade || {}).reduce((n, [k, d]) => {
     if (!toYmdDate(k).startsWith(prefixo)) return n;
     return n + [...(d?.manha || []), ...(d?.tarde || [])].filter(ehBalcao).length;
@@ -247,8 +248,9 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   const balcaoHoje = contarBalcao(hoje);
   const balcaoMes = contarBalcao(hoje.slice(0, 7));
   const lerLS = (k: string) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
-  const balcaoAtivo = !!state.config?.balcaoSessao?.inicio;
-  const topicosBalcaoAtivo = state.config?.balcaoSessao?.topicos?.length || 0;
+  const sessaoBalcao = sessaoAtual(state) || (state.config?.balcaoSessao?.inicio ? state.config.balcaoSessao : null);
+  const balcaoAtivo = !!sessaoBalcao;
+  const topicosBalcaoAtivo = sessaoBalcao?.topicos?.length || 0;
   const rascunhosHoje = (() => { try { return Object.values<any>(JSON.parse(lerLS("ngpesp_prod_rascunhos") || "{}")).filter(r => r?.data === hoje).length; } catch (_) { return 0; } })();
   const diasBackup = diasDesdeBackup();
   const [lembrarBackup, setLembrarBackup] = useState(precisaLembrarBackup());

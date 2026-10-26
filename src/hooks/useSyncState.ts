@@ -142,6 +142,12 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
   }, [onToast]);
 
   const [syncing, setSyncing] = useState(false);
+  // Há alteração feita neste computador que ainda não chegou à nuvem
+  const [aguardandoNuvem, setAguardandoNuvem] = useState<boolean>(() => hasPendingLocalChanges());
+  useEffect(() => {
+    const t = setInterval(() => setAguardandoNuvem(hasPendingLocalChanges()), 4000);
+    return () => clearInterval(t);
+  }, []);
   const [cloudSynced, setCloudSynced] = useState(false);
   // Motivo de a nuvem não estar salvando (null = tudo certo)
   const [cloudError, setCloudError] = useState<null | "limite" | "sem-internet" | "erro">(null);
@@ -258,6 +264,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     isDirtyRef.current = true;
     editCounterRef.current += 1;
     setPendingLocalChanges(true);
+    setAguardandoNuvem(true);
 
     // 4. Debounce pushing to Firestore cloud
     if (pushTimeoutRef.current) {
@@ -294,6 +301,7 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
         if (editCounterRef.current === editsAtStart) {
           isDirtyRef.current = false;
           setPendingLocalChanges(false);
+          setAguardandoNuvem(false);
         }
         clearPendingOlderThan(pushStartedAt);
         setCloudSynced(true);
@@ -813,6 +821,8 @@ export function useSyncState(onToast: (msg: string, type?: 'ok' | 'err' | 'info'
     cloudSynced,
     cloudError,
     retryCloudNow,
+    aguardandoNuvem,
+    salvoNaNuvemEm: lastUpdated,
     exportBackupJson,
     importBackupJson
   };

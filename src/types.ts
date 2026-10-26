@@ -68,6 +68,8 @@ export interface AtividadeLancamento {
   inicio?: string;        // HH:MM (atendimento de balcão)
   fim?: string;           // HH:MM (atendimento de balcão)
   topicos?: TopicoBalcao[]; // assuntos tratados durante o plantão de balcão
+  emAndamento?: boolean;    // atendimento de balcão ainda aberto
+  inicioIso?: string;       // início exato do atendimento de balcão (ISO)
 }
 
 export interface TopicoBalcao {
