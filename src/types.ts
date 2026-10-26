@@ -67,6 +67,18 @@ export interface AtividadeLancamento {
   origem?: "balcao";      // atendimento registrado pela tela do balcão
   inicio?: string;        // HH:MM (atendimento de balcão)
   fim?: string;           // HH:MM (atendimento de balcão)
+  topicos?: TopicoBalcao[]; // assuntos tratados durante o plantão de balcão
+}
+
+export interface TopicoBalcao {
+  id: string;
+  hora: string;   // HH:MM
+  texto: string;
+}
+
+export interface SessaoBalcao {
+  inicio: string; // ISO
+  topicos: TopicoBalcao[];
 }
 
 export interface ProdutividadeDia {
@@ -158,6 +170,7 @@ export interface GlobalConfig {
   matriculasCedidos?: string[];
   casosEspeciais?: CasoEspecialItem[];
   lancamentosAnteriores?: LancamentoAnteriorItem[];
+  balcaoSessao?: SessaoBalcao | null; // plantão de balcão em andamento (fica na nuvem)
 }
 
 export interface AppState {

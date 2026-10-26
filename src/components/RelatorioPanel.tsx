@@ -1516,6 +1516,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
     .filter(n => confMes === "todos" || n.iso.startsWith(confMes))
     .sort((a, b) => b.iso.localeCompare(a.iso)), [state.filaAvulsa?.natal, confMes]);
 
+  const balcaoTopicos = prodLinhas.reduce((n, x) => n + ((x.a.origem === "balcao" || x.a.sistema === "Balcão") ? (x.a.topicos?.length || 0) : 0), 0);
   const fmtData = (iso: string) => iso ? iso.split("-").reverse().join("/") : "";
   const rotuloPeriodo = `${fmtData(perDe <= perAte ? perDe : perAte)} a ${fmtData(perDe <= perAte ? perAte : perDe)}`;
   const rotuloConfMes = confMes === "todos" ? "todos os meses" : formatarMesAnoCurto(confMes);
@@ -2260,7 +2261,7 @@ export default function RelatorioPanel({ state, updateState, onToast, onNavigate
           ) : (
             <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden">
               <BarraResultado copiado={copiado} onExportar={exportar}
-                resumo={<><b className="text-teal-600 dark:text-teal-400 text-sm">{balcaoLinhas.length}</b> atendimento(s) em {new Set(balcaoLinhas.map(b => b.iso)).size} dia(s) · {rotuloPeriodo}</>} />
+                resumo={<><b className="text-teal-600 dark:text-teal-400 text-sm">{balcaoLinhas.length}</b> atendimento(s) em {new Set(balcaoLinhas.map(b => b.iso)).size} dia(s){balcaoTopicos > 0 ? ` · ${balcaoTopicos} tópico(s)` : ""} · {rotuloPeriodo}</>} />
               <table className="w-full text-xs">
                 <thead className="border-b border-[var(--border)]"><tr><th className={thCls}>Data</th><th className={thCls}>Horário</th><th className={thCls}>Atendimento</th></tr></thead>
                 <tbody className="divide-y divide-[var(--border)]">

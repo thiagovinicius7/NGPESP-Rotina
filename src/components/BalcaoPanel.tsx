@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AppState, AtividadeLancamento, ProdutividadeDia } from "../types.js";
+import { AppState, AtividadeLancamento, ProdutividadeDia, SessaoBalcao } from "../types.js";
 import { getLocalDateIso, getSaoPauloHour, toYmdDate } from "../lib/utils.js";
 import { diaVazio, novoIdAtividade } from "../lib/produtividade.js";
 import { 
@@ -14,29 +14,7 @@ interface BalcaoPanelProps {
   onIrProdutividade?: (data: string) => void;
 }
 
-interface AtendimentoAtivo {
-  inicio: string;   // ISO
-  texto: string;
-  servidor: string;
-}
-
-const LS_ATIVO = "ngpesp_balcao_ativo";
-
-function lerAtivo(): AtendimentoAtivo | null {
-  try {
-    const v = JSON.parse(localStorage.getItem(LS_ATIVO) || "null");
-    return v && v.inicio ? v : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function gravarAtivo(v: AtendimentoAtivo | null) {
-  try {
-    if (v) localStorage.setItem(LS_ATIVO, JSON.stringify(v));
-    else localStorage.removeItem(LS_ATIVO);
-  } catch (_) { /* sem armazenamento: fica só na memória */ }
-}
+const LS_ANTIGO = "ngpesp_balcao_ativo"; // versão anterior guardava o atendimento só no navegador
 
 function horaSP(iso: string | Date): string {
   return new Date(iso).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
@@ -50,22 +28,40 @@ interface ItemBalcao { data: string; turno: "manha" | "tarde"; a: AtividadeLanca
 
 export default function BalcaoPanel({ state, updateState, onToast, onIrProdutividade }: BalcaoPanelProps) {
   const hoje = getLocalDateIso();
-  const [ativo, setAtivo] = useState<AtendimentoAtivo | null>(lerAtivo);
+  const sessao: SessaoBalcao | null = state.config?.balcaoSessao?.inicio ? state.config.balcaoSessao : null;
   const [agora, setAgora] = useState(Date.now());
   const [mes, setMes] = useState(hoje.slice(0, 7));
   const [diaSel, setDiaSel] = useState<string>(hoje);
+  const [novoTopico, setNovoTopico] = useState("");
+  const [editTopico, setEditTopico] = useState<{ id: string; texto: string } | null>(null);
+  const [apagarTopico, setApagarTopico] = useState<string | null>(null);
 
   // FAQ doubts
   const [faqBusca, setFaqBusca] = useState("");
   const [faqForm, setFaqForm] = useState<{ idx: number; titulo: string; resposta: string } | null>(null);
   const [expandedFaqIdx, setExpandedFaqIdx] = useState<number | null>(null);
 
-  useEffect(() => { gravarAtivo(ativo); }, [ativo]);
   useEffect(() => {
-    if (!ativo) return;
-    const t = setInterval(() => setAgora(Date.now()), 15000);
+    if (!sessao) return;
+    const t = setInterval(() => setAgora(Date.now()), 30000);
     return () => clearInterval(t);
-  }, [ativo]);
+  }, [sessao]);
+
+  const gravarSessao = (fn: (s: SessaoBalcao | null) => SessaoBalcao | null) =>
+    updateState(prev => ({ config: { ...prev.config, balcaoSessao: fn(prev.config?.balcaoSessao?.inicio ? prev.config.balcaoSessao : null) } }));
+
+  // Atendimento aberto na versão anterior (só neste navegador): vira o plantão atual
+  useEffect(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(LS_ANTIGO) || "null");
+      if (v?.inicio && !sessao) {
+        const texto = [v.servidor, v.texto].map((x: string) => (x || "").trim()).filter(Boolean).join(" — ");
+        gravarSessao(() => ({ inicio: v.inicio, topicos: texto ? [{ id: novoIdAtividade(), hora: horaSP(v.inicio), texto }] : [] }));
+      }
+      localStorage.removeItem(LS_ANTIGO);
+    } catch (_) { /* ok */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Todos os atendimentos (os novos ficam na produtividade; os antigos eram uma anotação por dia)
   const porDia = useMemo(() => {
@@ -87,36 +83,58 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
 
   const contarDia = (iso: string) => (porDia.get(iso)?.length || 0) + anotacoesAntigas(iso).length;
 
-  // ---------- atendimento em andamento ----------
+  // ---------- plantão de balcão ----------
   const iniciar = () => {
-    setAtivo({ inicio: new Date().toISOString(), texto: "", servidor: "" });
+    gravarSessao(() => ({ inicio: new Date().toISOString(), topicos: [] }));
     setAgora(Date.now());
+    onToast("Atendimento de balcão aberto. Lance os assuntos conforme for atendendo.", "ok");
+  };
+
+  const adicionarTopico = () => {
+    const texto = novoTopico.trim();
+    if (!texto) return;
+    gravarSessao(s => s ? { ...s, topicos: [...s.topicos, { id: novoIdAtividade(), hora: horaSP(new Date()), texto }] } : s);
+    setNovoTopico("");
+  };
+
+  const salvarEdicaoTopico = () => {
+    if (!editTopico) return;
+    const texto = editTopico.texto.trim();
+    if (!texto) { onToast("O tópico não pode ficar vazio.", "err"); return; }
+    gravarSessao(s => s ? { ...s, topicos: s.topicos.map(t => t.id === editTopico.id ? { ...t, texto } : t) } : s);
+    setEditTopico(null);
+  };
+
+  const removerTopico = (id: string) => {
+    gravarSessao(s => s ? { ...s, topicos: s.topicos.filter(t => t.id !== id) } : s);
+    setApagarTopico(null);
   };
 
   const cancelar = () => {
-    if (ativo && (ativo.texto.trim() || ativo.servidor.trim()) && !confirm("Descartar este atendimento sem salvar?")) return;
-    setAtivo(null);
+    if (sessao && sessao.topicos.length > 0 && !confirm(`Descartar este atendimento e os ${sessao.topicos.length} tópico(s) lançados? Nada vai para a produtividade.`)) return;
+    gravarSessao(() => null);
   };
 
-  const finalizar = () => {
-    if (!ativo) return;
-    const texto = ativo.texto.trim();
-    const servidor = ativo.servidor.trim();
-    if (!texto && !servidor) {
-      onToast("Escreva o que foi tratado antes de finalizar.", "err");
+  const encerrar = () => {
+    if (!sessao) return;
+    const pendente = novoTopico.trim();
+    const topicos = pendente ? [...sessao.topicos, { id: novoIdAtividade(), hora: horaSP(new Date()), texto: pendente }] : sessao.topicos;
+    if (topicos.length === 0) {
+      onToast("Lance pelo menos um tópico antes de encerrar (ou cancele o atendimento).", "err");
       return;
     }
-    const data = getLocalDateIso(new Date(ativo.inicio));
-    const turno: "manha" | "tarde" = getSaoPauloHour(ativo.inicio) >= 12 ? "tarde" : "manha";
+    const data = getLocalDateIso(new Date(sessao.inicio));
+    const turno: "manha" | "tarde" = getSaoPauloHour(sessao.inicio) >= 12 ? "tarde" : "manha";
     const item: AtividadeLancamento = {
       id: novoIdAtividade(),
       qtd: 1,
       tipo: "Atendimento",
       sistema: "Balcão",
-      desc: servidor ? `${servidor} — ${texto}` : texto,
+      desc: topicos.map(t => `${t.hora} — ${t.texto}`).join("\n"),
       origem: "balcao",
-      inicio: horaSP(ativo.inicio),
+      inicio: horaSP(sessao.inicio),
       fim: horaSP(new Date()),
+      topicos: topicos.map(t => ({ ...t })),
       atualizadoEm: Date.now()
     };
     updateState(prev => {
@@ -124,15 +142,16 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
       const k = p[data] ? data : (Object.keys(p).find(x => toYmdDate(x) === data) || data);
       const d: ProdutividadeDia = p[k] ? { ...p[k] } : diaVazio();
       p[k] = { ...d, [turno]: [...(d[turno] || []), item] };
-      return { produtividade: p };
+      return { produtividade: p, config: { ...prev.config, balcaoSessao: null } };
     });
-    setAtivo(null);
+    setNovoTopico("");
     setMes(data.slice(0, 7));
     setDiaSel(data);
-    onToast(`Atendimento salvo na produtividade (${turno === "manha" ? "manhã" : "tarde"}).`, "ok");
+    onToast(`Atendimento encerrado: ${topicos.length} tópico(s) salvos na produtividade (${turno === "manha" ? "manhã" : "tarde"}).`, "ok");
   };
 
-  const minutos = ativo ? Math.max(0, Math.floor((agora - new Date(ativo.inicio).getTime()) / 60000)) : 0;
+  const minutos = sessao ? Math.max(0, Math.floor((agora - new Date(sessao.inicio).getTime()) / 60000)) : 0;
+  const duracao = minutos >= 60 ? `${Math.floor(minutos / 60)}h${String(minutos % 60).padStart(2, "0")}` : `${minutos} min`;
 
   // ---------- calendário do mês ----------
   const [ano, mesNum] = mes.split("-").map(Number);
@@ -147,6 +166,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
     const d = new Date(ano, mesNum - 1 + n, 1);
     setMes(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   };
+  const topicosMes = celulas.reduce((n, iso) => n + (iso ? (porDia.get(iso) || []).reduce((m, x) => m + (x.a.topicos?.length || 0), 0) : 0), 0);
   const nomeMes = primeiro.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
   const itensDiaSel = porDia.get(diaSel) || [];
   const antigasDiaSel = anotacoesAntigas(diaSel);
@@ -191,67 +211,97 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
       
       {/* 1. ATENDIMENTO DE BALCÃO */}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.1fr] gap-4 lg:gap-5 items-start">
-        <div className={`bg-[var(--surface)] border rounded-2xl p-4 lg:p-5 shadow-sm flex flex-col gap-3 ${ativo ? "border-emerald-500/60 ring-2 ring-emerald-500/20" : "border-[var(--border)]"}`}>
+        <div className={`bg-[var(--surface)] border rounded-2xl p-4 lg:p-5 shadow-sm flex flex-col gap-3 ${sessao ? "border-emerald-500/60 ring-2 ring-emerald-500/20" : "border-[var(--border)]"}`}>
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="text-xs font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1.5">
               <PhoneCall size={16} /> Atendimento de balcão
             </div>
-            {ativo && (
+            {sessao && (
               <div className="px-3 py-1 bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 font-bold text-xs rounded-full flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Em atendimento desde {horaSP(ativo.inicio)} · {minutos} min
+                Aberto desde {horaSP(sessao.inicio)}{getLocalDateIso(new Date(sessao.inicio)) !== hoje ? ` de ${getLocalDateIso(new Date(sessao.inicio)).split("-").reverse().slice(0, 2).join("/")}` : ""} · {duracao}
               </div>
             )}
           </div>
 
-          {!ativo ? (
+          {!sessao ? (
             <>
               <p className="text-xs text-[var(--text2)]">
-                Clique em iniciar quando alguém chegar ao balcão. Ao finalizar, o atendimento é salvo na produtividade do dia (manhã ou tarde, pelo horário).
+                Abra no começo do plantão no balcão. Durante o atendimento, lance cada assunto como um tópico (fica salvo na hora, na nuvem). No final, encerre: vai para a produtividade como 1 atendimento com todos os tópicos.
               </p>
               <button 
                 onClick={iniciar}
                 className="w-full py-3 bg-[var(--blue-mid)] hover:bg-[var(--blue)] text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
               >
-                <Play size={16} /> Iniciar atendimento
+                <Play size={16} /> Abrir atendimento de balcão
               </button>
             </>
           ) : (
             <>
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-bold text-[var(--text2)]">Servidor atendido (opcional)</span>
+              <div className="flex gap-2">
                 <input
                   type="text"
-                  value={ativo.servidor}
-                  onChange={e => setAtivo(v => v ? { ...v, servidor: e.target.value } : v)}
-                  placeholder="Nome ou matrícula"
-                  className="w-full p-2.5 text-sm rounded-xl border border-[var(--border2)] bg-[var(--bg)]"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-bold text-[var(--text2)]">O que foi tratado</span>
-                <textarea
-                  value={ativo.texto}
-                  onChange={e => setAtivo(v => v ? { ...v, texto: e.target.value } : v)}
-                  onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); finalizar(); } }}
-                  placeholder="Ex.: dúvida sobre aposentadoria; orientado a abrir processo no SEI"
-                  className="w-full min-h-28 p-3 text-sm rounded-xl border border-[var(--border2)] bg-[var(--bg)] focus:border-[var(--blue-mid)] outline-none resize-y whitespace-pre-wrap"
+                  value={novoTopico}
+                  onChange={e => setNovoTopico(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); adicionarTopico(); } }}
+                  placeholder="Assunto atendido (ex.: Maria, dúvida sobre aposentadoria) — Enter para lançar"
+                  className="flex-1 min-w-0 p-2.5 text-sm rounded-xl border border-[var(--border2)] bg-[var(--bg)] focus:border-[var(--blue-mid)] outline-none"
                   autoFocus
                 />
-              </label>
-              <div className="flex gap-2 justify-end flex-wrap">
-                <button onClick={cancelar} className="px-4 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] text-[var(--text2)] hover:bg-[var(--bg)]">
-                  Cancelar
-                </button>
-                <button 
-                  onClick={finalizar}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-                  title="Ctrl+Enter"
-                >
-                  <Check size={16} /> Finalizar e salvar
+                <button onClick={adicionarTopico} disabled={!novoTopico.trim()} className="px-4 py-2 bg-[var(--blue-mid)] disabled:opacity-40 text-white text-xs font-bold rounded-xl flex items-center gap-1">
+                  <Plus size={14} /> Lançar
                 </button>
               </div>
-              <p className="text-[10px] text-[var(--text2)]">O texto fica guardado neste navegador até você finalizar, mesmo se recarregar a página.</p>
+
+              <div className="flex flex-col divide-y divide-[var(--border)] border border-[var(--border)] rounded-xl">
+                {sessao.topicos.map((t, i) => (
+                  <div key={t.id} className="px-3 py-2 flex items-start gap-2">
+                    <span className="text-[11px] font-mono font-bold text-[var(--text2)] w-12 flex-shrink-0 pt-0.5">{t.hora}</span>
+                    {editTopico?.id === t.id ? (
+                      <div className="flex-1 flex gap-1.5">
+                        <input
+                          type="text"
+                          value={editTopico.texto}
+                          onChange={e => setEditTopico(v => v && { ...v, texto: e.target.value })}
+                          onKeyDown={e => { if (e.key === "Enter") salvarEdicaoTopico(); if (e.key === "Escape") setEditTopico(null); }}
+                          className="flex-1 min-w-0 p-1.5 text-sm rounded-lg border border-[var(--border2)] bg-[var(--surface)]"
+                          autoFocus
+                        />
+                        <button onClick={salvarEdicaoTopico} className="px-2 text-xs font-bold rounded-lg bg-emerald-600 text-white"><Check size={13} /></button>
+                        <button onClick={() => setEditTopico(null)} className="px-2 text-xs font-bold rounded-lg border border-[var(--border2)] text-[var(--text2)]"><X size={13} /></button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="flex-1 min-w-0 text-sm text-[var(--text)] break-words"><b className="text-[var(--text2)] mr-1">{i + 1}.</b>{t.texto}</span>
+                        {apagarTopico === t.id ? (
+                          <span className="flex items-center gap-1 flex-shrink-0">
+                            <button onClick={() => removerTopico(t.id)} className="px-2 py-0.5 text-[11px] font-bold rounded bg-red-600 text-white">Apagar</button>
+                            <button onClick={() => setApagarTopico(null)} className="px-2 py-0.5 text-[11px] font-bold rounded border border-[var(--border2)] text-[var(--text2)]">Não</button>
+                          </span>
+                        ) : (
+                          <span className="flex items-center flex-shrink-0">
+                            <button onClick={() => setEditTopico({ id: t.id, texto: t.texto })} className="p-1 rounded text-[var(--text2)] hover:text-[var(--blue-mid)]" title="Editar"><Edit size={12} /></button>
+                            <button onClick={() => setApagarTopico(t.id)} className="p-1 rounded text-[var(--text2)] opacity-60 hover:opacity-100 hover:text-red-600" title="Apagar"><Trash2 size={12} /></button>
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+                {sessao.topicos.length === 0 && <div className="px-3 py-4 text-center text-xs text-[var(--text2)]">Nenhum tópico ainda. Lance cada assunto conforme for atendendo.</div>}
+              </div>
+
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-[11px] font-bold text-[var(--text2)]">{sessao.topicos.length} tópico(s) · salvo na nuvem (pode fechar e voltar, até de outro computador)</span>
+                <div className="flex gap-2">
+                  <button onClick={cancelar} className="px-3 py-2 text-xs font-bold rounded-xl border border-[var(--border2)] text-[var(--text2)] hover:bg-[var(--bg)]">
+                    Cancelar
+                  </button>
+                  <button onClick={encerrar} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm">
+                    <Check size={16} /> Encerrar atendimento
+                  </button>
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -263,7 +313,7 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
             <div className="text-center">
               <div className="text-sm font-black text-[var(--text)] capitalize">{nomeMes}</div>
               <div className="text-xs font-bold text-[var(--text2)]">
-                <span className="text-teal-600 dark:text-teal-400 text-lg font-black align-middle">{totalMes}</span> atendimento(s) em {diasComAtendimento} dia(s)
+                <span className="text-teal-600 dark:text-teal-400 text-lg font-black align-middle">{totalMes}</span> atendimento(s) em {diasComAtendimento} dia(s){topicosMes > 0 ? ` · ${topicosMes} tópico(s)` : ""}
               </div>
             </div>
             <button onClick={() => mudarMes(1)} className="p-1.5 rounded-lg border border-[var(--border2)] hover:bg-[var(--bg)]" title="Próximo mês"><ChevronRight size={16} /></button>
@@ -306,7 +356,16 @@ export default function BalcaoPanel({ state, updateState, onToast, onIrProdutivi
                 <div className="flex items-center gap-1.5 font-bold text-[var(--text2)]">
                   <Clock size={11} /> {a.inicio || (turno === "manha" ? "Manhã" : "Tarde")}{a.fim ? `–${a.fim}` : ""}
                 </div>
-                <div className="text-sm text-[var(--text)] mt-0.5 whitespace-pre-wrap break-words">{a.desc || "Sem anotação"}</div>
+                {a.topicos?.length ? (
+                  <div className="mt-1 flex flex-col gap-0.5">
+                    <div className="text-[10px] font-bold text-[var(--text2)]">{a.topicos.length} tópico(s)</div>
+                    {a.topicos.map((t, j) => (
+                      <div key={t.id || j} className="text-sm text-[var(--text)] break-words"><span className="font-mono text-[11px] text-[var(--text2)] mr-1.5">{t.hora}</span>{t.texto}</div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-[var(--text)] mt-0.5 whitespace-pre-wrap break-words">{a.desc || "Sem anotação"}</div>
+                )}
               </div>
             ))}
             {antigasDiaSel.length > 0 && (

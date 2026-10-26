@@ -183,6 +183,8 @@ export default function ProdutividadePanel({ state, updateState, onToast, dataIn
         atualizadoEm: Date.now()
       };
       if (!ehSei) delete item.processosSei;
+      // atendimento de balcão editado aqui: o texto editado passa a valer no lugar da lista de tópicos
+      if (antiga?.topicos && item.desc !== (antiga.desc || "").trim()) delete item.topicos;
       if (pos >= 0) lista[pos] = item; else lista.push(item);
       const removidos = [...(d.removidos || [])];
       // atividade antiga (sem id) editada: a versão anterior não deve voltar ao juntar com outro computador

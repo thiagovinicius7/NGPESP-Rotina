@@ -247,7 +247,8 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
   const balcaoHoje = contarBalcao(hoje);
   const balcaoMes = contarBalcao(hoje.slice(0, 7));
   const lerLS = (k: string) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
-  const balcaoAtivo = !!lerLS("ngpesp_balcao_ativo");
+  const balcaoAtivo = !!state.config?.balcaoSessao?.inicio;
+  const topicosBalcaoAtivo = state.config?.balcaoSessao?.topicos?.length || 0;
   const rascunhosHoje = (() => { try { return Object.values<any>(JSON.parse(lerLS("ngpesp_prod_rascunhos") || "{}")).filter(r => r?.data === hoje).length; } catch (_) { return 0; } })();
   const diasBackup = diasDesdeBackup();
   const [lembrarBackup, setLembrarBackup] = useState(precisaLembrarBackup());
@@ -325,7 +326,7 @@ export default function Dashboard({ state, updateState, onToast, setActiveTab, s
         <button type="button" onClick={() => setActiveTab('balcao')} className="text-left bento-card p-5 flex flex-col gap-2 hover:border-teal-400">
           <div className="text-[10px] font-bold text-[var(--text2)] uppercase tracking-wider flex items-center gap-1"><Users size={13} /> Balcão</div>
           {balcaoAtivo ? (
-            <div className="text-base font-black text-emerald-600 dark:text-emerald-400">Em atendimento agora</div>
+            <div className="text-base font-black text-emerald-600 dark:text-emerald-400">Atendimento aberto · {topicosBalcaoAtivo} tópico(s)</div>
           ) : (
             <div className="text-base font-black text-[var(--text)]">{balcaoHoje} atendimento(s) hoje</div>
           )}
